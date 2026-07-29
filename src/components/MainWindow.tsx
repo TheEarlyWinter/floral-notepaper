@@ -671,8 +671,12 @@ export function MainWindow({
       setContent(note.content);
       setSaveState("saved");
       setNoteTransitionKey((k) => k + 1);
-      setNoteTags(note.tags || []);
-      setIsPinned(note.pinned || false);
+      const nextTags = note.tags || [];
+      const nextPinned = note.pinned || false;
+      tagsValueRef.current = nextTags;
+      pinnedValueRef.current = nextPinned;
+      setNoteTags(nextTags);
+      setIsPinned(nextPinned);
     },
     [loadEpoch],
   );
@@ -970,12 +974,8 @@ export function MainWindow({
                   if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
                     return;
                   }
-                  titleValueRef.current = note.title;
-                  contentValueRef.current = note.content;
-                  saveStateRef.current = "saved";
-                  setTitle(note.title);
-                  setContent(note.content);
-                  setSaveState("saved");
+                  applyNote(note);
+                  replaceNoteMetadata(note);
                 })
                 .catch(() => undefined);
             }
@@ -992,7 +992,7 @@ export function MainWindow({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshNotes, loadNote, clearCurrentNote, loadEpoch]);
+  }, [refreshNotes, loadNote, clearCurrentNote, loadEpoch, applyNote, replaceNoteMetadata]);
 
   useEffect(() => {
     function handleFocus() {
@@ -3873,13 +3873,14 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s")) {
               e.preventDefault();
               addTag();
             }
             if (e.key === "Backspace" && !input && tags.length > 0)
               removeTag(tags[tags.length - 1]);
           }}
+          onBlur={addTag}
           placeholder="添加标签…"
           className="w-20 h-5 px-1.5 rounded text-[10px] font-body text-ink-soft placeholder:text-ink-ghost bg-transparent border border-transparent focus:border-paper-deep/40 focus:bg-paper-warm/50 outline-none transition-colors"
         />
