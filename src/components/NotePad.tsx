@@ -334,7 +334,7 @@ export function NotePad({
   }, [refreshNotes]);
 
   const saveNote = useCallback(async () => {
-    const existingCategory = notes.find((n) => n.id === editingNoteId)?.category ?? "";
+    const existingCategory = notes.find((n) => n.id === editingNoteId)?.category ?? "收件箱";
     const request = { title, content, category: existingCategory };
     const note = editingNoteId
       ? await updateNote(editingNoteId, request)

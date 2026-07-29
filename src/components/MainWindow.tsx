@@ -51,6 +51,7 @@ import { TodoPanel } from "./TodoPanel";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { ReminderPanel } from "./ReminderPanel";
+import { NotesWorkspacePanel, type NotesWorkspaceMode } from "./NotesWorkspacePanel";
 import {
   createNote,
   createCategory,
@@ -63,6 +64,7 @@ import {
   getNote,
   listCategories,
   listNotes,
+  mergeNotes,
   moveNoteCategory,
   readExternalFile,
   renameCategory,
@@ -70,6 +72,7 @@ import {
   updateNote,
 } from "../features/notes/api";
 import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
+import { INBOX_CATEGORY } from "../features/notes/insights";
 import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import type { ExternalFile, Note, NoteMetadata, Reminder } from "../features/notes/types";
@@ -86,6 +89,7 @@ import {
 import type { CategoryGroup } from "../features/notes/noteUtils";
 import {
   filterNotesWithSearchSyntax,
+  parseNoteSearchQuery,
   toggleTodoInContent,
   type TodoItem,
 } from "../features/notes/todoUtils";
@@ -109,7 +113,14 @@ import {
 } from "../features/windows/tileWindowEvents";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
-type SidePanelMode = "about" | "settings" | "todos" | "history" | "backlinks" | "reminders";
+type SidePanelMode =
+  | "about"
+  | "settings"
+  | "todos"
+  | "history"
+  | "backlinks"
+  | "reminders"
+  | "workspace";
 
 const BUILT_IN_TEMPLATES: NoteTemplate[] = [
   { id: "daily", name: "今日计划", content: "# {{date}}\n\n## 待办\n- [ ] \n\n## 随手记\n" },
@@ -399,6 +410,7 @@ export function MainWindow({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
     initialSettingsOpen && initialConfig ? "settings" : null,
   );
@@ -612,18 +624,29 @@ export function MainWindow({
   }, []);
   const visibleSidePanel: SidePanelMode | null = aboutOpen
     ? "about"
-    : todosOpen
-      ? "todos"
-      : historyOpen && selectedId && !isExternal
-        ? "history"
-        : backlinksOpen && selectedId && !isExternal
-          ? "backlinks"
-          : remindersOpen && selectedId && !isExternal
-            ? "reminders"
-            : settingsOpen && settingsConfig
-          ? "settings"
-          : null;
+    : workspaceMode
+      ? "workspace"
+      : todosOpen
+        ? "todos"
+        : historyOpen && selectedId && !isExternal
+          ? "history"
+          : backlinksOpen && selectedId && !isExternal
+            ? "backlinks"
+            : remindersOpen && selectedId && !isExternal
+              ? "reminders"
+              : settingsOpen && settingsConfig
+                ? "settings"
+                : null;
   const sidePanelExpanded = visibleSidePanel !== null;
+  const openWorkspace = useCallback((mode: NotesWorkspaceMode) => {
+    setSettingsOpen(false);
+    setAboutOpen(false);
+    setTodosOpen(false);
+    setHistoryOpen(false);
+    setBacklinksOpen(false);
+    setRemindersOpen(false);
+    setWorkspaceMode(mode);
+  }, []);
   const openAboutPanel = useCallback(() => {
     setSettingsOpen(false);
     setAboutOpen(true);
@@ -644,9 +667,27 @@ export function MainWindow({
     [notes, searchQuery, tagFilter, t],
   );
 
+  const searchText = useMemo(() => parseNoteSearchQuery(searchQuery).text, [searchQuery]);
+
+  useEffect(() => {
+    if (searchText) {
+      setWorkspaceMode("search");
+    } else if (workspaceMode === "search") {
+      setWorkspaceMode(null);
+    }
+  }, [searchText, workspaceMode]);
+
   const categoryGroups = useMemo(
-    () => groupNotesByCategory(filteredNotes, categories),
+    () =>
+      groupNotesByCategory(
+        filteredNotes.filter((note) => note.category !== INBOX_CATEGORY),
+        categories.filter((category) => category !== INBOX_CATEGORY),
+      ),
     [filteredNotes, categories],
+  );
+  const inboxCount = useMemo(
+    () => notes.filter((note) => note.category === INBOX_CATEGORY).length,
+    [notes],
   );
 
   // 打字时输入框优先响应：预览渲染与字数/字节统计使用延迟值，
@@ -1727,9 +1768,39 @@ export function MainWindow({
     try {
       await moveNoteCategory(noteId, targetCategory);
       await refreshNotes();
+      showToast(targetCategory ? "已整理到分类" : "已移至未分类");
     } catch (error) {
       showToast(getErrorMessage(error));
     }
+  };
+
+  const handleMergeNotes = async (targetId: string, sourceId: string) => {
+    try {
+      await saveCurrentNote(true);
+      const merged = await mergeNotes({ targetId, sourceId });
+      await refreshNotes();
+      if (selectedIdRef.current === targetId || selectedIdRef.current === sourceId) {
+        applyNote(merged);
+      }
+      showToast("笔记已合并，原笔记已移入回收站");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleOpenWorkspaceNote = async (noteId: string, hitOffset?: number) => {
+    await handleSelectNote(noteId);
+    if (hitOffset == null || hitOffset < 0) return;
+    window.requestAnimationFrame(() => {
+      const textarea = contentRef.current;
+      if (!textarea) return;
+      const end = Math.min(textarea.value.length, hitOffset + Math.max(1, searchText.length));
+      textarea.focus();
+      textarea.setSelectionRange(hitOffset, end);
+      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 22;
+      const line = textarea.value.slice(0, hitOffset).split("\n").length - 1;
+      textarea.scrollTop = Math.max(0, line * lineHeight - textarea.clientHeight / 3);
+    });
   };
 
   const handleCreateCategory = async () => {
@@ -2433,6 +2504,36 @@ export function MainWindow({
                     <path d="M8 2v4M16 2v4M7 10h10M8 14h3" />
                   </svg>
                   <span>每日便笺</span>
+                </button>
+                <button
+                  onClick={() => openWorkspace("inbox")}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 8v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8" />
+                    <path d="M1 3h22v5H1zM10 12h4" />
+                  </svg>
+                  <span>收件箱</span>
+                  {inboxCount > 0 ? <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-bamboo-mist text-[9px] leading-4 text-bamboo text-center">{inboxCount}</span> : null}
+                </button>
+                <button
+                  onClick={() => openWorkspace("journal")}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="17" rx="2" />
+                    <path d="M8 2v4M16 2v4M7 10h10M8 14h8M8 17h5" />
+                  </svg>
+                  <span>日记流</span>
+                </button>
+                <button
+                  onClick={() => openWorkspace("dashboard")}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                  <span>笔记仪表盘</span>
                 </button>
                 <button
                   onClick={handleNewNote}
@@ -3630,6 +3731,31 @@ export function MainWindow({
                   }}
                   onToggleTodo={handleToggleTodo}
                   onClose={() => setTodosOpen(false)}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "workspace"
+                  ? sidePanelContentVisible && visibleSidePanel === "workspace"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+            >
+              {mountedSidePanel === "workspace" && workspaceMode ? (
+                <NotesWorkspacePanel
+                  mode={workspaceMode}
+                  notes={notes}
+                  categories={categories}
+                  query={workspaceMode === "search" ? searchText : undefined}
+                  onOpenNote={(noteId, hit) => {
+                    if (workspaceMode !== "search") setWorkspaceMode(null);
+                    void handleOpenWorkspaceNote(noteId, hit?.matchStart);
+                  }}
+                  onMoveNote={(noteId, category) => void handleMoveNote(noteId, category)}
+                  onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
+                  onClose={() => setWorkspaceMode(null)}
                 />
               ) : null}
             </div>

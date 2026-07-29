@@ -7,7 +7,9 @@ pub mod updater;
 
 use locales::Locale;
 use services::{
-    notes::{default_store, AppConfig, AppError, Note, NoteMetadata, SaveNoteRequest},
+    notes::{
+        default_store, AppConfig, AppError, MergeNotesRequest, Note, NoteMetadata, SaveNoteRequest,
+    },
     reminders::{self, Reminder},
 };
 use std::{env, fs, io::Write, path::PathBuf};
@@ -48,6 +50,13 @@ fn notes_delete(app: AppHandle, id: String) -> Result<(), AppError> {
     default_store()?.delete_note(&id)?;
     let _ = app.emit("notes-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+fn notes_merge(app: AppHandle, request: MergeNotesRequest) -> Result<Note, AppError> {
+    let note = default_store()?.merge_notes(request)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(note)
 }
 
 #[tauri::command]
@@ -513,6 +522,7 @@ pub fn run() {
             notes_create,
             notes_update,
             notes_delete,
+            notes_merge,
             notes_open_daily,
             notes_list_versions,
             notes_restore_version,

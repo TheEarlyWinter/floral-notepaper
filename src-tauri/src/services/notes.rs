@@ -154,6 +154,13 @@ pub struct SaveNoteRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct MergeNotesRequest {
+    pub target_id: String,
+    pub source_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct NoteMetadata {
     pub id: String,
     pub title: String,
@@ -868,6 +875,82 @@ impl NoteStore {
 
         self.save_metadata(&metadata_file)?;
         Ok(result)
+    }
+
+    pub fn merge_notes(&self, request: MergeNotesRequest) -> Result<Note, AppError> {
+        if request.target_id == request.source_id {
+            return Err(AppError::new("mergeSameNote", "不能合并同一篇笔记"));
+        }
+
+        let _lock = self.lock_metadata_mutation()?;
+        self.ensure_storage()?;
+        let target = self.read_note(&request.target_id)?;
+        let source = self.read_note(&request.source_id)?;
+
+        // Copy source images before touching either note. The merged Markdown must point to
+        // the target note directory, otherwise deleting the source would leave broken images.
+        let source_image_prefix = format!("images/{}/", source.id);
+        let target_image_prefix = format!("images/{}/", target.id);
+        if source.content.contains(&source_image_prefix) {
+            let source_images = self.images_dir(&source.id);
+            let target_images = self.images_dir(&target.id);
+            if source_images.exists() {
+                fs::create_dir_all(&target_images)?;
+                for entry in fs::read_dir(source_images)? {
+                    let entry = entry?;
+                    if entry.path().is_file() {
+                        fs::copy(entry.path(), target_images.join(entry.file_name()))?;
+                    }
+                }
+            }
+        }
+
+        let source_title = source.title.trim();
+        let source_heading = if source_title.is_empty() { "未命名笔记" } else { source_title };
+        let source_content = source.content.replace(&source_image_prefix, &target_image_prefix);
+        let separator = if target.content.trim().is_empty() { "" } else { "\n\n---\n\n" };
+        let merged_content = format!(
+            "{}{}## 合并自：{}\n\n{}",
+            target.content, separator, source_heading, source_content
+        );
+        let mut merged_tags = target.tags.clone();
+        for tag in source.tags {
+            if !merged_tags.contains(&tag) {
+                merged_tags.push(tag);
+            }
+        }
+
+        let merged = self.update_note_unlocked(
+            &target.id,
+            SaveNoteRequest {
+                title: target.title,
+                content: merged_content,
+                category: target.category,
+                tags: merged_tags,
+                pinned: target.pinned,
+            },
+        )?;
+
+        let mut metadata_file = self.load_metadata()?;
+        let source_index = metadata_file
+            .notes
+            .iter()
+            .position(|note| note.id == source.id)
+            .ok_or_else(|| AppError::note_not_found(&source.id))?;
+        let source_metadata = metadata_file.notes.remove(source_index);
+        let source_path = self.note_path_in_category(&source_metadata.file_name, &source_metadata.category);
+        if source_path.exists() {
+            trash::delete(&source_path)
+                .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
+        }
+        self.save_metadata(&metadata_file)?;
+        let _ = self.delete_note_images(&source.id);
+        let source_history = self.note_history_dir(&source.id);
+        if source_history.exists() {
+            let _ = fs::remove_dir_all(source_history);
+        }
+
+        Ok(merged)
     }
 
     pub fn delete_note(&self, id: &str) -> Result<(), AppError> {
@@ -2002,6 +2085,52 @@ mod tests {
         store.delete_note(&created.id).expect("delete note");
         assert!(store.read_note(&created.id).is_err());
         assert!(store.list_notes().expect("list after delete").is_empty());
+    }
+
+    #[test]
+    fn merges_notes_preserving_target_history_and_combining_tags() {
+        let store = test_store("merge-notes");
+        let target = store
+            .create_note(SaveNoteRequest {
+                title: "目标笔记".into(),
+                content: "目标内容".into(),
+                category: "学习".into(),
+                tags: vec!["机械".into()],
+                pinned: true,
+            })
+            .expect("create target");
+        let source = store
+            .create_note(SaveNoteRequest {
+                title: "来源笔记".into(),
+                content: "来源内容".into(),
+                category: "收件箱".into(),
+                tags: vec!["机械".into(), "待整理".into()],
+                pinned: false,
+            })
+            .expect("create source");
+
+        let merged = store
+            .merge_notes(MergeNotesRequest {
+                target_id: target.id.clone(),
+                source_id: source.id.clone(),
+            })
+            .expect("merge notes");
+
+        assert!(merged.content.contains("目标内容"));
+        assert!(merged.content.contains("## 合并自：来源笔记"));
+        assert!(merged.content.contains("来源内容"));
+        assert_eq!(merged.category, "学习");
+        assert!(merged.pinned);
+        assert_eq!(merged.tags, ["机械", "待整理"]);
+        assert!(store.read_note(&source.id).is_err());
+        assert_eq!(store.list_notes().expect("list notes").len(), 1);
+        assert_eq!(store.list_note_versions(&target.id).expect("history").len(), 1);
+        assert!(store
+            .merge_notes(MergeNotesRequest {
+                target_id: target.id.clone(),
+                source_id: target.id,
+            })
+            .is_err());
     }
 
     #[test]

@@ -37,6 +37,11 @@ export interface SaveNoteRequest {
   pinned?: boolean;
 }
 
+export interface MergeNotesRequest {
+  targetId: string;
+  sourceId: string;
+}
+
 export interface ExternalFile {
   id: string;
   title: string;

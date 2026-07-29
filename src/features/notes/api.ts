@@ -1,6 +1,13 @@
 import { t, type TFunction } from "i18next";
 import { invoke } from "@tauri-apps/api/core";
-import type { Note, NoteMetadata, NoteVersion, Reminder, SaveNoteRequest } from "./types";
+import type {
+  MergeNotesRequest,
+  Note,
+  NoteMetadata,
+  NoteVersion,
+  Reminder,
+  SaveNoteRequest,
+} from "./types";
 
 interface SerializedAppError {
   code?: unknown;
@@ -41,6 +48,10 @@ export function updateNote(id: string, request: SaveNoteRequest): Promise<Note> 
 
 export function deleteNote(id: string): Promise<void> {
   return invoke("notes_delete", { id });
+}
+
+export function mergeNotes(request: MergeNotesRequest): Promise<Note> {
+  return invoke("notes_merge", { request });
 }
 
 export function openDailyNote(): Promise<Note> {
