@@ -378,6 +378,7 @@ export function MainWindow({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [noteTags, setNoteTags] = useState<string[]>([]);
   const [isPinned, setIsPinned] = useState(false);
@@ -2350,12 +2351,6 @@ export function MainWindow({
           >
             <div className="flex flex-col h-full" style={{ width: `${sidebarWidth}px` }}>
               <div className="px-3 pt-3 pb-2 shrink-0">
-                {/* 标签筛选 */}
-                <TagFilterBar
-                  notes={notes}
-                  selectedTag={tagFilter}
-                  onSelectTag={(tag) => setTagFilter(tag === tagFilter ? "" : tag)}
-                />
                 <div className="flex items-center gap-2 px-2.5 h-8 rounded-lg bg-paper-warm/80 border border-paper-deep/40 focus-within:border-bamboo/30 focus-within:bg-cloud transition-all">
                   <svg
                     width="13"
@@ -2397,6 +2392,13 @@ export function MainWindow({
                     </button>
                   )}
                 </div>
+                <TagFilterBar
+                  notes={notes}
+                  selectedTag={tagFilter}
+                  open={tagFilterOpen}
+                  onToggle={() => setTagFilterOpen((open) => !open)}
+                  onSelectTag={(tag) => setTagFilter(tag === tagFilter ? "" : tag)}
+                />
               </div>
 
               <div className="px-3 pb-2 shrink-0 space-y-1">
@@ -2937,8 +2939,16 @@ export function MainWindow({
           )}
 
           <div className="flex-1 flex flex-col min-w-0">
-            <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
-              <div className="flex items-center gap-1">
+            <div
+              className={`flex items-center h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20 transition-all duration-200 ${
+                settingsOpen ? "justify-end px-2" : "justify-between px-4"
+              }`}
+            >
+              <div
+                className={`flex items-center gap-1 overflow-hidden transition-[max-width,opacity] duration-200 ${
+                  settingsOpen ? "max-w-0 opacity-0 pointer-events-none" : "max-w-[900px] opacity-100"
+                }`}
+              >
                 <button
                   onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
@@ -3286,12 +3296,17 @@ export function MainWindow({
                 )}
               </div>
 
-              <SlidingButtonGroup
-                options={viewModeOptions}
-                value={viewMode}
-                onChange={setViewMode}
-                buttonClassName="px-3 py-1"
-              />
+              {!settingsOpen && (
+                <SlidingButtonGroup
+                  options={viewModeOptions}
+                  value={viewMode}
+                  onChange={setViewMode}
+                  buttonClassName="px-3 py-1"
+                />
+              )}
+              {settingsOpen && (
+                <span className="px-2 text-[11px] text-ink-ghost font-body">设置已打开</span>
+              )}
             </div>
 
             <div
@@ -3781,10 +3796,14 @@ export function MainWindow({
 function TagFilterBar({
   notes,
   selectedTag,
+  open,
+  onToggle,
   onSelectTag,
 }: {
   notes: NoteMetadata[];
   selectedTag: string;
+  open: boolean;
+  onToggle: () => void;
   onSelectTag: (tag: string) => void;
 }) {
   const allTags = useMemo(() => collectAllTags(notes), [notes]);
@@ -3792,30 +3811,86 @@ function TagFilterBar({
   if (allTags.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-1 mb-2 px-0.5">
-      {allTags.map((tag) => (
-        <button
-          key={tag}
-          type="button"
-          onClick={() => onSelectTag(tag)}
-          className={`px-2 py-0.5 rounded-full text-[10px] font-body transition-colors cursor-pointer ${
-            selectedTag === tag
-              ? "bg-bamboo text-white"
-              : "bg-paper-warm/70 border border-paper-deep/25 text-ink-faint hover:border-paper-deep/50"
-          }`}
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`w-full h-7 flex items-center gap-2 px-2.5 rounded-lg text-[11px] font-body transition-colors cursor-pointer ${
+          open || selectedTag
+            ? "bg-bamboo-mist/45 text-bamboo"
+            : "text-ink-faint hover:text-bamboo hover:bg-paper-warm/70"
+        }`}
+        aria-expanded={open}
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
         >
-          #{tag}
-        </button>
-      ))}
-      {selectedTag && (
-        <button
-          type="button"
-          onClick={() => onSelectTag("")}
-          className="px-2 py-0.5 rounded-full text-[10px] text-red-400 hover:bg-danger-bg transition-colors cursor-pointer"
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="shrink-0"
         >
-          × 清除
-        </button>
-      )}
+          <path d="M20.59 13.41 11.41 22.59a2 2 0 0 1-2.82 0L1.41 15.41A2 2 0 0 1 .83 14V4a2 2 0 0 1 2-2h10a2 2 0 0 1 1.41.59l7.18 7.18a2 2 0 0 1 0 2.82Z" />
+          <circle cx="7" cy="7" r="1" />
+        </svg>
+        <span className="flex-1 text-left">标签</span>
+        {selectedTag ? (
+          <span className="max-w-[90px] truncate rounded-full bg-bamboo/10 px-1.5 py-0.5 text-[10px]">#{selectedTag}</span>
+        ) : (
+          <span className="text-[10px] text-ink-ghost">{allTags.length}</span>
+        )}
+      </button>
+
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-200 ${
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="mt-1 ml-4 border-l border-paper-deep/50 pl-2 py-1 space-y-0.5">
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => onSelectTag(tag)}
+                className={`w-full flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] font-body transition-colors cursor-pointer ${
+                  selectedTag === tag
+                    ? "bg-bamboo-mist text-bamboo"
+                    : "text-ink-faint hover:text-bamboo hover:bg-paper-warm/70"
+                }`}
+              >
+                <span className="text-ink-ghost">#</span>
+                <span className="truncate">{tag}</span>
+              </button>
+            ))}
+            {selectedTag && (
+              <button
+                type="button"
+                onClick={() => onSelectTag("")}
+                className="w-full rounded-md px-2 py-1 text-left text-[10px] text-red-400 hover:bg-danger-bg transition-colors cursor-pointer"
+              >
+                清除标签筛选
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

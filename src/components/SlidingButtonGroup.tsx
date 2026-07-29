@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface SlidingButtonGroupProps<T extends string> {
   options: Array<{ value: T; label: string }>;
@@ -15,11 +15,12 @@ export function SlidingButtonGroup<T extends string>({
   className = "",
   buttonClassName = "h-7",
 }: SlidingButtonGroupProps<T>) {
+  const groupRef = useRef<HTMLDivElement>(null);
   const buttonsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [pos, setPos] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [animated, setAnimated] = useState(false);
 
-  useLayoutEffect(() => {
+  const updateHighlight = useCallback(() => {
     const btn = buttonsRef.current.get(value);
     if (!btn) return;
     setPos({
@@ -29,6 +30,20 @@ export function SlidingButtonGroup<T extends string>({
       height: btn.offsetHeight,
     });
   }, [value]);
+
+  useLayoutEffect(() => {
+    updateHighlight();
+    const frame = requestAnimationFrame(updateHighlight);
+    const group = groupRef.current;
+    if (!group) return () => cancelAnimationFrame(frame);
+
+    const observer = new ResizeObserver(updateHighlight);
+    observer.observe(group);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [updateHighlight, options]);
 
   useEffect(() => {
     requestAnimationFrame(() => setAnimated(true));
@@ -40,6 +55,7 @@ export function SlidingButtonGroup<T extends string>({
 
   return (
     <div
+      ref={groupRef}
       className={`relative flex items-center gap-1 bg-paper-warm/60 rounded-lg p-[2px] border border-paper-deep/30 ${className}`}
     >
       <div
