@@ -6,21 +6,21 @@
 
 <img src="./src-tauri/icons/icon.png" width="120" alt="花笺图标">
 
-# 花笺 Floral Notepaper
+# 花笺 · 增强版
 
-轻量、优雅、现代化的本地便签工具<br>
-基于 Tauri 2 + React 构建
+把零散念头轻轻收进本地。<br>
+一个本地优先、支持 Markdown 与桌面便签的轻量笔记工具。
 
-[反馈问题](https://github.com/Achilng/floral-notepaper/issues) · [更新日志](https://github.com/Achilng/floral-notepaper/releases) <br>
-[快速开始](#快速开始) · [FAQ](https://github.com/Achilng/floral-notepaper/wiki) · [构建指南](#从源码构建)
+由 [TheEarlyWinter](https://github.com/TheEarlyWinter) 持续维护<br>
+基于 [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper) 的 Tauri 2 + React 项目构建
 
-[![Version](https://img.shields.io/github/v/release/Achilng/floral-notepaper)](https://github.com/Achilng/floral-notepaper/releases/latest)
+[下载最新版](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest) · [提交问题](https://github.com/TheEarlyWinter/floral-notepaper/issues) · [更新记录](https://github.com/TheEarlyWinter/floral-notepaper/releases)
+
+[![Release](https://img.shields.io/github/v/release/TheEarlyWinter/floral-notepaper?label=release)](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Stars](https://img.shields.io/github/stars/Achilng/floral-notepaper?color=ffcb47&labelColor=black)</br>
-![React 19](https://img.shields.io/badge/React-19-blue?logo=react)
 ![Tauri v2](https://img.shields.io/badge/Tauri-v2-%2324C8D8?logo=tauri)
-![Rust Edition 2021](https://img.shields.io/badge/Rust-2021-%23000000?logo=rust)<br>
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Achilng/floral-notepaper)
+![React 19](https://img.shields.io/badge/React-19-blue?logo=react)
+![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
 
 </div>
 
@@ -28,90 +28,83 @@
 
 ---
 
-## 为什么选择花笺
+## 这是什么
 
-市面上现有的笔记或便签软件，要么功能繁重、上手门槛高，要么界面陈旧、久未更新。花笺因此而生，其特点是轻便、随呼随用，同时提供现代化的界面与舒适的编辑体验。
+花笺增强版面向那些想把笔记留在自己电脑里、又希望记录过程足够顺手的人。
 
-## 功能特点
+它可以是一张随时唤出的便签，也可以是一套轻量的 Markdown 笔记库：写下一个待办、整理每日记录、把几篇笔记连起来，或者把一条提醒留给未来的自己。没有账号、没有云端依赖，数据由你自己保管。
 
-- **Markdown 编辑与预览** — 支持 GitHub Flavored Markdown 语法，实时切换编辑和预览模式
+## 已实现功能
 
-  ![主窗口截图](Docs/images/主窗口截图.png)
+### 写作与整理
 
-- **快捷便签** — 通过托盘或全局快捷键（默认 `Ctrl+Space`）随时唤出便签窗口
+- **Markdown 编辑、预览与分栏模式**：支持 GFM、任务列表、表格、数学公式、代码块和常用 Markdown 格式。
+- **快速便签与磁贴**：可通过托盘或全局快捷键快速记录，也可把笔记固定在桌面一角。
+- **分类、标签与置顶**：给笔记归类、加标签、置顶，并支持组合筛选。
+- **增强搜索**：支持 `tag:标签`、`in:分类`、`pinned` 与 `unpinned` 查询。
+- **待办聚合**：从所有笔记汇总未完成任务，在面板中勾选后直接回写原 Markdown。
+- **模板与每日便笺**：保存常用笔记模板；同一天可重复打开同一篇每日便笺。
+- **版本历史**：自动保留最近 20 份正文版本，可按需恢复。
 
-  ![小窗多开示例](Docs/images/小窗多开示例.gif)
+### 笔记之间的连接
 
-- **磁贴模式** — 将笔记固定在桌面某处，以便快速查阅和复制
+- **内部链接**：在正文输入 `[[笔记标题]]`，标题唯一时可从预览直接跳转。
+- **稳定链接**：支持 `[[note:笔记ID|显示文字]]`；即使标题重复，也不会猜错目标。
+- **反向链接**：查看哪些笔记提到了当前笔记。
+- **复制稳定链接**：工具栏可一键复制当前笔记的稳定链接，方便插入其他笔记。
 
-  ![磁贴示例](Docs/images/AI绘画截图.png)
+### 提醒与本地数据
 
-- **导入导出** — 支持 `.md` 文件的导入和导出
+- **一次性本地提醒**：为当前笔记设置提醒、查看和删除未到期提醒。
+- **到点回到笔记**：花笺运行时会检查提醒，到点后唤起窗口、显示应用内提示并打开关联笔记。
+- **本地优先**：笔记、设置、版本历史和提醒都保存于本机数据目录。
+- **导入与导出**：支持 `.md` 文件导入、导出与外部 Markdown 文件编辑。
 
-## 应用场景
+> [!NOTE]
+> 提醒当前是“应用运行时提醒”：花笺彻底退出后不会作为系统常驻服务运行；下次启动时会补发仍未触发的过期提醒。
 
-- 当作随时可见的剪贴板，快速暂存和复制文本
-- 游戏、看视频时随手记点东西
-- 临时记录思路或灵感
-- 桌面待办清单
+## 下载与安装
 
-## 快速开始
+前往 [Releases](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest) 下载最新版。
 
-### 下载安装
+| 文件 | 适用场景 |
+| --- | --- |
+| `花笺_版本号_x64-setup.exe` | **Windows x64 安装版**，推荐大多数用户使用。|
+| `花笺_版本号_x64.exe` | **Windows x64 绿色版**，下载后可直接运行，不写入安装目录。|
+| `floral-notepaper-版本号-source.zip` | 与发布标签对应的完整源码包。|
 
-#### 通过Mirror酱下载
+首次运行时，Windows 可能会提示未知发布者。这是因为当前发布包尚未做商业代码签名；请仅从本仓库的 Release 页面下载，并按需核验发布页提供的 SHA-256 值。
 
-> [!TIP]
-> 如您的网络不便访问 GitHub，或下载速度过慢，您可以尝试通过Mirror酱下载花笺<br>
-> 此外，您也可以通过使用Mirror酱下载花笺来赞助花笺的开发者，详见[Mirror酱官网](https://mirrorchyan.com/)
+## 从源码运行
 
-| 系统    | 架构                    | 下载链接                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Windows | x64                     | [![Windows x64 Setup](https://img.shields.io/badge/Setup-x64-blue?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgyNDJ2MjQySDB6TTI3MCAwaDI0MnYyNDJIMjcwek0wIDI3MGgyNDJ2MjQySDB6TTI3MCAyNzBoMjQydjI0MkgyNzB6Ii8%2BPC9zdmc%2B)](https://mirrorchyan.com/zh/projects?rid=floral&os=windows&arch=x64&channel=stable) |
-| macOS   | AArch64 (Apple Silicon) | [![macOS Apple Silicon](https://img.shields.io/badge/DMG-Apple%20Silicon-%23000000.svg?logo=apple)](https://mirrorchyan.com/zh/projects?rid=floral&os=macos&channel=stable&arch=arm64)                                                                                                                                                                                                                                                                             |
-| macOS   | x64 (Intel)             | [![macOS Apple Silicon](https://img.shields.io/badge/DMG-Intel%20X64-%2300A9E0.svg?logo=apple)](https://mirrorchyan.com/zh/projects?rid=floral&os=macos&channel=stable&arch=x64)                                                                                                                                                                                                                                                                                   |
+### 环境
 
-#### 通过 GitHub 下载
+- Node.js 20+
+- Rust stable
+- Windows 上构建桌面程序还需要 [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
-请前往 [Release 页](https://github.com/Achilng/floral-notepaper/releases/latest) 下载花笺
+### 命令
 
-##### 下载参考
+```bash
+npm install
+npm run tauri dev
+```
 
-| 系统    | 架构                    | 类型     | 文件名                                  |
-| ------- | ----------------------- | -------- | --------------------------------------- |
-| Windows | x64                     | 安装程序 | floral-notepaper\_版本号\_x64-setup.exe |
-| Windows | x64                     | 便携版   | floral-notepaper\_版本号.exe            |
-| macOS   | AArch64 (Apple Silicon) | DMG      | floral-notepaper\_版本号\_aarch64.dmg   |
-| macOS   | x64 (Intel)             | DMG      | floral-notepaper\_版本号\_x64.dmg       |
+测试与发布构建：
 
-#### macOS 版安装指引
+```bash
+npm run lint
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+npm run tauri build -- --bundles nsis
+```
 
-如遇安装问题，请参考：
+## 数据与隐私
 
-- Wiki 中的 [macOS 安装指引](https://github.com/Achilng/floral-notepaper/wiki/macOS-%E5%AE%89%E8%A3%85%E6%8C%87%E5%BC%95-%7C-macOS-Installation-Guidance)
-- 或视频（Bilibili）：[Mac云课堂 - 在 Mac 上装软件，要学会和苹果斗智斗勇](https://www.bilibili.com/video/BV1tg411t7hN)
+花笺不要求注册账号，也不会主动上传笔记内容。数据目录可在应用设置中查看或迁移；在迁移、清理或覆盖数据前，请自行备份重要笔记。
 
-### 从源码构建
+## 上游与许可
 
-请参考 [CONTRIBUTING.md](CONTRIBUTING.md)
+本仓库是 [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper) 的衍生维护版本，感谢上游项目及其贡献者提供坚实的基础。
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Achilng/floral-notepaper&type=Date&legend=top-left)](https://star-history.com/#Achilng/floral-notepaper&Date)
-
-## 🌟 贡献者
-
-[![contrib.rocks](https://contrib.rocks/image?repo=Achilng/floral-notepaper&max=1000)](https://contrib.rocks/image?repo=Achilng/floral-notepaper&max=1000)
-
-## Sponsors
-
-<!-- markdownlint-disable -->
-
-| <img src="https://signpath.org/assets/favicon.png" alt="SignPath Logo" width=50> | Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org/) |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-
-<!-- markdownlint-restore -->
-
-## 许可证
-
-[MIT](LICENSE)
+本项目依照 [MIT License](LICENSE) 发布。原始版权与许可声明均在仓库中保留。

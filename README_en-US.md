@@ -1,26 +1,26 @@
-[简体中文](README.md) | [繁體中文](README_zh-HK.md) | **English**
-
 <!-- markdownlint-disable -->
+
+[简体中文](README.md) | [繁體中文](README_zh-HK.md) | **English**
 
 <div align="center">
 
-<img src="./src-tauri/icons/icon.png" width="120" alt="Floral Notepaper Icon">
+<img src="./src-tauri/icons/icon.png" width="120" alt="Floral Notepaper icon">
 
-# Floral Notepaper
+# Floral Notepaper · Enhanced Edition
 
-A lightweight, elegant, and modern sticky note app for your desktop<br>
-Built with Tauri 2 + React
+Keep scattered thoughts on your own computer.<br>
+A local-first Markdown note app with quick desktop notes.
 
-[Report an Issue](https://github.com/Achilng/floral-notepaper/issues) · [Changelog](https://github.com/Achilng/floral-notepaper/releases) <br>
-[Quick Start](#quick-start) · [FAQ](https://github.com/Achilng/floral-notepaper/wiki) · [Building from Source](#building-from-source)
+Maintained by [TheEarlyWinter](https://github.com/TheEarlyWinter)<br>
+Built on the Tauri 2 + React project [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper)
 
-[![Version](https://img.shields.io/github/v/release/Achilng/floral-notepaper)](https://github.com/Achilng/floral-notepaper/releases/latest)
+[Download latest](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest) · [Report an issue](https://github.com/TheEarlyWinter/floral-notepaper/issues) · [Releases](https://github.com/TheEarlyWinter/floral-notepaper/releases)
+
+[![Release](https://img.shields.io/github/v/release/TheEarlyWinter/floral-notepaper?label=release)](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Stars](https://img.shields.io/github/stars/Achilng/floral-notepaper?color=ffcb47&labelColor=black)</br>
-![React 19](https://img.shields.io/badge/React-19-blue?logo=react)
 ![Tauri v2](https://img.shields.io/badge/Tauri-v2-%2324C8D8?logo=tauri)
-![Rust Edition 2021](https://img.shields.io/badge/Rust-2021-%23000000?logo=rust)<br>
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Achilng/floral-notepaper)
+![React 19](https://img.shields.io/badge/React-19-blue?logo=react)
+![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
 
 </div>
 
@@ -28,90 +28,83 @@ Built with Tauri 2 + React
 
 ---
 
-## Why Floral Notepaper
+## What It Is
 
-Most note-taking or sticky note apps out there are either bloated and steep to learn, or dated and long abandoned. Floral Notepaper was built to be different — quick to summon, light to use, and a pleasure to look at.
+Floral Notepaper Enhanced Edition is for people who want their notes to stay on their own computer without giving up a comfortable writing flow.
+
+Use it as a quick desktop note or as a lightweight Markdown library: capture a task, keep a daily page, connect related notes, and leave a reminder for your future self. No account and no cloud service are required.
 
 ## Features
 
-- **Markdown Editing & Preview** — Full GitHub Flavored Markdown support with seamless toggling between edit and preview modes
+### Writing and organization
 
-  ![Main window screenshot](Docs/images/主窗口截图.png)
+- **Markdown editing, preview, and split view** with GFM, task lists, tables, math, code blocks, and common Markdown formatting.
+- **Quick notes and desktop tiles** available from the tray or a global shortcut.
+- **Categories, tags, and pinned notes** for lightweight organization.
+- **Search filters**: `tag:tag`, `in:category`, `pinned`, and `unpinned`.
+- **Aggregated to-dos** that write completion changes back to the original Markdown note.
+- **Templates and daily notes** for repeatable writing workflows.
+- **Version history** retaining the latest 20 content snapshots, with restore support.
 
-- **Quick Note** — Summon a note window instantly from the system tray or via a global hotkey (default: `Ctrl+Space`)
+### Connected notes
 
-  ![Multi-window example](Docs/images/小窗多开示例.gif)
+- **Internal links** with `[[Note title]]`; unique titles can be opened directly from preview.
+- **Stable links** with `[[note:note-id|label]]`, avoiding ambiguity when titles collide.
+- **Backlinks** to see which notes refer to the current note.
+- **Copy stable link** from the toolbar to paste into another note.
 
-- **Pin Mode** — Pin a note to a fixed spot on your desktop for quick reference and easy copying
+### Reminders and local data
 
-  ![Pin mode example](Docs/images/AI绘画截图.png)
+- **One-time local reminders** tied to the current note.
+- **Return-to-note reminders**: while the app is running, due reminders bring the window forward, show an in-app alert, and open the linked note.
+- **Local-first storage** for notes, settings, version history, and reminders.
+- **Markdown import, export, and external file editing**.
 
-- **Import & Export** — Import and export notes as `.md` files
+> [!NOTE]
+> Reminders currently run while Floral Notepaper is open. The app does not install a background system service; overdue, untriggered reminders are delivered when the app is next opened.
 
-## Use Cases
+## Download
 
-- Use it as an always-visible clipboard to stash and copy text on the fly
-- Jot things down while gaming or watching videos
-- Capture a quick thought or burst of inspiration
-- Keep a to-do list right on your desktop
+Download the latest version from [Releases](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest).
 
-## Quick Start
+| File | Use |
+| --- | --- |
+| `花笺_version_x64-setup.exe` | **Windows x64 installer**, recommended for most users. |
+| `花笺_version_x64.exe` | **Windows x64 portable build**, runs directly without installation. |
+| `floral-notepaper-version-source.zip` | Complete source archive for the matching release tag. |
 
-### Download
+Windows may show an unknown publisher warning on first launch because the current builds are not commercially code-signed. Download only from this repository's Releases page and verify the SHA-256 checksum published with each release when needed.
 
-#### Via MirrorChyan
+## Run from Source
 
-> [!TIP]
-> If you have trouble accessing GitHub or experience slow downloads, try downloading Floral Notepaper via MirrorChyan.<br>
-> Downloading via MirrorChyan also helps support the developer — see the [MirrorChyan website](https://mirrorchyan.com/) for details.
+### Prerequisites
 
-| Platform | Arch                    | Download                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Windows  | x64                     | [![Windows x64 Setup](https://img.shields.io/badge/Setup-x64-blue?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgNTEyIDUxMiI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgyNDJ2MjQySDB6TTI3MCAwaDI0MnYyNDJIMjcwek0wIDI3MGgyNDJ2MjQySDB6TTI3MCAyNzBoMjQydjI0MkgyNzB6Ii8%2BPC9zdmc%2B)](https://mirrorchyan.com/zh/projects?rid=floral&os=windows&arch=x64&channel=stable) |
-| macOS    | AArch64 (Apple Silicon) | [![macOS Apple Silicon](https://img.shields.io/badge/DMG-Apple%20Silicon-%23000000.svg?logo=apple)](https://mirrorchyan.com/zh/projects?rid=floral&os=macos&channel=stable&arch=arm64)                                                                                                                                                                                                                                                                             |
-| macOS    | x64 (Intel)             | [![macOS Intel](https://img.shields.io/badge/DMG-Intel%20X64-%2300A9E0.svg?logo=apple)](https://mirrorchyan.com/zh/projects?rid=floral&os=macos&channel=stable&arch=x64)                                                                                                                                                                                                                                                                                           |
+- Node.js 20+
+- Rust stable
+- On Windows, [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) for desktop builds
 
-#### Via GitHub
+### Commands
 
-Head over to the [Releases page](https://github.com/Achilng/floral-notepaper/releases/latest) to download.
+```bash
+npm install
+npm run tauri dev
+```
 
-##### Download Reference
+Test and package:
 
-| Platform | Arch                    | Type      | Filename                             |
-| -------- | ----------------------- | --------- | ------------------------------------ |
-| Windows  | x64                     | Installer | floral-notepaper_x.y.z_x64-setup.exe |
-| Windows  | x64                     | Portable  | floral-notepaper_x.y.z.exe           |
-| macOS    | AArch64 (Apple Silicon) | DMG       | floral-notepaper_x.y.z_aarch64.dmg   |
-| macOS    | x64 (Intel)             | DMG       | floral-notepaper_x.y.z_x64.dmg       |
+```bash
+npm run lint
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml --lib
+npm run tauri build -- --bundles nsis
+```
 
-#### macOS Installation Guidance
+## Data and Privacy
 
-If you encounter installation issues, please refer to:
+Floral Notepaper does not require an account and does not proactively upload note content. The data directory can be viewed or migrated in app settings. Back up important notes before migrating, cleaning, or overwriting data.
 
-- Wiki: [macOS Installation Guidance](https://github.com/Achilng/floral-notepaper/wiki/macOS-%E5%AE%89%E8%A3%85%E6%8C%87%E5%BC%95-%7C-macOS-Installation-Guidance)
-- Or video (Bilibili): [Mac云课堂 - Installing software on Mac means learning to wrestle with Apple](https://www.bilibili.com/video/BV1tg411t7hN)
+## Upstream and License
 
-### Building from Source
+This repository is a maintained derivative of [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper). Thanks to the upstream project and its contributors for the foundation.
 
-Please refer to [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Achilng/floral-notepaper&type=Date&legend=top-left)](https://star-history.com/#Achilng/floral-notepaper&Date)
-
-## 🌟 Contributors
-
-[![contrib.rocks](https://contrib.rocks/image?repo=Achilng/floral-notepaper&max=1000)](https://contrib.rocks/image?repo=Achilng/floral-notepaper&max=1000)
-
-## Sponsors
-
-<!-- markdownlint-disable -->
-
-| <img src="https://signpath.org/assets/favicon.png" alt="SignPath Logo" width=50> | Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org/) |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-
-<!-- markdownlint-restore -->
-
-## License
-
-[MIT](LICENSE)
+This project is distributed under the [MIT License](LICENSE). Original copyright and license notices are retained.
