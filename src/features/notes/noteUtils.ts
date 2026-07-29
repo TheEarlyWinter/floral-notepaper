@@ -36,6 +36,8 @@ export function metadataFromNote(note: Note): NoteMetadata {
     updatedAt: note.updatedAt,
     wordCount: note.wordCount,
     preview: buildPreview(note.content),
+    tags: note.tags || [],
+    pinned: note.pinned || false,
   };
 }
 
@@ -67,7 +69,11 @@ export function groupNotesByCategory(
 
   const result: CategoryGroup[] = [];
   for (const [category, categoryNotes] of groups) {
-    categoryNotes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    // 置顶优先，再按更新时间排序
+    categoryNotes.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    });
     result.push({
       category,
       notes: categoryNotes,
@@ -109,4 +115,21 @@ export function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "--:--";
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** 收集所有笔记中出现的唯一标签 */
+export function collectAllTags(notes: NoteMetadata[]): string[] {
+  const set = new Set<string>();
+  for (const note of notes) {
+    for (const tag of note.tags || []) {
+      if (tag.trim()) set.add(tag.trim());
+    }
+  }
+  return Array.from(set).sort();
+}
+
+/** 按标签筛选笔记 */
+export function filterNotesByTag(notes: NoteMetadata[], tag: string): NoteMetadata[] {
+  if (!tag) return notes;
+  return notes.filter((n) => (n.tags || []).includes(tag));
 }

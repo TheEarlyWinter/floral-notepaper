@@ -13,6 +13,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { save } from "@tauri-apps/plugin-dialog";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
 import { showToast } from "./Toast";
@@ -28,7 +29,7 @@ import {
   normalizeViewMode,
   saveConfig,
 } from "../features/settings/api";
-import type { AppConfig, ViewMode } from "../features/settings/types";
+import type { AppConfig, NoteTemplate, ViewMode } from "../features/settings/types";
 import { normalizeTileColor } from "../features/settings/tileColor";
 import { getUpdateStatus, reportInstallPreparation } from "../features/update/api";
 import {
@@ -46,10 +47,16 @@ import type {
 import { BackgroundLayer } from "./BackgroundLayer";
 import { POPUP_VIEWPORT_MARGIN, useViewportPopupPosition } from "./popupPosition";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
+import { TodoPanel } from "./TodoPanel";
+import { NoteHistoryPanel } from "./NoteHistoryPanel";
+import { BacklinksPanel } from "./BacklinksPanel";
+import { ReminderPanel } from "./ReminderPanel";
 import {
   createNote,
   createCategory,
   deleteCategory,
+  openDailyNote,
+  restoreNoteVersion,
   deleteNote,
   getErrorMessage,
   getFileModifiedTime,
@@ -65,10 +72,11 @@ import {
 import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
 import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
-import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
+import type { ExternalFile, Note, NoteMetadata, Reminder } from "../features/notes/types";
 import {
+  collectAllTags,
   countNoteChars,
-  filterNotes,
+  filterNotesByTag,
   formatShortDate,
   formatTime,
   getDisplayTitle,
@@ -76,6 +84,12 @@ import {
   metadataFromNote,
 } from "../features/notes/noteUtils";
 import type { CategoryGroup } from "../features/notes/noteUtils";
+import {
+  filterNotesWithSearchSyntax,
+  toggleTodoInContent,
+  type TodoItem,
+} from "../features/notes/todoUtils";
+import { resolveWikiLink, wikiLinkSyntax } from "../features/notes/wikiLinks";
 import {
   getNoteContextMenuItems,
   type NoteContextMenuAction,
@@ -95,7 +109,26 @@ import {
 } from "../features/windows/tileWindowEvents";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
-type SidePanelMode = "about" | "settings";
+type SidePanelMode = "about" | "settings" | "todos" | "history" | "backlinks" | "reminders";
+
+const BUILT_IN_TEMPLATES: NoteTemplate[] = [
+  { id: "daily", name: "今日计划", content: "# {{date}}\n\n## 待办\n- [ ] \n\n## 随手记\n" },
+  {
+    id: "reading",
+    name: "阅读笔记",
+    content: "# 书名 / 文章\n\n## 摘录\n\n## 想法\n\n## 行动\n- [ ] ",
+  },
+  {
+    id: "meeting",
+    name: "会议记录",
+    content: "# 会议主题\n\n时间：{{date}}\n\n## 结论\n\n## 待办\n- [ ] ",
+  },
+];
+
+function renderTemplateContent(content: string): string {
+  const date = new Intl.DateTimeFormat("zh-CN", { dateStyle: "full" }).format(new Date());
+  return content.replace(/\{\{date\}\}/g, date);
+}
 
 // 侧面板只在用户主动打开时挂载，懒加载可把关于面板（贡献者数据、更新设置）
 // 和设置面板从首屏 bundle 中拆出
@@ -344,6 +377,10 @@ export function MainWindow({
   const [externalFiles, setExternalFiles] = useState<ExternalFile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [noteTags, setNoteTags] = useState<string[]>([]);
+  const [isPinned, setIsPinned] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(
     normalizeViewMode(initialConfig?.defaultViewMode ?? "split"),
   );
@@ -357,6 +394,10 @@ export function MainWindow({
   const [noteMenuClosing, setNoteMenuClosing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [todosOpen, setTodosOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [backlinksOpen, setBacklinksOpen] = useState(false);
+  const [remindersOpen, setRemindersOpen] = useState(false);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
     initialSettingsOpen && initialConfig ? "settings" : null,
   );
@@ -426,6 +467,10 @@ export function MainWindow({
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
   titleValueRef.current = title;
+  const tagsValueRef = useRef(noteTags);
+  tagsValueRef.current = noteTags;
+  const pinnedValueRef = useRef(isPinned);
+  pinnedValueRef.current = isPinned;
   const notesRef = useRef(notes);
   notesRef.current = notes;
   const externalFilesRef = useRef(externalFiles);
@@ -566,9 +611,17 @@ export function MainWindow({
   }, []);
   const visibleSidePanel: SidePanelMode | null = aboutOpen
     ? "about"
-    : settingsOpen && settingsConfig
-      ? "settings"
-      : null;
+    : todosOpen
+      ? "todos"
+      : historyOpen && selectedId && !isExternal
+        ? "history"
+        : backlinksOpen && selectedId && !isExternal
+          ? "backlinks"
+          : remindersOpen && selectedId && !isExternal
+            ? "reminders"
+            : settingsOpen && settingsConfig
+          ? "settings"
+          : null;
   const sidePanelExpanded = visibleSidePanel !== null;
   const openAboutPanel = useCallback(() => {
     setSettingsOpen(false);
@@ -576,7 +629,19 @@ export function MainWindow({
     setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
   }, []);
 
-  const filteredNotes = useMemo(() => filterNotes(notes, searchQuery), [notes, searchQuery]);
+  const templates = useMemo(
+    () => [...BUILT_IN_TEMPLATES, ...(settingsConfig?.templates ?? [])],
+    [settingsConfig?.templates],
+  );
+
+  const filteredNotes = useMemo(
+    () =>
+      filterNotesByTag(
+        filterNotesWithSearchSyntax(notes, searchQuery, (note) => getDisplayTitle(note, t)),
+        tagFilter,
+      ),
+    [notes, searchQuery, tagFilter, t],
+  );
 
   const categoryGroups = useMemo(
     () => groupNotesByCategory(filteredNotes, categories),
@@ -596,7 +661,6 @@ export function MainWindow({
 
   const applyNote = useCallback(
     (note: Note) => {
-      // 立刻同步各 ref，保证保存快照与守卫在下一次渲染前就能读到最新值
       loadEpoch.bump();
       selectedIdRef.current = note.id;
       titleValueRef.current = note.title;
@@ -607,6 +671,8 @@ export function MainWindow({
       setContent(note.content);
       setSaveState("saved");
       setNoteTransitionKey((k) => k + 1);
+      setNoteTags(note.tags || []);
+      setIsPinned(note.pinned || false);
     },
     [loadEpoch],
   );
@@ -646,10 +712,14 @@ export function MainWindow({
     selectedIdRef.current = null;
     titleValueRef.current = "";
     contentValueRef.current = "";
+    tagsValueRef.current = [];
+    pinnedValueRef.current = false;
     saveStateRef.current = "idle";
     setSelectedId(null);
     setTitle("");
     setContent("");
+    setNoteTags([]);
+    setIsPinned(false);
     setSaveState("idle");
   }, [loadEpoch]);
 
@@ -686,6 +756,10 @@ export function MainWindow({
         setSelectedId(filePath);
         setTitle(displayTitle);
         setContent(fileContent);
+        setNoteTags([]);
+        setIsPinned(false);
+        tagsValueRef.current = [];
+        pinnedValueRef.current = false;
         setSaveState("saved");
         setNoteTransitionKey((k) => k + 1);
         externalFileMtimeRef.current = mtime;
@@ -1123,6 +1197,8 @@ export function MainWindow({
       // 保存完成后也只在"仍停留在这篇笔记"时才更新保存状态
       const titleSnapshot = titleValueRef.current;
       const contentSnapshot = contentValueRef.current;
+      const tagsSnapshot = tagsValueRef.current;
+      const pinnedSnapshot = pinnedValueRef.current;
       const stillCurrent = () => selectedIdRef.current === id;
       const settleSaveState = (state: SaveState) => {
         if (!stillCurrent()) return;
@@ -1148,6 +1224,8 @@ export function MainWindow({
             title: titleSnapshot,
             content: contentSnapshot,
             category,
+            tags: tagsSnapshot,
+            pinned: pinnedSnapshot,
           });
           replaceNoteMetadata(note);
           const contentChanged =
@@ -1254,7 +1332,12 @@ export function MainWindow({
   const handleNewNote = async () => {
     await saveCurrentNote();
     try {
-      const note = await createNote({ title: "", content: "", category: activeCategory });
+      const template = templates.find((item) => item.id === selectedTemplateId);
+      const note = await createNote({
+        title: "",
+        content: template ? renderTemplateContent(template.content) : "",
+        category: activeCategory,
+      });
       replaceNoteMetadata(note);
       applyNote(note);
     } catch (error) {
@@ -1372,6 +1455,77 @@ export function MainWindow({
     setAboutOpen(false);
   }, []);
 
+  const handleToggleTodos = useCallback(() => {
+    setTodosOpen((open) => {
+      const nextOpen = !open;
+      if (nextOpen) {
+        setSettingsOpen(false);
+        setAboutOpen(false);
+        setHistoryOpen(false);
+        setBacklinksOpen(false);
+      }
+      return nextOpen;
+    });
+  }, []);
+
+  const handleToggleTodo = useCallback(
+    async (note: Note, item: TodoItem, completed: boolean) => {
+      const nextContent = toggleTodoInContent(note.content, item.line, completed);
+      if (nextContent === note.content) return;
+
+      const updated = await updateNote(note.id, {
+        title: note.title,
+        content: nextContent,
+        category: note.category,
+        tags: note.tags,
+        pinned: note.pinned,
+      });
+      replaceNoteMetadata(updated);
+      if (selectedIdRef.current === note.id) applyNote(updated);
+    },
+    [applyNote, replaceNoteMetadata],
+  );
+
+  const handleSaveAsTemplate = useCallback(() => {
+    if (isExternal || !settingsConfig || !content.trim()) return;
+    const name = window.prompt("模板名称", title.trim() || "未命名模板")?.trim();
+    if (!name) return;
+
+    const template: NoteTemplate = {
+      id: globalThis.crypto?.randomUUID?.() ?? `template-${Date.now()}`,
+      name,
+      content,
+    };
+    handleSettingsChange({
+      ...settingsConfig,
+      templates: [...(settingsConfig.templates ?? []), template],
+    });
+    setSelectedTemplateId(template.id);
+    showToast("已存为模板");
+  }, [content, handleSettingsChange, isExternal, settingsConfig, title]);
+
+  const handleOpenDailyNote = useCallback(async () => {
+    try {
+      const note = await openDailyNote();
+      replaceNoteMetadata(note);
+      applyNote(note);
+      setActiveCategory(note.category);
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }, [applyNote, replaceNoteMetadata]);
+
+  const handleRestoreNoteVersion = useCallback(
+    async (versionId: string) => {
+      if (!selectedId || isExternal) return;
+      const note = await restoreNoteVersion(selectedId, versionId);
+      replaceNoteMetadata(note);
+      applyNote(note);
+      showToast("已恢复历史版本");
+    },
+    [applyNote, isExternal, replaceNoteMetadata, selectedId],
+  );
+
   const handleImportNote = async () => {
     try {
       const saved = await saveCurrentNote();
@@ -1382,6 +1536,42 @@ export function MainWindow({
 
       replaceNoteMetadata(note);
       applyNote(note);
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleExportHtml = async () => {
+    if (!selectedId) return;
+    try {
+      await saveCurrentNote(true);
+      const filePath = await save({
+        defaultPath: `${title || "未命名"}.html`,
+        filters: [{ name: "HTML", extensions: ["html"] }],
+      });
+      if (!filePath) return;
+      const html = wrapHtml(title || "未命名", content);
+      await saveExternalFile(filePath, html);
+      showToast(t("main.export.htmlSaved", { defaultValue: "HTML 已导出" }));
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (!selectedId) return;
+    try {
+      await saveCurrentNote(true);
+      const html = wrapHtml(title || "未命名", content);
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank", "width=800,height=600");
+      if (win) {
+        win.onload = () => {
+          win.print();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+      }
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -1402,6 +1592,17 @@ export function MainWindow({
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    const unlisten = listen<Reminder>("reminder://due", (event) => {
+      const reminder = event.payload;
+      showToast(`提醒：${reminder.message}`, "warning");
+      if (reminder.noteId) void handleSelectNote(reminder.noteId);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [handleSelectNote]);
 
   const handleSelectExternalFile = async (id: string) => {
     if (id === selectedId) return;
@@ -1657,6 +1858,28 @@ export function MainWindow({
       markDirty();
     }
   };
+
+  const handleCopyStableLink = useCallback(async () => {
+    if (!selectedNote) return;
+    try {
+      await navigator.clipboard.writeText(wikiLinkSyntax(selectedNote));
+      showToast("已复制稳定关联链接", "info");
+    } catch {
+      showToast("复制失败，请检查剪贴板权限", "warning");
+    }
+  }, [selectedNote]);
+
+  const handleOpenWikiLink = useCallback(
+    (target: string) => {
+      const noteId = resolveWikiLink(target, notesRef.current);
+      if (!noteId) {
+        showToast("未找到唯一匹配的关联笔记，请使用 [[note:笔记ID|标题]]", "warning");
+        return;
+      }
+      void handleSelectNote(noteId);
+    },
+    [handleSelectNote],
+  );
 
   const handleOpenNotepad = async () => {
     try {
@@ -2120,13 +2343,19 @@ export function MainWindow({
           </div>
         </div>
 
-        <div className="relative z-10 flex flex-1 min-h-0">
+        <div className="relative z-10 flex flex-1 min-h-0 main-layout-row">
           <div
-            className="border-r border-paper-deep/30 bg-paper/40 shrink-0 overflow-hidden transition-[width] duration-[600ms]"
+            className="border-r border-paper-deep/30 bg-paper/40 shrink-0 overflow-hidden transition-[width] duration-[600ms] main-sidebar"
             style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
           >
             <div className="flex flex-col h-full" style={{ width: `${sidebarWidth}px` }}>
               <div className="px-3 pt-3 pb-2 shrink-0">
+                {/* 标签筛选 */}
+                <TagFilterBar
+                  notes={notes}
+                  selectedTag={tagFilter}
+                  onSelectTag={(tag) => setTagFilter(tag === tagFilter ? "" : tag)}
+                />
                 <div className="flex items-center gap-2 px-2.5 h-8 rounded-lg bg-paper-warm/80 border border-paper-deep/40 focus-within:border-bamboo/30 focus-within:bg-cloud transition-all">
                   <svg
                     width="13"
@@ -2171,6 +2400,38 @@ export function MainWindow({
               </div>
 
               <div className="px-3 pb-2 shrink-0 space-y-1">
+                <select
+                  value={selectedTemplateId}
+                  onChange={(event) => setSelectedTemplateId(event.target.value)}
+                  className="w-full h-7 px-2 rounded-lg border border-paper-deep/25 bg-paper-warm/45 text-[11px] text-ink-faint cursor-pointer"
+                  aria-label="新建笔记模板"
+                >
+                  <option value="">空白笔记</option>
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => void handleOpenDailyNote()}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="4" width="18" height="17" rx="2" />
+                    <path d="M8 2v4M16 2v4M7 10h10M8 14h3" />
+                  </svg>
+                  <span>每日便笺</span>
+                </button>
                 <button
                   onClick={handleNewNote}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-bamboo hover:bg-bamboo-mist/60 transition-all cursor-pointer group"
@@ -2188,6 +2449,25 @@ export function MainWindow({
                     <path d="M12 5v14M5 12h14" />
                   </svg>
                   <span>{t("main.sidebar.newNote", { defaultValue: "新建笔记" })}</span>
+                </button>
+                <button
+                  onClick={handleToggleTodos}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m9 11 3 3L22 4" />
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                  <span>待办聚合</span>
                 </button>
                 <button
                   onClick={() => void handleImportNote()}
@@ -2686,6 +2966,159 @@ export function MainWindow({
                 <div className="h-4 w-px bg-paper-deep/30 mx-1" />
 
                 <button
+                  onClick={() => {
+                    setHistoryOpen((open) => {
+                      const nextOpen = !open;
+                      if (nextOpen) {
+                        setSettingsOpen(false);
+                        setAboutOpen(false);
+                        setTodosOpen(false);
+                        setBacklinksOpen(false);
+                      }
+                      return nextOpen;
+                    });
+                  }}
+                  disabled={!selectedId || isExternal}
+                  aria-label="版本历史"
+                  title="版本历史"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 12a9 9 0 1 0 3-6.7" />
+                    <path d="M3 4v5h5M12 7v5l3 2" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => {
+                    setBacklinksOpen((open) => {
+                      const nextOpen = !open;
+                      if (nextOpen) {
+                        setSettingsOpen(false);
+                        setAboutOpen(false);
+                        setTodosOpen(false);
+                        setHistoryOpen(false);
+                      }
+                      return nextOpen;
+                    });
+                  }}
+                  disabled={!selectedId || isExternal}
+                  aria-label="反向链接"
+                  title="反向链接"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" />
+                    <path d="M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => void handleCopyStableLink()}
+                  disabled={!selectedNote || isExternal}
+                  aria-label="复制稳定链接"
+                  title="复制稳定链接"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="11" height="11" rx="2" />
+                    <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => {
+                    setRemindersOpen((open) => {
+                      const nextOpen = !open;
+                      if (nextOpen) {
+                        setSettingsOpen(false);
+                        setAboutOpen(false);
+                        setTodosOpen(false);
+                        setHistoryOpen(false);
+                        setBacklinksOpen(false);
+                      }
+                      return nextOpen;
+                    });
+                  }}
+                  disabled={!selectedId || isExternal}
+                  aria-label="添加提醒"
+                  title="添加提醒"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="13" r="8" />
+                    <path d="M12 9v4l2.5 1.5M9 3h6M12 3v2" />
+                  </svg>
+                </button>
+                <button
+                  onClick={handleSaveAsTemplate}
+                  disabled={!selectedId || isExternal || !content.trim()}
+                  aria-label="存为模板"
+                  title="存为模板"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 21h14" />
+                  </svg>
+                </button>
+
+                {/* 星标置顶 */}
+                <button
+                  onClick={() => {
+                    const next = !isPinned;
+                    setIsPinned(next);
+                    pinnedValueRef.current = next;
+                    markDirty();
+                  }}
+                  disabled={!selectedId || isExternal}
+                  aria-label={
+                    isPinned
+                      ? t("main.editor.unpin", { defaultValue: "取消置顶" })
+                      : t("main.editor.pin", { defaultValue: "置顶" })
+                  }
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
+                    isPinned
+                      ? "text-yellow-500 bg-yellow-50/60 hover:text-yellow-600"
+                      : "text-ink-ghost hover:text-yellow-500 hover:bg-paper-warm"
+                  }`}
+                  title={
+                    isPinned
+                      ? t("main.editor.unpin", { defaultValue: "取消置顶" })
+                      : t("main.editor.pin", { defaultValue: "置顶" })
+                  }
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill={isPinned ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                  </svg>
+                </button>
+
+                <button
                   onClick={() => void handlePinEntry()}
                   disabled={!selectedId}
                   aria-label={pinTileButtonTitle(selectedTilePinned)}
@@ -2770,6 +3203,29 @@ export function MainWindow({
                 >
                   {t("common.save", { defaultValue: "保存" })}
                 </button>
+
+                {/* 导出按钮 */}
+                {!isExternal && selectedId && (
+                  <>
+                    <div className="h-4 w-px bg-paper-deep/20" />
+                    <button
+                      onClick={() => void handleExportHtml()}
+                      disabled={!selectedId}
+                      className="px-2 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                      title={t("main.export.html", { defaultValue: "导出 HTML" })}
+                    >
+                      HTML
+                    </button>
+                    <button
+                      onClick={() => void handleExportPdf()}
+                      disabled={!selectedId}
+                      className="px-2 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                      title={t("main.export.pdf", { defaultValue: "导出 PDF" })}
+                    >
+                      PDF
+                    </button>
+                  </>
+                )}
 
                 {deleteConfirm ? (
                   <div
@@ -2859,6 +3315,17 @@ export function MainWindow({
                 disabled={!selectedId}
                 className="w-full text-[20px] font-display font-bold text-ink placeholder:text-ink-ghost/50 tracking-wide disabled:opacity-60"
               />
+              {/* 标签编辑 */}
+              {!isExternal && selectedId && (
+                <TagEditor
+                  tags={noteTags}
+                  onChange={(newTags) => {
+                    setNoteTags(newTags);
+                    tagsValueRef.current = newTags;
+                    markDirty();
+                  }}
+                />
+              )}
               <div className="flex items-center gap-3 mt-1.5">
                 <span className="text-[10px] text-ink-ghost font-mono tabular-nums truncate max-w-[200px]">
                   {selectedExternalFile
@@ -2943,10 +3410,14 @@ export function MainWindow({
                           onDrop={imageDropHandler}
                           onDragOver={imageDragOverHandler}
                           onScroll={handleEditorScroll}
-                          className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
+                          className="w-full h-full text-ink-soft font-body placeholder:text-ink-ghost/40 editor-textarea"
                           style={{
                             fontSize: `${settingsConfig?.fontSize ?? 14}px`,
                             tabSize: `var(--tab-indent-size, 2)`,
+                            fontFamily: `var(--editor-font-family)`,
+                            lineHeight: `var(--editor-line-height)`,
+                            maxWidth: `var(--editor-max-width)`,
+                            margin: "0 auto",
                           }}
                           placeholder={t("main.editor.contentPlaceholder", {
                             defaultValue: "开始写作……",
@@ -2999,6 +3470,7 @@ export function MainWindow({
                           fontSize={settingsConfig?.fontSize ?? 14}
                           renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
                           imageBaseDir={imageBaseDir ?? undefined}
+                          onOpenWikiLink={handleOpenWikiLink}
                         />
                       </div>
                     </div>
@@ -3068,6 +3540,82 @@ export function MainWindow({
                 <Suspense fallback={null}>
                   <AboutPanel onClose={handleCloseAbout} />
                 </Suspense>
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "history"
+                  ? sidePanelContentVisible && visibleSidePanel === "history"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+            >
+              {mountedSidePanel === "history" && selectedId && !isExternal ? (
+                <NoteHistoryPanel
+                  noteId={selectedId}
+                  onRestore={handleRestoreNoteVersion}
+                  onClose={() => setHistoryOpen(false)}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "backlinks"
+                  ? sidePanelContentVisible && visibleSidePanel === "backlinks"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+            >
+              {mountedSidePanel === "backlinks" && selectedId && !isExternal ? (
+                <BacklinksPanel
+                  noteId={selectedId}
+                  notes={notes}
+                  onOpenNote={(noteId) => {
+                    setBacklinksOpen(false);
+                    void handleSelectNote(noteId);
+                  }}
+                  onClose={() => setBacklinksOpen(false)}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "reminders"
+                  ? sidePanelContentVisible && visibleSidePanel === "reminders"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+            >
+              {mountedSidePanel === "reminders" && selectedId && !isExternal ? (
+                <ReminderPanel
+                  noteId={selectedId}
+                  noteTitle={title}
+                  onClose={() => setRemindersOpen(false)}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "todos"
+                  ? sidePanelContentVisible && visibleSidePanel === "todos"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+            >
+              {mountedSidePanel === "todos" ? (
+                <TodoPanel
+                  notes={notes}
+                  onOpenNote={(noteId) => {
+                    setTodosOpen(false);
+                    void handleSelectNote(noteId);
+                  }}
+                  onToggleTodo={handleToggleTodo}
+                  onClose={() => setTodosOpen(false)}
+                />
               ) : null}
             </div>
             <div
@@ -3225,4 +3773,145 @@ export function MainWindow({
       )}
     </div>
   );
+}
+
+/* ═══════════════════════════════════════════
+   标签筛选栏
+   ═══════════════════════════════════════════ */
+function TagFilterBar({
+  notes,
+  selectedTag,
+  onSelectTag,
+}: {
+  notes: NoteMetadata[];
+  selectedTag: string;
+  onSelectTag: (tag: string) => void;
+}) {
+  const allTags = useMemo(() => collectAllTags(notes), [notes]);
+
+  if (allTags.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mb-2 px-0.5">
+      {allTags.map((tag) => (
+        <button
+          key={tag}
+          type="button"
+          onClick={() => onSelectTag(tag)}
+          className={`px-2 py-0.5 rounded-full text-[10px] font-body transition-colors cursor-pointer ${
+            selectedTag === tag
+              ? "bg-bamboo text-white"
+              : "bg-paper-warm/70 border border-paper-deep/25 text-ink-faint hover:border-paper-deep/50"
+          }`}
+        >
+          #{tag}
+        </button>
+      ))}
+      {selectedTag && (
+        <button
+          type="button"
+          onClick={() => onSelectTag("")}
+          className="px-2 py-0.5 rounded-full text-[10px] text-red-400 hover:bg-danger-bg transition-colors cursor-pointer"
+        >
+          × 清除
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════
+   标签编辑器
+   ═══════════════════════════════════════════ */
+function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [input, setInput] = useState("");
+
+  const addTag = () => {
+    const tag = input.trim();
+    if (!tag || tags.includes(tag)) {
+      setInput("");
+      return;
+    }
+    onChange([...tags, tag]);
+    setInput("");
+  };
+
+  const removeTag = (tag: string) => {
+    onChange(tags.filter((t) => t !== tag));
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bamboo-mist/60 border border-bamboo/20 text-[10px] text-bamboo"
+        >
+          #{tag}
+          <button
+            type="button"
+            onClick={() => removeTag(tag)}
+            className="w-3 h-3 flex items-center justify-center rounded-full hover:bg-bamboo/20 transition-colors cursor-pointer"
+          >
+            <svg
+              width="8"
+              height="8"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M3 3l6 6M9 3l-6 6" />
+            </svg>
+          </button>
+        </span>
+      ))}
+      <div className="inline-flex items-center gap-1">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addTag();
+            }
+            if (e.key === "Backspace" && !input && tags.length > 0)
+              removeTag(tags[tags.length - 1]);
+          }}
+          placeholder="添加标签…"
+          className="w-20 h-5 px-1.5 rounded text-[10px] font-body text-ink-soft placeholder:text-ink-ghost bg-transparent border border-transparent focus:border-paper-deep/40 focus:bg-paper-warm/50 outline-none transition-colors"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** 将 Markdown 内容包装为完整 HTML 页面 */
+function wrapHtml(title: string, markdown: string): string {
+  const escaped = markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<style>
+  body { max-width: 800px; margin: 40px auto; padding: 0 20px; font-family: -apple-system, BlinkMacSystemFont, "HarmonyOS Sans SC", "PingFang SC", sans-serif; font-size: 16px; line-height: 1.8; color: #2a2a26; background: #f6f3ec; }
+  pre { background: #f0ebe0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
+  code { background: #f0ebe0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  pre code { padding: 0; background: none; }
+  blockquote { border-left: 3px solid #8a8a80; margin: 0; padding: 4px 16px; color: #5a5a52; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #d0d0c8; padding: 8px 12px; text-align: left; }
+  h1, h2, h3 { margin-top: 1.5em; margin-bottom: 0.5em; }
+  img { max-width: 100%; }
+  @media print { body { background: white; color: black; } }
+</style>
+</head>
+<body>
+<pre style="white-space: pre-wrap; font-family: inherit; background: none; padding: 0;">${escaped}</pre>
+</body>
+</html>`;
 }

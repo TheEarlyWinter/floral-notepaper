@@ -16,22 +16,14 @@
   font-display: swap;
 }
 
-@font-face {
-  font-family: "Source Han Serif SC";
-  src: url("./assets/fonts/SourceHanSerifSC-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 @theme {
   --color-paper: #f6f3ec;
   --color-paper-warm: #f0ebe0;
   --color-paper-deep: #e8e1d3;
-  --color-ink: #1a1a18;
-  --color-ink-soft: #3d3d38;
-  --color-ink-faint: #8a8a80;
-  --color-ink-ghost: #b8b8ae;
+  --color-ink: #121210;
+  --color-ink-soft: #2a2a26;
+  --color-ink-faint: #5a5a52;
+  --color-ink-ghost: #9a9a92;
   --color-bamboo: #2d5a3d;
   --color-bamboo-light: #3a7a52;
   --color-bamboo-mist: #e8f0eb;
@@ -55,6 +47,298 @@
 :root {
   --app-window-radius: 14px;
   --app-surface-radius: 14px;
+  /* 可被子主题/自定义覆盖的强调色 */
+  --color-accent: var(--color-bamboo);
+  --color-accent-light: var(--color-bamboo-light);
+  --color-accent-mist: var(--color-bamboo-mist);
+  --color-accent-glow: var(--color-bamboo-glow);
+  /* 排版定制 */
+  --editor-font-family: var(--font-body);
+  --editor-line-height: 1.8;
+  --editor-paragraph-spacing: 0px;
+  --editor-max-width: 100%;
+  /* 布局 */
+  --window-opacity: 1;
+  /* 代码块 */
+  --code-bg: #f5f2ed;
+  --code-text: #3d3d38;
+  --code-border: #e8e1d3;
+}
+
+/* 编辑器宽度 */
+:root[data-editor-width="narrow"] {
+  --editor-max-width: 640px;
+}
+:root[data-editor-width="wide"] {
+  --editor-max-width: 100%;
+}
+:root[data-editor-width="normal"] {
+  --editor-max-width: 860px;
+}
+
+/* 深色模式代码块 */
+:root[data-theme="dark"] {
+  --code-bg: #2c2a27;
+  --code-text: #b5b1a8;
+  --code-border: #3c3935;
+}
+
+:root[data-code-theme="dark"] {
+  --code-bg: #242424;
+  --code-text: #e4e4e4;
+  --code-border: #3d3d3d;
+}
+
+:root[data-code-theme="light"] {
+  --code-bg: #f5f2ed;
+  --code-text: #3d3d38;
+  --code-border: #e8e1d3;
+}
+
+.markdown-selectable p + p {
+  margin-top: var(--editor-paragraph-spacing);
+}
+
+/* ═══════════════════════════════════════════
+   预设主题 — 浅色变体
+   ═══════════════════════════════════════════ */
+
+/* 宣纸 Paper */
+:root[data-theme="light"][data-preset-theme="paper"] {
+  --color-paper: #f5f0e5;
+  --color-paper-warm: #eee6d7;
+  --color-paper-deep: #dfd3bf;
+  --color-ink: #282018;
+  --color-ink-soft: #40362b;
+  --color-ink-faint: #6d6254;
+  --color-ink-ghost: #9d9284;
+  --color-bamboo: #7a5b32;
+  --color-bamboo-light: #987445;
+  --color-bamboo-mist: #f2e8d8;
+  --color-bamboo-glow: #e7d8c2;
+  --color-stone: #786d5e;
+  --color-cloud: #fffdf8;
+  --color-shadow: rgba(48, 38, 28, 0.06);
+  --color-shadow-deep: rgba(48, 38, 28, 0.12);
+  --color-danger-bg: #fcf4ed;
+}
+
+/* 樱吹雪 Cherry */
+:root[data-theme="light"][data-preset-theme="cherry"] {
+  --color-paper: #faf5f7;
+  --color-paper-warm: #f5edf0;
+  --color-paper-deep: #ede0e5;
+  --color-ink: #1a0e14;
+  --color-ink-soft: #2d1e26;
+  --color-ink-faint: #5a4a52;
+  --color-ink-ghost: #9a8a92;
+  --color-bamboo: #c4547a;
+  --color-bamboo-light: #d46a90;
+  --color-bamboo-mist: #fae8f0;
+  --color-bamboo-glow: #f4d4e2;
+  --color-stone: #7a6a72;
+  --color-cloud: #ffffff;
+  --color-shadow: rgba(45, 30, 36, 0.05);
+  --color-shadow-deep: rgba(45, 30, 36, 0.1);
+  --color-danger-bg: #fef2f5;
+}
+
+/* 松烟 Pine */
+:root[data-theme="light"][data-preset-theme="pine"] {
+  --color-paper: #f2f5f0;
+  --color-paper-warm: #e8efe5;
+  --color-paper-deep: #dae3d5;
+  --color-ink: #0e180c;
+  --color-ink-soft: #222e20;
+  --color-ink-faint: #4a5a46;
+  --color-ink-ghost: #8a9a86;
+  --color-bamboo: #4a6b3a;
+  --color-bamboo-light: #5c8548;
+  --color-bamboo-mist: #e8f0e5;
+  --color-bamboo-glow: #d4e8ce;
+  --color-stone: #6a7265;
+  --color-cloud: #fcfdfb;
+  --color-shadow: rgba(26, 36, 24, 0.05);
+  --color-shadow-deep: rgba(26, 36, 24, 0.1);
+  --color-danger-bg: #f5faf2;
+}
+
+/* 深海 Ocean */
+:root[data-theme="light"][data-preset-theme="ocean"] {
+  --color-paper: #f2f5f9;
+  --color-paper-warm: #e8eef5;
+  --color-paper-deep: #d8e2ed;
+  --color-ink: #0e1624;
+  --color-ink-soft: #222e3e;
+  --color-ink-faint: #4a5868;
+  --color-ink-ghost: #8a98a8;
+  --color-bamboo: #3a5f8a;
+  --color-bamboo-light: #4874a8;
+  --color-bamboo-mist: #e5eef8;
+  --color-bamboo-glow: #cedef0;
+  --color-stone: #6a727a;
+  --color-cloud: #fcfdfe;
+  --color-shadow: rgba(26, 34, 48, 0.05);
+  --color-shadow-deep: rgba(26, 34, 48, 0.1);
+  --color-danger-bg: #f2f5fa;
+}
+
+/* 薰衣草 Lavender */
+:root[data-theme="light"][data-preset-theme="lavender"] {
+  --color-paper: #f7f4fa;
+  --color-paper-warm: #f0eaf6;
+  --color-paper-deep: #e5ddef;
+  --color-ink: #140e20;
+  --color-ink-soft: #282038;
+  --color-ink-faint: #5a5070;
+  --color-ink-ghost: #9a90a8;
+  --color-bamboo: #6b4faa;
+  --color-bamboo-light: #8568c4;
+  --color-bamboo-mist: #ede6f8;
+  --color-bamboo-glow: #ddd0f2;
+  --color-stone: #726a7a;
+  --color-cloud: #fefcff;
+  --color-shadow: rgba(34, 30, 45, 0.05);
+  --color-shadow-deep: rgba(34, 30, 45, 0.1);
+  --color-danger-bg: #f8f2fa;
+}
+
+/* 黄昏 Sunset */
+:root[data-theme="light"][data-preset-theme="sunset"] {
+  --color-paper: #faf6f2;
+  --color-paper-warm: #f5ede3;
+  --color-paper-deep: #ede0d2;
+  --color-ink: #1f140a;
+  --color-ink-soft: #322416;
+  --color-ink-faint: #5a4836;
+  --color-ink-ghost: #9a8870;
+  --color-bamboo: #c4783a;
+  --color-bamboo-light: #d8904a;
+  --color-bamboo-mist: #faf0e5;
+  --color-bamboo-glow: #f4e2ce;
+  --color-stone: #7a6c5a;
+  --color-cloud: #fffdfa;
+  --color-shadow: rgba(45, 34, 24, 0.05);
+  --color-shadow-deep: rgba(45, 34, 24, 0.1);
+  --color-danger-bg: #faf4f2;
+}
+
+/* ═══════════════════════════════════════════
+   预设主题 — 深色变体
+   ═══════════════════════════════════════════ */
+
+:root[data-theme="dark"][data-preset-theme="paper"] {
+  --color-paper: #29241d;
+  --color-paper-warm: #363026;
+  --color-paper-deep: #494033;
+  --color-ink: #f0e7d8;
+  --color-ink-soft: #c9bcaa;
+  --color-ink-faint: #9b8e7d;
+  --color-ink-ghost: #776d61;
+  --color-bamboo: #d1a66d;
+  --color-bamboo-light: #e4bd87;
+  --color-bamboo-mist: #2d271e;
+  --color-bamboo-glow: #3a3226;
+  --color-stone: #968776;
+  --color-cloud: #211d17;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-deep: rgba(0, 0, 0, 0.5);
+  --color-danger-bg: rgba(220, 38, 38, 0.15);
+}
+
+:root[data-theme="dark"][data-preset-theme="cherry"] {
+  --color-paper: #262022;
+  --color-paper-warm: #32282c;
+  --color-paper-deep: #42363a;
+  --color-ink: #f0e5ea;
+  --color-ink-soft: #c8b8c0;
+  --color-ink-faint: #9a8a92;
+  --color-ink-ghost: #787076;
+  --color-bamboo: #e87098;
+  --color-bamboo-light: #f090b0;
+  --color-bamboo-mist: #2a1e24;
+  --color-bamboo-glow: #34242c;
+  --color-stone: #908088;
+  --color-cloud: #1e181c;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-deep: rgba(0, 0, 0, 0.5);
+  --color-danger-bg: rgba(220, 38, 38, 0.15);
+}
+
+:root[data-theme="dark"][data-preset-theme="pine"] {
+  --color-paper: #1e221c;
+  --color-paper-warm: #283026;
+  --color-paper-deep: #364034;
+  --color-ink: #e2e8de;
+  --color-ink-soft: #b4c0b0;
+  --color-ink-faint: #8a9885;
+  --color-ink-ghost: #6a7865;
+  --color-bamboo: #78c058;
+  --color-bamboo-light: #90d870;
+  --color-bamboo-mist: #1c2818;
+  --color-bamboo-glow: #243420;
+  --color-stone: #829078;
+  --color-cloud: #181c16;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-deep: rgba(0, 0, 0, 0.5);
+  --color-danger-bg: rgba(220, 38, 38, 0.15);
+}
+
+:root[data-theme="dark"][data-preset-theme="ocean"] {
+  --color-paper: #1c2026;
+  --color-paper-warm: #262c34;
+  --color-paper-deep: #343c46;
+  --color-ink: #dde4f0;
+  --color-ink-soft: #aeb8c8;
+  --color-ink-faint: #869098;
+  --color-ink-ghost: #687078;
+  --color-bamboo: #6098d8;
+  --color-bamboo-light: #78b0f0;
+  --color-bamboo-mist: #1a2028;
+  --color-bamboo-glow: #222c38;
+  --color-stone: #7e8890;
+  --color-cloud: #161a20;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-deep: rgba(0, 0, 0, 0.5);
+  --color-danger-bg: rgba(220, 38, 38, 0.15);
+}
+
+:root[data-theme="dark"][data-preset-theme="lavender"] {
+  --color-paper: #221e28;
+  --color-paper-warm: #2e2836;
+  --color-paper-deep: #3e3648;
+  --color-ink: #e8e2f2;
+  --color-ink-soft: #c0b8d0;
+  --color-ink-faint: #928aa4;
+  --color-ink-ghost: #726a80;
+  --color-bamboo: #a080e0;
+  --color-bamboo-light: #b898f8;
+  --color-bamboo-mist: #1e1a26;
+  --color-bamboo-glow: #282234;
+  --color-stone: #888098;
+  --color-cloud: #1a1620;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-deep: rgba(0, 0, 0, 0.5);
+  --color-danger-bg: rgba(220, 38, 38, 0.15);
+}
+
+:root[data-theme="dark"][data-preset-theme="sunset"] {
+  --color-paper: #26201c;
+  --color-paper-warm: #342a24;
+  --color-paper-deep: #463830;
+  --color-ink: #f0e6dc;
+  --color-ink-soft: #c8b8a8;
+  --color-ink-faint: #988a78;
+  --color-ink-ghost: #787060;
+  --color-bamboo: #e89850;
+  --color-bamboo-light: #f8b070;
+  --color-bamboo-mist: #281e16;
+  --color-bamboo-glow: #342820;
+  --color-stone: #908078;
+  --color-cloud: #1e1814;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-deep: rgba(0, 0, 0, 0.5);
+  --color-danger-bg: rgba(220, 38, 38, 0.15);
 }
 
 :root[data-theme="dark"] {
@@ -750,4 +1034,23 @@ input::placeholder {
 }
 :root[data-theme="dark"] .markdown-alert-caution .markdown-alert-title {
   color: #e87462;
+}
+
+/* ═══════════════════════════════════════════
+   侧边栏位置
+   ═══════════════════════════════════════════ */
+:root[data-sidebar-position="right"] .main-layout-row {
+  flex-direction: row-reverse;
+}
+:root[data-sidebar-position="right"] .main-sidebar {
+  border-right: none;
+  border-left: 1px solid;
+  border-color: color-mix(in srgb, var(--color-paper-deep) 30%, transparent);
+}
+
+/* ═══════════════════════════════════════════
+   窗口透明度
+   ═══════════════════════════════════════════ */
+.app-window-shell {
+  opacity: var(--window-opacity, 1);
 }

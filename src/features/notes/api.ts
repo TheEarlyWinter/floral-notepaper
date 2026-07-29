@@ -1,6 +1,6 @@
 import { t, type TFunction } from "i18next";
 import { invoke } from "@tauri-apps/api/core";
-import type { Note, NoteMetadata, SaveNoteRequest } from "./types";
+import type { Note, NoteMetadata, NoteVersion, Reminder, SaveNoteRequest } from "./types";
 
 interface SerializedAppError {
   code?: unknown;
@@ -41,6 +41,34 @@ export function updateNote(id: string, request: SaveNoteRequest): Promise<Note> 
 
 export function deleteNote(id: string): Promise<void> {
   return invoke("notes_delete", { id });
+}
+
+export function openDailyNote(): Promise<Note> {
+  return invoke("notes_open_daily");
+}
+
+export function listNoteVersions(id: string): Promise<NoteVersion[]> {
+  return invoke("notes_list_versions", { id });
+}
+
+export function restoreNoteVersion(id: string, versionId: string): Promise<Note> {
+  return invoke("notes_restore_version", { id, versionId });
+}
+
+export function listReminders(): Promise<Reminder[]> {
+  return invoke("reminders_list");
+}
+
+export function createReminder(
+  noteId: string,
+  message: string,
+  remindAt: string,
+): Promise<Reminder> {
+  return invoke("reminders_create", { noteId, message, remindAt });
+}
+
+export function deleteReminder(id: string): Promise<void> {
+  return invoke("reminders_delete", { id });
 }
 
 export function moveNoteCategory(id: string, category: string): Promise<NoteMetadata> {

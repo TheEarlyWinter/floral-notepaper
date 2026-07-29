@@ -18,6 +18,8 @@ const notes: NoteMetadata[] = [
     updatedAt: "2026-04-28T01:00:00Z",
     wordCount: 20,
     preview: "关于月亮与六便士",
+    tags: [],
+    pinned: false,
   },
   {
     id: "2",
@@ -28,6 +30,8 @@ const notes: NoteMetadata[] = [
     updatedAt: "2026-04-28T02:00:00Z",
     wordCount: 12,
     preview: "周末采购清单",
+    tags: [],
+    pinned: false,
   },
 ];
 

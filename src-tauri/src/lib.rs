@@ -1,11 +1,15 @@
 pub mod desktop;
 pub mod json_io;
 pub mod locales;
+pub mod reminder_scheduler;
 pub mod services;
 pub mod updater;
 
 use locales::Locale;
-use services::notes::{default_store, AppConfig, AppError, Note, NoteMetadata, SaveNoteRequest};
+use services::{
+    notes::{default_store, AppConfig, AppError, Note, NoteMetadata, SaveNoteRequest},
+    reminders::{self, Reminder},
+};
 use std::{env, fs, io::Write, path::PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -44,6 +48,43 @@ fn notes_delete(app: AppHandle, id: String) -> Result<(), AppError> {
     default_store()?.delete_note(&id)?;
     let _ = app.emit("notes-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+fn notes_open_daily(app: AppHandle) -> Result<Note, AppError> {
+    let note = default_store()?.open_daily_note()?;
+    let _ = app.emit("notes-changed", ());
+    Ok(note)
+}
+
+#[tauri::command]
+fn notes_list_versions(id: String) -> Result<Vec<services::notes::NoteVersion>, AppError> {
+    default_store()?.list_note_versions(&id)
+}
+
+#[tauri::command]
+fn notes_restore_version(app: AppHandle, id: String, version_id: String) -> Result<Note, AppError> {
+    let note = default_store()?.restore_note_version(&id, &version_id)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(note)
+}
+
+#[tauri::command]
+fn reminders_list() -> Result<Vec<Reminder>, AppError> {
+    let store = default_store()?;
+    reminders::list(store.data_dir())
+}
+
+#[tauri::command]
+fn reminders_create(note_id: String, message: String, remind_at: chrono::DateTime<chrono::Utc>) -> Result<Reminder, AppError> {
+    let store = default_store()?;
+    reminders::create(store.data_dir(), note_id, message, remind_at)
+}
+
+#[tauri::command]
+fn reminders_delete(id: String) -> Result<(), AppError> {
+    let store = default_store()?;
+    reminders::delete(store.data_dir(), &id)
 }
 
 #[tauri::command]
@@ -223,12 +264,8 @@ fn copy_background_image(_app: AppHandle, source_path: String) -> Result<String,
     fs::create_dir_all(&dir)?;
 
     let old_config = store.load_config()?;
-    if !old_config.background_image_path.is_empty() {
-        let old_path = PathBuf::from(&old_config.background_image_path);
-        if old_path.starts_with(&dir) && old_path.is_file() {
-            let _ = fs::remove_file(&old_path);
-        }
-    }
+    let old_path = PathBuf::from(&old_config.background_image_path);
+    let old_background_is_managed = old_path.starts_with(&dir) && old_path.is_file();
 
     let ext = source
         .extension()
@@ -237,6 +274,11 @@ fn copy_background_image(_app: AppHandle, source_path: String) -> Result<String,
         .unwrap_or("png");
     let dest = dir.join(format!("bg-{}.{}", uuid::Uuid::new_v4(), ext));
     fs::copy(&source, &dest)?;
+
+    // 先确保新图片写入成功，再清理由应用管理的旧图片，避免复制失败时丢失现有背景。
+    if old_background_is_managed && old_path != dest {
+        let _ = fs::remove_file(old_path);
+    }
 
     dest.to_str().map(str::to_string).ok_or_else(|| AppError {
         code: "path".into(),
@@ -459,6 +501,7 @@ pub fn run() {
             }
             app.manage(updater_state);
             updater::start_auto_check_scheduler(app.handle().clone());
+            reminder_scheduler::start(app.handle().clone());
             desktop::setup_desktop(app)?;
             Ok(())
         })
@@ -470,6 +513,12 @@ pub fn run() {
             notes_create,
             notes_update,
             notes_delete,
+            notes_open_daily,
+            notes_list_versions,
+            notes_restore_version,
+            reminders_list,
+            reminders_create,
+            reminders_delete,
             notes_import_markdown,
             notes_export_markdown,
             notes_move_category,

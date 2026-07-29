@@ -252,9 +252,8 @@ mod keyboard_hook {
                 WM_KEYUP | WM_SYSKEYUP => {
                     if is_modifier_vk(vk) {
                         update_modifier_state(vk, false);
-                    } else {
-                        return 1;
                     }
+                    // 放行所有 key-up，避免录制快捷键期间让其他窗口误判按键仍被按住。
                 }
                 _ => {}
             }
@@ -2599,6 +2598,21 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: toggle_visibility_shortcut.into(),
+            preset_theme: "default".into(),
+            accent_color: String::new(),
+            code_theme: "light".into(),
+            editor_font_family: String::new(),
+            editor_line_height: 1.8,
+            editor_paragraph_spacing: 0,
+            editor_width: "normal".into(),
+            sidebar_position: "left".into(),
+            window_opacity: 1.0,
+            remember_window_size: false,
+            show_outline: false,
+            code_line_numbers: false,
+            link_preview: true,
+            custom_css: String::new(),
+            templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
         }
@@ -2684,6 +2698,21 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: String::new(),
+            preset_theme: "default".into(),
+            accent_color: String::new(),
+            code_theme: "light".into(),
+            editor_font_family: String::new(),
+            editor_line_height: 1.8,
+            editor_paragraph_spacing: 0,
+            editor_width: "normal".into(),
+            sidebar_position: "left".into(),
+            window_opacity: 1.0,
+            remember_window_size: false,
+            show_outline: false,
+            code_line_numbers: false,
+            link_preview: true,
+            custom_css: String::new(),
+            templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
         };
@@ -2721,6 +2750,21 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: "Ctrl+Shift+H".into(),
+            preset_theme: "default".into(),
+            accent_color: String::new(),
+            code_theme: "light".into(),
+            editor_font_family: String::new(),
+            editor_line_height: 1.8,
+            editor_paragraph_spacing: 0,
+            editor_width: "normal".into(),
+            sidebar_position: "left".into(),
+            window_opacity: 1.0,
+            remember_window_size: false,
+            show_outline: false,
+            code_line_numbers: false,
+            link_preview: true,
+            custom_css: String::new(),
+            templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
         };

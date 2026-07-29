@@ -53,6 +53,21 @@ describe("settings api", () => {
       renderHtmlMarkdown: false,
       splitScrollSync: true,
       openAtCursor: true,
+      presetTheme: "default",
+      accentColor: "",
+      codeTheme: "light",
+      editorFontFamily: "",
+      editorLineHeight: 1.8,
+      editorParagraphSpacing: 0,
+      editorWidth: "normal",
+      sidebarPosition: "left",
+      windowOpacity: 1,
+      rememberWindowSize: false,
+      showOutline: false,
+      codeLineNumbers: false,
+      linkPreview: true,
+      customCss: "",
+      templates: [],
     };
     mockedInvoke.mockResolvedValue(config);
 
@@ -87,6 +102,21 @@ describe("settings api", () => {
       renderHtmlMarkdown: false,
       splitScrollSync: true,
       openAtCursor: true,
+      presetTheme: "paper",
+      accentColor: "",
+      codeTheme: "dark",
+      editorFontFamily: "",
+      editorLineHeight: 1.8,
+      editorParagraphSpacing: 0,
+      editorWidth: "normal",
+      sidebarPosition: "left",
+      windowOpacity: 1,
+      rememberWindowSize: false,
+      showOutline: false,
+      codeLineNumbers: false,
+      linkPreview: true,
+      customCss: "",
+      templates: [],
     };
     mockedInvoke.mockResolvedValue(config);
 

@@ -5,6 +5,7 @@ use std::{
     collections::BTreeMap,
     env, fmt, fs, io,
     path::{Component, Path, PathBuf},
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 use uuid::Uuid;
 
@@ -19,6 +20,11 @@ const LEGACY_MACOS_GLOBAL_SHORTCUTS: [&str; 5] = [
     "Ctrl+Alt+Space",
 ];
 const MACOS_SHORTCUT_MIGRATION_MARKER: &str = ".macos-shortcut-default-v3";
+const NOTE_HISTORY_LIMIT: usize = 20;
+
+// default_store() 会为每个命令创建一个新的 NoteStore；这把进程内锁覆盖完整
+// 读-改-写区间，避免多个窗口用旧 metadata.json 覆盖彼此的更新。
+static METADATA_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +94,36 @@ pub struct AppConfig {
     pub toggle_visibility_shortcut: String,
     #[serde(default = "default_open_at_cursor")]
     pub open_at_cursor: bool,
+    #[serde(default = "default_preset_theme")]
+    pub preset_theme: String,
+    #[serde(default)]
+    pub accent_color: String,
+    #[serde(default = "default_code_theme")]
+    pub code_theme: String,
+    #[serde(default)]
+    pub editor_font_family: String,
+    #[serde(default = "default_editor_line_height")]
+    pub editor_line_height: f64,
+    #[serde(default)]
+    pub editor_paragraph_spacing: u32,
+    #[serde(default = "default_editor_width")]
+    pub editor_width: String,
+    #[serde(default = "default_sidebar_position")]
+    pub sidebar_position: String,
+    #[serde(default = "default_window_opacity")]
+    pub window_opacity: f64,
+    #[serde(default)]
+    pub remember_window_size: bool,
+    #[serde(default)]
+    pub show_outline: bool,
+    #[serde(default)]
+    pub code_line_numbers: bool,
+    #[serde(default = "default_link_preview")]
+    pub link_preview: bool,
+    #[serde(default)]
+    pub custom_css: String,
+    #[serde(default)]
+    pub templates: Vec<NoteTemplate>,
     // Legacy fields — read from old config, never written back
     #[serde(default, skip_serializing)]
     pub notes_dir: Option<String>,
@@ -97,11 +133,23 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct NoteTemplate {
+    pub id: String,
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveNoteRequest {
     pub title: String,
     pub content: String,
     #[serde(default)]
     pub category: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +163,18 @@ pub struct NoteMetadata {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub word_count: usize,
+    pub preview: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteVersion {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
     pub preview: String,
 }
 
@@ -130,6 +190,10 @@ pub struct Note {
     pub updated_at: DateTime<Utc>,
     pub word_count: usize,
     pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -322,7 +386,7 @@ fn data_dir_from_notes_dir(notes_dir: &str) -> PathBuf {
     path.to_path_buf()
 }
 
-const DATA_DIR_ITEMS: [&str; 4] = ["metadata.json", "notes", "images", "backgrounds"];
+const DATA_DIR_ITEMS: [&str; 5] = ["metadata.json", "notes", "images", "backgrounds", "history"];
 
 // 旧版无论 notesDir 指向哪里，metadata.json、images、backgrounds 都固定存放在旧主目录；
 // 数据目录解析到其他位置时必须一并带走，否则笔记内图片引用全部失效、created_at 丢失
@@ -686,10 +750,17 @@ impl NoteStore {
             updated_at: metadata.updated_at,
             word_count: metadata.word_count,
             content,
+            tags: metadata.tags,
+            pinned: metadata.pinned,
         })
     }
 
     pub fn create_note(&self, request: SaveNoteRequest) -> Result<Note, AppError> {
+        let _lock = self.lock_metadata_mutation()?;
+        self.create_note_unlocked(request)
+    }
+
+    fn create_note_unlocked(&self, request: SaveNoteRequest) -> Result<Note, AppError> {
         self.ensure_storage()?;
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
@@ -709,6 +780,8 @@ impl NoteStore {
             updated_at: now,
             word_count,
             preview: preview(&request.content),
+            tags: request.tags.clone(),
+            pinned: request.pinned,
         };
 
         fs::write(&note_path, &request.content)?;
@@ -725,10 +798,17 @@ impl NoteStore {
             updated_at: now,
             word_count,
             content: request.content,
+            tags: metadata.tags,
+            pinned: metadata.pinned,
         })
     }
 
     pub fn update_note(&self, id: &str, request: SaveNoteRequest) -> Result<Note, AppError> {
+        let _lock = self.lock_metadata_mutation()?;
+        self.update_note_unlocked(id, request)
+    }
+
+    fn update_note_unlocked(&self, id: &str, request: SaveNoteRequest) -> Result<Note, AppError> {
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
         let note = metadata_file
@@ -748,10 +828,16 @@ impl NoteStore {
         if let Some(parent) = new_path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let old_path = self.note_path_in_category(&old_file_name, &old_category);
+        if old_path.exists() {
+            let old_content = fs::read_to_string(&old_path)?;
+            if old_content != request.content {
+                self.save_note_version(id, &old_content)?;
+            }
+        }
         fs::write(&new_path, &request.content)?;
 
         if old_file_name != new_file_name || old_category != new_category {
-            let old_path = self.note_path_in_category(&old_file_name, &old_category);
             if old_path.exists() && old_path != new_path {
                 trash::delete(&old_path)
                     .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
@@ -764,6 +850,8 @@ impl NoteStore {
         note.updated_at = now;
         note.word_count = word_count;
         note.preview = preview(&request.content);
+        note.tags = request.tags;
+        note.pinned = request.pinned;
 
         let result = Note {
             id: note.id.clone(),
@@ -774,6 +862,8 @@ impl NoteStore {
             updated_at: note.updated_at,
             word_count: note.word_count,
             content: request.content,
+            tags: note.tags.clone(),
+            pinned: note.pinned,
         };
 
         self.save_metadata(&metadata_file)?;
@@ -781,6 +871,7 @@ impl NoteStore {
     }
 
     pub fn delete_note(&self, id: &str) -> Result<(), AppError> {
+        let _lock = self.lock_metadata_mutation()?;
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
         let index = metadata_file
@@ -796,11 +887,44 @@ impl NoteStore {
         }
         self.save_metadata(&metadata_file)?;
         let _ = self.delete_note_images(id);
+        let history_dir = self.note_history_dir(id);
+        if history_dir.exists() {
+            let _ = fs::remove_dir_all(history_dir);
+        }
         Ok(())
     }
 
     pub fn images_dir(&self, note_id: &str) -> PathBuf {
         self.data_dir.join("images").join(note_id)
+    }
+
+    fn note_history_dir(&self, note_id: &str) -> PathBuf {
+        self.data_dir.join("history").join(note_id)
+    }
+
+    fn note_version_path(&self, note_id: &str, version_id: &str) -> Result<PathBuf, AppError> {
+        if chrono::NaiveDateTime::parse_from_str(version_id, "%Y%m%dT%H%M%S%.fZ").is_err() {
+            return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
+        }
+        Ok(self.note_history_dir(note_id).join(format!("{version_id}.md")))
+    }
+
+    fn save_note_version(&self, note_id: &str, content: &str) -> Result<(), AppError> {
+        let dir = self.note_history_dir(note_id);
+        fs::create_dir_all(&dir)?;
+        let version_id = Utc::now().format("%Y%m%dT%H%M%S%.6fZ").to_string();
+        fs::write(dir.join(format!("{version_id}.md")), content)?;
+
+        let mut entries = fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().and_then(|extension| extension.to_str()) == Some("md"))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        let excess = entries.len().saturating_sub(NOTE_HISTORY_LIMIT);
+        for entry in entries.into_iter().take(excess) {
+            fs::remove_file(entry.path())?;
+        }
+        Ok(())
     }
 
     pub fn save_image(
@@ -828,6 +952,86 @@ impl NoteStore {
         fs::write(dir.join(&file_name), data)?;
 
         Ok(format!("images/{note_id}/{file_name}"))
+    }
+
+    pub fn open_daily_note(&self) -> Result<Note, AppError> {
+        let _lock = self.lock_metadata_mutation()?;
+        self.ensure_storage()?;
+        let date = Utc::now().format("%Y-%m-%d").to_string();
+        let metadata = self.load_metadata()?;
+        if let Some(existing) = metadata
+            .notes
+            .iter()
+            .find(|note| note.tags.iter().any(|tag| tag == "daily") && note.title == date)
+        {
+            return self.read_note(&existing.id);
+        }
+
+        self.create_note_unlocked(SaveNoteRequest {
+            title: date.clone(),
+            content: format!("# {date}\n\n## 待办\n- [ ] \n\n## 随手记\n"),
+            category: "每日便笺".into(),
+            tags: vec!["daily".into()],
+            pinned: false,
+        })
+    }
+
+    pub fn list_note_versions(&self, id: &str) -> Result<Vec<NoteVersion>, AppError> {
+        self.read_note(id)?;
+        let dir = self.note_history_dir(id);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut versions = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let Ok(created_at) = chrono::NaiveDateTime::parse_from_str(
+                stem,
+                "%Y%m%dT%H%M%S%.fZ",
+            ) else {
+                continue;
+            };
+            let content = fs::read_to_string(&path)?;
+            versions.push(NoteVersion {
+                id: stem.to_string(),
+                created_at: created_at.and_utc(),
+                preview: preview(&content),
+            });
+        }
+        versions.sort_by_key(|version| std::cmp::Reverse(version.created_at));
+        Ok(versions)
+    }
+
+    pub fn restore_note_version(&self, id: &str, version_id: &str) -> Result<Note, AppError> {
+        let _lock = self.lock_metadata_mutation()?;
+        self.ensure_storage()?;
+        let version_path = self.note_version_path(id, version_id)?;
+        let content = fs::read_to_string(&version_path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                AppError::new("noteVersionNotFound", "找不到该历史版本")
+            } else {
+                AppError::from(error)
+            }
+        })?;
+        let note = self.read_note(id)?;
+        self.update_note_unlocked(
+            id,
+            SaveNoteRequest {
+                title: note.title,
+                content,
+                category: note.category,
+                tags: note.tags,
+                pinned: note.pinned,
+            },
+        )
     }
 
     pub fn delete_note_images(&self, note_id: &str) -> Result<(), AppError> {
@@ -884,6 +1088,8 @@ impl NoteStore {
             title,
             content,
             category: category.to_string(),
+            tags: Vec::new(),
+            pinned: false,
         })
     }
 
@@ -925,6 +1131,7 @@ impl NoteStore {
     }
 
     pub fn rename_category(&self, old_name: &str, new_name: &str) -> Result<(), AppError> {
+        let _lock = self.lock_metadata_mutation()?;
         let new_name = new_name.trim();
         if new_name.is_empty() {
             return Err(AppError::category_name_empty());
@@ -958,6 +1165,7 @@ impl NoteStore {
     }
 
     pub fn delete_category(&self, name: &str) -> Result<(), AppError> {
+        let _lock = self.lock_metadata_mutation()?;
         let notes_dir = self.notes_dir();
         let category_path = notes_dir.join(name);
         let dir_exists = category_path.exists();
@@ -1017,6 +1225,7 @@ impl NoteStore {
         id: &str,
         new_category: &str,
     ) -> Result<NoteMetadata, AppError> {
+        let _lock = self.lock_metadata_mutation()?;
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
         let note = metadata_file
@@ -1043,6 +1252,13 @@ impl NoteStore {
         let result = note.clone();
         self.save_metadata(&metadata_file)?;
         Ok(result)
+    }
+
+    fn lock_metadata_mutation(&self) -> Result<MutexGuard<'static, ()>, AppError> {
+        METADATA_MUTATION_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| AppError::new("metadataLock", "笔记存储锁已中毒，请重启应用后重试"))
     }
 
     fn default_config(&self) -> AppConfig {
@@ -1083,6 +1299,21 @@ impl NoteStore {
             surface_height: None,
             toggle_visibility_shortcut: default_toggle_visibility_shortcut(),
             open_at_cursor: default_open_at_cursor(),
+            preset_theme: default_preset_theme(),
+            accent_color: String::new(),
+            code_theme: default_code_theme(),
+            editor_font_family: String::new(),
+            editor_line_height: default_editor_line_height(),
+            editor_paragraph_spacing: 0,
+            editor_width: default_editor_width(),
+            sidebar_position: default_sidebar_position(),
+            window_opacity: default_window_opacity(),
+            remember_window_size: false,
+            show_outline: false,
+            code_line_numbers: false,
+            link_preview: default_link_preview(),
+            custom_css: String::new(),
+            templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
         }
@@ -1347,6 +1578,8 @@ impl NoteStore {
                 updated_at: modified,
                 word_count: count_words(&content),
                 preview: preview(&content),
+                tags: Vec::new(),
+                pinned: false,
             });
         }
         Ok(())
@@ -1659,6 +1892,34 @@ fn default_open_at_cursor() -> bool {
     true
 }
 
+fn default_preset_theme() -> String {
+    "default".into()
+}
+
+fn default_code_theme() -> String {
+    "light".into()
+}
+
+fn default_editor_line_height() -> f64 {
+    1.8
+}
+
+fn default_editor_width() -> String {
+    "normal".into()
+}
+
+fn default_sidebar_position() -> String {
+    "left".into()
+}
+
+fn default_window_opacity() -> f64 {
+    1.0
+}
+
+fn default_link_preview() -> bool {
+    true
+}
+
 fn default_locale() -> String {
     "zh-CN".into()
 }
@@ -1682,7 +1943,11 @@ mod tests {
 
     fn test_store(name: &str) -> NoteStore {
         let root = test_root(name);
-        NoteStore::new(root.clone(), root)
+        let store = NoteStore::new(root.clone(), root);
+        // 先写入独立配置，避免测试在开发机上误迁移用户的真实旧数据目录。
+        write_json_atomic(&store.config_path(), &store.default_config())
+            .expect("write isolated test config");
+        store
     }
 
     #[test]
@@ -1694,10 +1959,14 @@ mod tests {
                 title: "A/B:Test".into(),
                 content: "hello\nworld".into(),
                 category: String::new(),
+                tags: vec!["work".into(), "urgent".into()],
+                pinned: true,
             })
             .expect("create note");
 
         assert_eq!(created.title, "A/B:Test");
+        assert_eq!(created.tags, ["work", "urgent"]);
+        assert!(created.pinned);
         assert_eq!(created.content, "hello\nworld");
         assert_eq!(created.word_count, 10);
         assert!(created.file_name.ends_with(".md"));
@@ -1718,17 +1987,125 @@ mod tests {
                     title: "".into(),
                     content: "# 新标题\nsecond line".into(),
                     category: String::new(),
+                    tags: vec!["archive".into()],
+                    pinned: false,
                 },
             )
             .expect("update note");
 
         assert_eq!(updated.title, "");
+        assert_eq!(updated.tags, ["archive"]);
+        assert!(!updated.pinned);
         assert_eq!(updated.content, "# 新标题\nsecond line");
         assert_ne!(updated.file_name, created.file_name);
 
         store.delete_note(&created.id).expect("delete note");
         assert!(store.read_note(&created.id).is_err());
         assert!(store.list_notes().expect("list after delete").is_empty());
+    }
+
+    #[test]
+    fn serializes_concurrent_note_creations_without_losing_metadata() {
+        let store = std::sync::Arc::new(test_store("concurrent-create"));
+        let mut workers = Vec::new();
+        for index in 0..2 {
+            let store = store.clone();
+            workers.push(std::thread::spawn(move || {
+                store.create_note(SaveNoteRequest {
+                    title: format!("并发笔记 {index}"),
+                    content: format!("正文 {index}"),
+                    category: String::new(),
+                    tags: Vec::new(),
+                    pinned: false,
+                })
+            }));
+        }
+        for worker in workers {
+            worker.join().expect("join worker").expect("create note");
+        }
+
+        let notes = store.list_notes().expect("list concurrent notes");
+        assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn keeps_note_versions_and_restores_a_previous_content_snapshot() {
+        let store = test_store("history");
+        let created = store
+            .create_note(SaveNoteRequest {
+                title: "历史测试".into(),
+                content: "第一版".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create note");
+
+        store
+            .update_note(
+                &created.id,
+                SaveNoteRequest {
+                    title: "历史测试".into(),
+                    content: "第二版".into(),
+                    category: String::new(),
+                    tags: Vec::new(),
+                    pinned: false,
+                },
+            )
+            .expect("update note");
+
+        let versions = store.list_note_versions(&created.id).expect("list versions");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].preview, "第一版");
+
+        let restored = store
+            .restore_note_version(&created.id, &versions[0].id)
+            .expect("restore version");
+        assert_eq!(restored.content, "第一版");
+        // 恢复前的第二版也会被保留为可再次恢复的快照。
+        assert_eq!(store.list_note_versions(&created.id).expect("list restored history").len(), 2);
+    }
+
+    #[test]
+    fn keeps_at_most_twenty_note_versions() {
+        let store = test_store("history-limit");
+        let created = store
+            .create_note(SaveNoteRequest {
+                title: "历史上限".into(),
+                content: "版本 0".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create note");
+
+        for index in 1..=25 {
+            store
+                .update_note(
+                    &created.id,
+                    SaveNoteRequest {
+                        title: "历史上限".into(),
+                        content: format!("版本 {index}"),
+                        category: String::new(),
+                        tags: Vec::new(),
+                        pinned: false,
+                    },
+                )
+                .expect("update note");
+        }
+
+        assert_eq!(store.list_note_versions(&created.id).expect("list versions").len(), 20);
+    }
+
+    #[test]
+    fn opens_the_same_daily_note_for_the_same_day() {
+        let store = test_store("daily-note");
+        let first = store.open_daily_note().expect("open first daily note");
+        let second = store.open_daily_note().expect("open second daily note");
+
+        assert_eq!(first.id, second.id);
+        assert!(first.tags.iter().any(|tag| tag == "daily"));
+        assert_eq!(store.list_notes().expect("list daily note").len(), 1);
     }
 
     #[test]
@@ -1739,6 +2116,8 @@ mod tests {
                 title: "第一条".into(),
                 content: "# 第一条\n正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create first");
         let second = store
@@ -1746,6 +2125,8 @@ mod tests {
                 title: "第二条".into(),
                 content: "第二条正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create second");
 
@@ -1790,6 +2171,12 @@ mod tests {
         assert!(!default_config.tile_double_click_to_edit);
         assert!(!default_config.tile_save_returns_to_pin);
         assert_eq!(default_config.theme, "system");
+        assert_eq!(default_config.preset_theme, "default");
+        assert_eq!(default_config.code_theme, "light");
+        assert_eq!(default_config.editor_line_height, 1.8);
+        assert_eq!(default_config.window_opacity, 1.0);
+        assert!(default_config.link_preview);
+        assert!(default_config.templates.is_empty());
         assert_eq!(default_config.locale, "zh-CN");
         assert_eq!(
             default_config.data_dir.as_deref(),
@@ -1829,6 +2216,25 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: String::new(),
+            preset_theme: "paper".into(),
+            accent_color: "#7a5b32".into(),
+            code_theme: "dark".into(),
+            editor_font_family: "Source Han Serif SC".into(),
+            editor_line_height: 2.0,
+            editor_paragraph_spacing: 12,
+            editor_width: "wide".into(),
+            sidebar_position: "right".into(),
+            window_opacity: 0.85,
+            remember_window_size: true,
+            show_outline: true,
+            code_line_numbers: true,
+            link_preview: false,
+            custom_css: ".note { color: red; }".into(),
+            templates: vec![NoteTemplate {
+                id: "study".into(),
+                name: "学习笔记".into(),
+                content: "# 标题\n".into(),
+            }],
             notes_dir: None,
             last_known_base_dir: None,
             open_at_cursor: true,
@@ -1839,6 +2245,7 @@ mod tests {
         let loaded = store.load_config().expect("reload config");
         saved.data_dir = Some(store.data_dir().to_string_lossy().to_string());
         assert_eq!(loaded, saved);
+        assert_eq!(loaded.templates[0].name, "学习笔记");
     }
 
     #[test]
@@ -1891,6 +2298,11 @@ mod tests {
         assert!(!loaded.tile_double_click_to_edit);
         assert!(!loaded.tile_save_returns_to_pin);
         assert_eq!(loaded.theme, "system");
+        assert_eq!(loaded.preset_theme, "default");
+        assert_eq!(loaded.code_theme, "light");
+        assert_eq!(loaded.editor_line_height, 1.8);
+        assert_eq!(loaded.window_opacity, 1.0);
+        assert!(loaded.link_preview);
         assert_eq!(loaded.locale, "zh-CN");
         assert_eq!(loaded.font_size, 14);
         assert_eq!(loaded.surface_font_size, 14);
@@ -2062,6 +2474,8 @@ mod tests {
                 title: "重定位".into(),
                 content: "# 重定位\n正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create note in old dir");
         old_store.load_config().expect("persist old config");
@@ -2099,6 +2513,8 @@ mod tests {
                 title: "旧数据".into(),
                 content: "旧正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create old note");
         old_store.load_config().expect("persist old config");
@@ -2110,6 +2526,8 @@ mod tests {
                 title: "新数据".into(),
                 content: "新正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create new note");
 
@@ -2137,6 +2555,8 @@ mod tests {
                 title: "迁移测试".into(),
                 content: "# 迁移测试\n正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create note");
 
@@ -2176,6 +2596,8 @@ mod tests {
                 title: "防护测试".into(),
                 content: "正文".into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create note");
 
@@ -2341,6 +2763,8 @@ mod tests {
                 title: "导出标题".into(),
                 content: content.into(),
                 category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
             })
             .expect("create note");
         let export_path = root.join("exports").join("导出.md");

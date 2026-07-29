@@ -12,6 +12,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Components } from "react-markdown";
 import "katex/dist/katex.min.css";
 import remarkAlerts from "./remarkAlerts";
+import remarkWikiLinks from "./remarkWikiLinks";
 import { resolveMarkdownImageSrc } from "./imageSrc";
 
 function CodeBlock({ children, language }: { children: React.ReactNode; language?: string }) {
@@ -69,9 +70,10 @@ interface MarkdownPreviewProps {
   fontSize?: number;
   renderHtml?: boolean;
   imageBaseDir?: string;
+  onOpenWikiLink?: (target: string) => void;
 }
 
-const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts];
+const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts, remarkWikiLinks];
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "mark", "center", "font", "u", "abbr"],
@@ -282,11 +284,45 @@ export function MarkdownPreview({
   fontSize = 14,
   renderHtml = false,
   imageBaseDir,
+  onOpenWikiLink,
 }: MarkdownPreviewProps) {
   const { t } = useTranslation();
   const components = useMemo<Components>(
     () => ({
       ...staticComponents,
+      a: ({ href, children }) => {
+        if (href?.startsWith("wiki:")) {
+          const target = decodeURIComponent(href.slice("wiki:".length));
+          return (
+            <button
+              type="button"
+              onClick={() => onOpenWikiLink?.(target)}
+              className="text-bamboo hover:text-bamboo-light underline underline-offset-2 cursor-pointer"
+              title={`打开关联笔记：${target}`}
+            >
+              {children}
+            </button>
+          );
+        }
+        return (
+          <a
+            href={href}
+            onClick={(event) => {
+              event.preventDefault();
+              if (!href) return;
+              if (/^https?:\/\//i.test(href)) {
+                void openUrl(href);
+              } else if (href.startsWith("#")) {
+                const id = decodeURIComponent(href.slice(1));
+                document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+              }
+            }}
+            className="text-bamboo hover:text-bamboo-light underline underline-offset-2 cursor-pointer"
+          >
+            {children}
+          </a>
+        );
+      },
       img: ({ src, alt, ...props }) => {
         const resolvedSrc = resolveMarkdownImageSrc(src, imageBaseDir, convertFileSrc);
         return (
@@ -300,10 +336,19 @@ export function MarkdownPreview({
         );
       },
     }),
-    [imageBaseDir],
+    [imageBaseDir, onOpenWikiLink],
   );
   return (
-    <div className="font-body markdown-selectable" style={{ fontSize: `${fontSize}px` }}>
+    <div
+      className="font-body markdown-selectable"
+      style={{
+        fontSize: `${fontSize}px`,
+        fontFamily: "var(--editor-font-family)",
+        lineHeight: "var(--editor-line-height)",
+        maxWidth: "var(--editor-max-width)",
+        margin: "0 auto",
+      }}
+    >
       {content.trim() ? (
         <Markdown
           remarkPlugins={remarkPlugins}

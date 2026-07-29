@@ -6,6 +6,10 @@ import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection"
 import type {
   AppConfig,
   BackgroundFit,
+  CodeTheme,
+  EditorWidth,
+  PresetTheme,
+  SidebarPosition,
   ThemeOption,
   TileColorMode,
   ViewMode,
@@ -18,7 +22,19 @@ import {
 } from "../features/settings/shortcutRecorder";
 import { useShortcutRecorder } from "../features/settings/useShortcutRecorder";
 import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
-import { applyTheme, watchSystemTheme } from "../features/settings/theme";
+import {
+  applyAccentColor,
+  applyCodeTheme,
+  applyEditorFont,
+  applyEditorLineHeight,
+  applyEditorParagraphSpacing,
+  applyEditorWidth,
+  applyPresetTheme,
+  applySidebarPosition,
+  applyTheme,
+  applyWindowOpacity,
+  watchSystemTheme,
+} from "../features/settings/theme";
 import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 
@@ -129,6 +145,67 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             }}
           />
         </section>
+
+        {/* ══ 预设主题 ══ */}
+        <PresetThemePicker
+          value={(config.presetTheme || "default") as PresetTheme}
+          onChange={(v) => {
+            setConfigValue("presetTheme", v);
+            applyPresetTheme(v);
+            applyAccentColor(config.accentColor || "", v);
+          }}
+        />
+
+        {/* ══ 自定义强调色（仅在无预设时显示） ══ */}
+        {(!config.presetTheme || config.presetTheme === "default") && (
+          <section className="space-y-2">
+            <label className="block text-[11px] font-body text-ink-faint">
+              {t("settings.accentColor", { defaultValue: "强调色" })}
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={config.accentColor || "#3a7a52"}
+                onChange={(event) => {
+                  setConfigValue("accentColor", event.target.value);
+                  applyAccentColor(event.target.value, (config.presetTheme || "default") as PresetTheme);
+                }}
+                className="w-10 h-8 rounded-lg border border-paper-deep/40 bg-paper-warm/70 cursor-pointer"
+              />
+              <input
+                type="text"
+                value={config.accentColor || ""}
+                onChange={(event) => {
+                  const v = event.target.value;
+                  setConfigValue("accentColor", v);
+                  applyAccentColor(v, (config.presetTheme || "default") as PresetTheme);
+                }}
+                placeholder="#3a7a52"
+                spellCheck={false}
+                className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setConfigValue("accentColor", "");
+                  applyAccentColor("", "default");
+                }}
+                className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                {t("common.default", { defaultValue: "默认" })}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ══ 代码块主题 ══ */}
+        <CodeThemePicker
+          value={(config.codeTheme || "light") as CodeTheme}
+          onChange={(v: CodeTheme) => {
+            setConfigValue("codeTheme", v);
+            applyCodeTheme(v);
+          }}
+        />
 
         <section className="space-y-2">
           <label className="block text-[11px] font-body text-ink-faint">
@@ -459,6 +536,163 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
 
         <UpdateSettingsSection mode="settingsOnly" />
 
+        {/* ═══════════════════════════════════════
+            排版定制
+           ═══════════════════════════════════════ */}
+        <section className="space-y-2 pt-3 border-t border-paper-deep/20">
+          <h3 className="text-[11px] font-display font-medium text-ink-faint/80">
+            {t("settings.typography.heading", { defaultValue: "排版定制" })}
+          </h3>
+
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+              {t("settings.typography.editorFont", { defaultValue: "编辑器字体" })}
+            </label>
+            <input
+              type="text"
+              value={config.editorFontFamily || ""}
+              onChange={(event) => {
+                setConfigValue("editorFontFamily", event.target.value);
+                applyEditorFont(event.target.value);
+              }}
+              placeholder={t("settings.typography.editorFontPlaceholder", {
+                defaultValue: "留空使用默认字体",
+              })}
+              spellCheck={false}
+              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-soft outline-none"
+            />
+          </div>
+
+          <RangeRow
+            label={t("settings.typography.lineHeight", { defaultValue: "行高" })}
+            value={config.editorLineHeight || 1.8}
+            min={1.2}
+            max={3}
+            step={0.1}
+            format={(value) => `${value.toFixed(1)}`}
+            onChange={(value) => {
+              setConfigValue("editorLineHeight", value);
+              applyEditorLineHeight(value);
+            }}
+          />
+
+          <RangeRow
+            label={t("settings.typography.paragraphSpacing", { defaultValue: "段距" })}
+            value={config.editorParagraphSpacing || 0}
+            min={0}
+            max={32}
+            step={2}
+            format={(value) => `${value}px`}
+            onChange={(value) => {
+              setConfigValue("editorParagraphSpacing", value);
+              applyEditorParagraphSpacing(value);
+            }}
+          />
+
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+              {t("settings.typography.editorWidth", { defaultValue: "编辑器宽度" })}
+            </label>
+            <EditorWidthPicker
+              value={(config.editorWidth || "normal") as EditorWidth}
+              onChange={(v: EditorWidth) => {
+                setConfigValue("editorWidth", v);
+                applyEditorWidth(v);
+              }}
+            />
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════════
+            布局定制
+           ═══════════════════════════════════════ */}
+        <section className="space-y-2 pt-3 border-t border-paper-deep/20">
+          <h3 className="text-[11px] font-display font-medium text-ink-faint/80">
+            {t("settings.layout.heading", { defaultValue: "布局定制" })}
+          </h3>
+
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+              {t("settings.layout.sidebarPosition", { defaultValue: "侧边栏位置" })}
+            </label>
+            <SidebarPositionPicker
+              value={(config.sidebarPosition || "left") as SidebarPosition}
+              onChange={(v: SidebarPosition) => {
+                setConfigValue("sidebarPosition", v);
+                applySidebarPosition(v);
+              }}
+            />
+          </div>
+
+          <RangeRow
+            label={t("settings.layout.opacity", { defaultValue: "透明度" })}
+            value={config.windowOpacity || 1}
+            min={0.5}
+            max={1}
+            step={0.05}
+            format={(value) => `${Math.round(value * 100)}%`}
+            onChange={(value) => {
+              setConfigValue("windowOpacity", value);
+              applyWindowOpacity(value);
+            }}
+          />
+
+          <ToggleRow
+            label={t("settings.layout.rememberWindowSize", { defaultValue: "记忆窗口大小" })}
+            checked={config.rememberWindowSize || false}
+            onChange={(checked) => setConfigValue("rememberWindowSize", checked)}
+          />
+        </section>
+
+        {/* ═══════════════════════════════════════
+            Markdown 渲染
+           ═══════════════════════════════════════ */}
+        <section className="space-y-2 pt-3 border-t border-paper-deep/20">
+          <h3 className="text-[11px] font-display font-medium text-ink-faint/80">
+            {t("settings.markdown.heading", { defaultValue: "Markdown 渲染" })}
+          </h3>
+
+          <ToggleRow
+            label={t("settings.markdown.showOutline", { defaultValue: "显示目录大纲" })}
+            checked={config.showOutline || false}
+            onChange={(checked) => setConfigValue("showOutline", checked)}
+          />
+          <ToggleRow
+            label={t("settings.markdown.codeLineNumbers", { defaultValue: "代码块行号" })}
+            checked={config.codeLineNumbers || false}
+            onChange={(checked) => setConfigValue("codeLineNumbers", checked)}
+          />
+          <ToggleRow
+            label={t("settings.markdown.linkPreview", { defaultValue: "链接预览" })}
+            checked={config.linkPreview !== false}
+            onChange={(checked) => setConfigValue("linkPreview", checked)}
+          />
+        </section>
+
+        {/* ═══════════════════════════════════════
+            自定义 CSS
+           ═══════════════════════════════════════ */}
+        <section className="space-y-2 pt-3 border-t border-paper-deep/20">
+          <h3 className="text-[11px] font-display font-medium text-ink-faint/80">
+            {t("settings.customCss.heading", { defaultValue: "自定义 CSS" })}
+          </h3>
+          <p className="text-[10px] text-ink-ghost">
+            {t("settings.customCss.hint", {
+              defaultValue: "在此输入自定义 CSS，将直接注入到应用中。高级功能，请谨慎使用。",
+            })}
+          </p>
+          <textarea
+            value={config.customCss || ""}
+            onChange={(event) => setConfigValue("customCss", event.target.value)}
+            placeholder={t("settings.customCss.placeholder", {
+              defaultValue: "/* 在此输入自定义 CSS */\n",
+            })}
+            spellCheck={false}
+            rows={6}
+            className="w-full rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-soft p-2.5 leading-relaxed resize-y outline-none"
+          />
+        </section>
+
         <section className="pt-2 border-t border-paper-deep/25">
           <p className="text-[10px] leading-relaxed text-ink-ghost/75">
             <span>
@@ -486,6 +720,129 @@ interface ToggleRowProps {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+}
+
+function PresetThemePicker({
+  value,
+  onChange,
+}: {
+  value: PresetTheme;
+  onChange: (v: PresetTheme) => void;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo<Array<{ value: PresetTheme; label: string }>>(
+    () => [
+      { value: "default", label: t("settings.presetTheme.custom", { defaultValue: "默认" }) },
+      { value: "paper", label: t("settings.presetTheme.paper", { defaultValue: "宣纸" }) },
+      { value: "cherry", label: t("settings.presetTheme.cherry", { defaultValue: "樱吹雪" }) },
+      { value: "pine", label: t("settings.presetTheme.pine", { defaultValue: "松烟" }) },
+      { value: "ocean", label: t("settings.presetTheme.ocean", { defaultValue: "深海" }) },
+      { value: "lavender", label: t("settings.presetTheme.lavender", { defaultValue: "薰衣草" }) },
+      { value: "sunset", label: t("settings.presetTheme.sunset", { defaultValue: "黄昏" }) },
+    ],
+    [t],
+  );
+  return (
+    <section className="space-y-2">
+      <label className="block text-[11px] font-body text-ink-faint">
+        {t("settings.presetTheme.label", { defaultValue: "预设主题" })}
+      </label>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`px-3 py-1 rounded-full text-[11px] border transition-colors cursor-pointer ${
+              value === opt.value
+                ? "bg-bamboo text-white border-bamboo"
+                : "bg-paper-warm/70 border-paper-deep/30 text-ink-soft hover:border-paper-deep/50"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CodeThemePicker({
+  value,
+  onChange,
+}: {
+  value: CodeTheme;
+  onChange: (v: CodeTheme) => void;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo<Array<{ value: CodeTheme; label: string }>>(
+    () => [
+      { value: "light", label: t("settings.codeTheme.light", { defaultValue: "浅色" }) },
+      { value: "dark", label: t("settings.codeTheme.dark", { defaultValue: "深色" }) },
+    ],
+    [t],
+  );
+  return (
+    <section className="space-y-2">
+      <label className="block text-[11px] font-body text-ink-faint">
+        {t("settings.codeTheme.label", { defaultValue: "代码块主题" })}
+      </label>
+      <SlidingButtonGroup
+        options={options}
+        value={value}
+        onChange={(v: CodeTheme) => onChange(v)}
+      />
+    </section>
+  );
+}
+
+function EditorWidthPicker({
+  value,
+  onChange,
+}: {
+  value: EditorWidth;
+  onChange: (v: EditorWidth) => void;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo<Array<{ value: EditorWidth; label: string }>>(
+    () => [
+      { value: "narrow", label: t("settings.editorWidth.narrow", { defaultValue: "窄" }) },
+      { value: "normal", label: t("settings.editorWidth.normal", { defaultValue: "标准" }) },
+      { value: "wide", label: t("settings.editorWidth.wide", { defaultValue: "宽" }) },
+    ],
+    [t],
+  );
+  return (
+    <SlidingButtonGroup
+      options={options}
+      value={value}
+      onChange={(v: EditorWidth) => onChange(v)}
+    />
+  );
+}
+
+function SidebarPositionPicker({
+  value,
+  onChange,
+}: {
+  value: SidebarPosition;
+  onChange: (v: SidebarPosition) => void;
+}) {
+  const { t } = useTranslation();
+  const options = useMemo<Array<{ value: SidebarPosition; label: string }>>(
+    () => [
+      { value: "left", label: t("settings.sidebarPosition.left", { defaultValue: "左侧" }) },
+      { value: "right", label: t("settings.sidebarPosition.right", { defaultValue: "右侧" }) },
+    ],
+    [t],
+  );
+  return (
+    <SlidingButtonGroup
+      options={options}
+      value={value}
+      onChange={(v: SidebarPosition) => onChange(v)}
+    />
+  );
 }
 
 function ToggleRow({ label, checked, onChange }: ToggleRowProps) {
