@@ -115,44 +115,33 @@ fn with_db<T>(f: impl FnOnce(&Connection) -> Result<T, AppError>) -> Result<T, A
 /// 更新指定笔记的 FTS5 索引
 pub fn db_fts_upsert(id: &str, title: &str, content: &str) -> Result<(), AppError> {
     with_db(|conn| {
-        // 显式事务：避免 DELETE/INSERT 之间的窗口期被并发搜索看到空结果
-        conn.execute("BEGIN", [])
+        let tx = conn.unchecked_transaction().map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("FTS 事务开启失败: {e}"),
+            details: Default::default(),
+        })?;
+
+        tx.execute("DELETE FROM notes_fts WHERE note_id = ?1", params![id])
             .map_err(|e| AppError {
                 code: "db".into(),
-                message: format!("事务开启失败: {e}"),
+                message: format!("删除 FTS 旧索引失败: {e}"),
                 details: Default::default(),
             })?;
+        tx.execute(
+            "INSERT INTO notes_fts (note_id, title, content) VALUES (?1, ?2, ?3)",
+            params![id, title, content],
+        )
+        .map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("插入 FTS 索引失败: {e}"),
+            details: Default::default(),
+        })?;
 
-        let result = (|| -> Result<(), AppError> {
-            conn.execute("DELETE FROM notes_fts WHERE note_id = ?1", params![id])
-                .map_err(|e| AppError {
-                    code: "db".into(),
-                    message: format!("删除 FTS 旧索引失败: {e}"),
-                    details: Default::default(),
-                })?;
-            conn.execute(
-                "INSERT INTO notes_fts (note_id, title, content) VALUES (?1, ?2, ?3)",
-                params![id, title, content],
-            )
-            .map_err(|e| AppError {
-                code: "db".into(),
-                message: format!("插入 FTS 索引失败: {e}"),
-                details: Default::default(),
-            })?;
-            Ok(())
-        })();
-
-        if result.is_err() {
-            let _ = conn.execute("ROLLBACK", []);
-            return result;
-        }
-
-        conn.execute("COMMIT", [])
-            .map_err(|e| AppError {
-                code: "db".into(),
-                message: format!("事务提交失败: {e}"),
-                details: Default::default(),
-            })?;
+        tx.commit().map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("FTS 事务提交失败: {e}"),
+            details: Default::default(),
+        })?;
 
         Ok(())
     })
