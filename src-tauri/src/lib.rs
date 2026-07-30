@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod desktop;
 pub mod json_io;
 pub mod locales;

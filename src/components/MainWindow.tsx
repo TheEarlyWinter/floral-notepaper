@@ -16,6 +16,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
+import { extractOutlineHeadings } from "../features/markdown/outlineUtils";
+import { OutlinePanel } from "./OutlinePanel";
 import { showToast } from "./Toast";
 import {
   blockIndexAtOffset,
@@ -50,6 +52,7 @@ import { SlidingButtonGroup } from "./SlidingButtonGroup";
 import { TodoPanel } from "./TodoPanel";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { BacklinksPanel } from "./BacklinksPanel";
+import { KnowledgeGraphPanel } from "./KnowledgeGraphPanel";
 import { ReminderPanel } from "./ReminderPanel";
 import { NotesWorkspacePanel, type NotesWorkspaceMode } from "./NotesWorkspacePanel";
 import { LibraryPanel } from "./LibraryPanel";
@@ -95,6 +98,7 @@ import {
   type TodoItem,
 } from "../features/notes/todoUtils";
 import { resolveWikiLink, wikiLinkSyntax } from "../features/notes/wikiLinks";
+import { useNavigationHistory } from "../features/notes/useNavigationHistory";
 import {
   getNoteContextMenuItems,
   type NoteContextMenuAction,
@@ -122,7 +126,9 @@ type SidePanelMode =
   | "backlinks"
   | "reminders"
   | "library"
-  | "workspace";
+  | "workspace"
+  | "outline"
+  | "knowledgeGraph";
 
 const BUILT_IN_TEMPLATES: NoteTemplate[] = [
   { id: "daily", name: "今日计划", content: "# {{date}}\n\n## 待办\n- [ ] \n\n## 随手记\n" },
@@ -411,9 +417,13 @@ export function MainWindow({
   const [todosOpen, setTodosOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
+  const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(true);
   const [focusMode, setFocusMode] = useState(false);
+  const navHistory = useNavigationHistory();
+  const handleSelectNoteRef = useRef<(id: string) => Promise<void>>(async () => {});
   const [readingMode, setReadingMode] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
@@ -637,13 +647,15 @@ export function MainWindow({
           ? "history"
           : backlinksOpen && selectedId && !isExternal
             ? "backlinks"
-            : libraryOpen
-              ? "library"
-              : remindersOpen && selectedId && !isExternal
-                ? "reminders"
-                : settingsOpen && settingsConfig
-                ? "settings"
-                : null;
+            : knowledgeGraphOpen
+              ? "knowledgeGraph"
+              : libraryOpen
+                ? "library"
+                : remindersOpen && selectedId && !isExternal
+                  ? "reminders"
+                  : settingsOpen && settingsConfig
+                  ? "settings"
+                  : null;
   const sidePanelExpanded = visibleSidePanel !== null;
   const effectiveViewMode: ViewMode = readingMode ? "preview" : viewMode;
   const openWorkspace = useCallback((mode: NotesWorkspaceMode) => {
@@ -654,6 +666,7 @@ export function MainWindow({
     setBacklinksOpen(false);
     setRemindersOpen(false);
     setLibraryOpen(false);
+    setKnowledgeGraphOpen(false);
     setWorkspaceMode(mode);
   }, []);
   const openAboutPanel = useCallback(() => {
@@ -666,6 +679,15 @@ export function MainWindow({
     () => [...BUILT_IN_TEMPLATES, ...(settingsConfig?.templates ?? [])],
     [settingsConfig?.templates],
   );
+
+  const headings = useMemo(() => extractOutlineHeadings(content), [content]);
+
+  // showOutline 配置变更时同步大纲面板开关
+  useEffect(() => {
+    if (settingsConfig?.showOutline) {
+      setOutlineOpen(true);
+    }
+  }, [settingsConfig?.showOutline]);
 
   const filteredNotes = useMemo(
     () =>
@@ -1349,11 +1371,21 @@ export function MainWindow({
         event.preventDefault();
         void saveCurrentNote(true);
       }
+      if (event.altKey && event.key === "ArrowLeft") {
+        event.preventDefault();
+        const noteId = navHistory.goBack();
+        if (noteId) void handleSelectNoteRef.current(noteId);
+      }
+      if (event.altKey && event.key === "ArrowRight") {
+        event.preventDefault();
+        const noteId = navHistory.goForward();
+        if (noteId) void handleSelectNoteRef.current(noteId);
+      }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [saveCurrentNote]);
+  }, [saveCurrentNote, navHistory]);
 
   useEffect(() => {
     if (!selectedId || saveState !== "dirty") return undefined;
@@ -1496,6 +1528,7 @@ export function MainWindow({
       const nextOpen = !open;
       if (nextOpen) {
         setSettingsOpen(false);
+        setKnowledgeGraphOpen(false);
         setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
       }
       return nextOpen;
@@ -1514,6 +1547,7 @@ export function MainWindow({
         setAboutOpen(false);
         setHistoryOpen(false);
         setBacklinksOpen(false);
+        setKnowledgeGraphOpen(false);
       }
       return nextOpen;
     });
@@ -1562,6 +1596,7 @@ export function MainWindow({
     setHistoryOpen(false);
     setBacklinksOpen(false);
     setRemindersOpen(false);
+    setKnowledgeGraphOpen(false);
     setWorkspaceMode(null);
     setLibraryOpen((open) => !open);
   }, []);
@@ -1648,12 +1683,18 @@ export function MainWindow({
     setIsLoading(true);
     try {
       await loadNote(id);
+      // 推入导航历史
+      const noteMeta = notes.find((n) => n.id === id);
+      if (noteMeta) {
+        navHistory.push(id, noteMeta.title || "无标题笔记");
+      }
     } catch (error) {
       showToast(getErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
   };
+  handleSelectNoteRef.current = handleSelectNote;
 
   useEffect(() => {
     const unlisten = listen<Reminder>("reminder://due", (event) => {
@@ -3098,6 +3139,38 @@ export function MainWindow({
 
                 <button
                   onClick={() => {
+                    // 自动切到分栏模式 + 切换大纲
+                    if (effectiveViewMode === "edit") {
+                      setViewMode("split");
+                    }
+                    setOutlineOpen((o) => {
+                      const next = !o;
+                      if (next && settingsConfig && !settingsConfig.showOutline) {
+                        // 如果设置里没开，自动开启
+                        handleSettingsChange({ ...settingsConfig, showOutline: true });
+                      }
+                      return next;
+                    });
+                  }}
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
+                    outlineOpen && (effectiveViewMode === "split" || effectiveViewMode === "preview")
+                      ? "text-bamboo bg-bamboo-mist/50"
+                      : "text-ink-ghost hover:text-ink-faint hover:bg-paper-warm"
+                  }`}
+                  title="目录大纲"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" />
+                  </svg>
+                </button>
+
+                <button
+                  onClick={() => {
                     setHistoryOpen((open) => {
                       const nextOpen = !open;
                       if (nextOpen) {
@@ -3105,6 +3178,7 @@ export function MainWindow({
                         setAboutOpen(false);
                         setTodosOpen(false);
                         setBacklinksOpen(false);
+                        setKnowledgeGraphOpen(false);
                       }
                       return nextOpen;
                     });
@@ -3137,6 +3211,7 @@ export function MainWindow({
                         setAboutOpen(false);
                         setTodosOpen(false);
                         setHistoryOpen(false);
+                        setKnowledgeGraphOpen(false);
                       }
                       return nextOpen;
                     });
@@ -3149,6 +3224,36 @@ export function MainWindow({
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" />
                     <path d="M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => {
+                    setKnowledgeGraphOpen((open) => {
+                      const nextOpen = !open;
+                      if (nextOpen) {
+                        setSettingsOpen(false);
+                        setAboutOpen(false);
+                        setTodosOpen(false);
+                        setHistoryOpen(false);
+                        setBacklinksOpen(false);
+                        setLibraryOpen(false);
+                        setRemindersOpen(false);
+                        setWorkspaceMode(null);
+                      }
+                      return nextOpen;
+                    });
+                  }}
+                  aria-label="知识图谱"
+                  title="知识图谱"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="6" cy="8" r="2.5" />
+                    <circle cx="17" cy="5" r="2" />
+                    <circle cx="12" cy="16" r="3" />
+                    <line x1="8" y1="9.2" x2="14.7" y2="6.3" />
+                    <line x1="10" y1="9" x2="11.2" y2="13.5" />
+                    <line x1="13.7" y1="7.2" x2="14.5" y2="13" />
                   </svg>
                 </button>
                 <button
@@ -3173,6 +3278,7 @@ export function MainWindow({
                         setTodosOpen(false);
                         setHistoryOpen(false);
                         setBacklinksOpen(false);
+                        setKnowledgeGraphOpen(false);
                       }
                       return nextOpen;
                     });
@@ -3613,11 +3719,23 @@ export function MainWindow({
 
                   {(effectiveViewMode === "preview" || effectiveViewMode === "split") && (
                     <div className="flex flex-col min-h-0 min-w-0 flex-1">
-                      {effectiveViewMode === "split" && (
-                        <div className="px-4 pt-2.5 pb-1 shrink-0">
+                      {(effectiveViewMode === "split" || (settingsConfig?.showOutline && headings.length > 0)) && (
+                        <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center justify-between">
                           <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
                             {t("main.editor.previewLabel", { defaultValue: "Preview" })}
                           </span>
+                          {settingsConfig?.showOutline && headings.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setOutlineOpen((o) => !o)}
+                              className={`text-[10px] font-mono transition-colors cursor-pointer ${
+                                outlineOpen ? "text-bamboo" : "text-ink-ghost/50 hover:text-ink-ghost"
+                              }`}
+                              title={outlineOpen ? "隐藏目录" : "显示目录"}
+                            >
+                              {outlineOpen ? "目录 ▸" : "目录"}
+                            </button>
+                          )}
                         </div>
                       )}
                       <div
@@ -3637,12 +3755,55 @@ export function MainWindow({
                       </div>
                     </div>
                   )}
+                  {settingsConfig?.showOutline &&
+                    outlineOpen &&
+                    headings.length > 0 &&
+                    effectiveViewMode !== "edit" && (
+                    <OutlinePanel
+                      headings={headings}
+                      previewScrollRef={previewScrollRef}
+                      onClose={() => setOutlineOpen(false)}
+                    />
+                  )}
                 </>
               )}
             </div>
 
             <div className={`flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0 ${focusMode ? "hidden" : ""}`}>
               <div className="flex items-center gap-3">
+                {navHistory.canGoBack && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const noteId = navHistory.goBack();
+                      if (noteId) void handleSelectNote(noteId);
+                    }}
+                    className="p-0.5 rounded text-ink-ghost hover:text-ink hover:bg-paper-warm transition-colors cursor-pointer"
+                    title="后退 (Alt+←)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M7.5 2.5L4 6l3.5 3.5" />
+                    </svg>
+                  </button>
+                )}
+                {navHistory.canGoForward && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const noteId = navHistory.goForward();
+                      if (noteId) void handleSelectNote(noteId);
+                    }}
+                    className="p-0.5 rounded text-ink-ghost hover:text-ink hover:bg-paper-warm transition-colors cursor-pointer"
+                    title="前进 (Alt+→)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4.5 2.5L8 6l-3.5 3.5" />
+                    </svg>
+                  </button>
+                )}
+                {(navHistory.canGoBack || navHistory.canGoForward) && (
+                  <span className="text-[10px] text-ink-ghost/30">|</span>
+                )}
                 <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
                   {t("main.statusBar.lineNumber", {
                     count: lineCount,
@@ -3685,8 +3846,8 @@ export function MainWindow({
               sidePanelExpanded || mountedSidePanel ? "border-l border-paper-deep/20" : "border-l-0"
             } ${
               settingsOverlay
-                ? `absolute right-0 top-0 bottom-0 z-30 ${visibleSidePanel ? "w-[360px] shadow-xl" : "w-0"}`
-                : `${sidePanelExpanded ? "w-[360px]" : "w-0"}`
+                ? `absolute right-0 top-0 bottom-0 z-30 ${visibleSidePanel ? (visibleSidePanel === "knowledgeGraph" ? "w-[420px]" : "w-[360px]") + " shadow-xl" : "w-0"}`
+                : `${sidePanelExpanded ? (visibleSidePanel === "knowledgeGraph" ? "w-[420px]" : "w-[360px]") : "w-0"}`
             }`}
           >
             <div
@@ -3821,6 +3982,27 @@ export function MainWindow({
                   onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
                   onWeeklyReviewCreated={(note) => { replaceNoteMetadata(note); applyNote(note); setWorkspaceMode(null); }}
                   onClose={() => setWorkspaceMode(null)}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "knowledgeGraph"
+                  ? sidePanelContentVisible && visibleSidePanel === "knowledgeGraph"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+              style={{ width: mountedSidePanel === "knowledgeGraph" ? 420 : 360 }}
+            >
+              {mountedSidePanel === "knowledgeGraph" ? (
+                <KnowledgeGraphPanel
+                  notes={notes}
+                  onOpenNote={(noteId) => {
+                    setKnowledgeGraphOpen(false);
+                    void handleSelectNoteRef.current(noteId);
+                  }}
+                  onClose={() => setKnowledgeGraphOpen(false)}
                 />
               ) : null}
             </div>

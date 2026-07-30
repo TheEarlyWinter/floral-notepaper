@@ -293,6 +293,10 @@ pub struct NoteStore {
 pub fn default_store() -> Result<NoteStore, AppError> {
     let config_dir = default_config_dir()?;
     let data_dir = resolve_data_dir(&config_dir)?;
+    // 确保 SQLite 数据库已初始化（幂等）。失败不阻塞启动，回退到 JSON 索引
+    if let Err(e) = crate::services::db::init_db(&data_dir) {
+        eprintln!("[花笺] 数据库初始化失败，FTS5 搜索不可用: {e}");
+    }
     Ok(NoteStore::new(config_dir, data_dir))
 }
 
@@ -812,6 +816,10 @@ impl NoteStore {
         };
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
         let _ = self.rebuild_search_index();
+        // 增量更新 FTS5
+        if crate::services::db::is_initialized() {
+            let _ = crate::services::db::db_fts_upsert(&created.id, &created.title, &created.content);
+        }
         Ok(created)
     }
 
@@ -881,6 +889,9 @@ impl NoteStore {
         self.save_metadata(&metadata_file)?;
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
         let _ = self.rebuild_search_index();
+        if crate::services::db::is_initialized() {
+            let _ = crate::services::db::db_fts_upsert(&result.id, &result.title, &result.content);
+        }
         Ok(result)
     }
 
@@ -959,6 +970,11 @@ impl NoteStore {
         }
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
         let _ = self.rebuild_search_index();
+        // FTS5: 删除源笔记索引，更新目标笔记索引
+        if crate::services::db::is_initialized() {
+            let _ = crate::services::db::db_fts_delete(&source.id);
+            let _ = crate::services::db::db_fts_upsert(&merged.id, &merged.title, &merged.content);
+        }
 
         Ok(merged)
     }
@@ -987,6 +1003,9 @@ impl NoteStore {
         }
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
         let _ = self.rebuild_search_index();
+        if crate::services::db::is_initialized() {
+            let _ = crate::services::db::db_fts_delete(id);
+        }
         Ok(())
     }
 
@@ -1006,15 +1025,56 @@ impl NoteStore {
     }
 
     fn save_note_version(&self, note_id: &str, content: &str) -> Result<(), AppError> {
+        // 路径穿越防护：note_id 必须是合法 UUID v4 格式
+        if note_id.len() != 36 || note_id.chars().filter(|&c| c == '-').count() != 4 {
+            return Err(AppError {
+                code: "invalidNoteId".into(),
+                message: "note_id 格式无效".into(),
+                details: Default::default(),
+            });
+        }
+
         let dir = self.note_history_dir(note_id);
         fs::create_dir_all(&dir)?;
+
+        // 计算内容 blake3 hash
+        let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+
+        // 检查是否与最新版本内容重复
+        let mut entries: Vec<_> = fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    == Some("md")
+            })
+            .collect();
+        entries.sort_by_key(|entry| entry.file_name());
+
+        if let Some(last) = entries.last() {
+            let existing = fs::read_to_string(last.path()).unwrap_or_default();
+            if blake3::hash(existing.as_bytes()).to_hex().to_string() == hash {
+                return Ok(()); // 内容未变，跳过
+            }
+        }
+
+        // 存储新版本（纯时间戳格式，与 list_note_versions / restore_note_version 兼容）
         let version_id = Utc::now().format("%Y%m%dT%H%M%S%.6fZ").to_string();
         fs::write(dir.join(format!("{version_id}.md")), content)?;
 
-        let mut entries = fs::read_dir(&dir)?
+        // 重新读取条目列表（包含新写入的版本），清理超出上限的旧版本
+        let mut entries: Vec<_> = fs::read_dir(&dir)?
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().extension().and_then(|extension| extension.to_str()) == Some("md"))
-            .collect::<Vec<_>>();
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    == Some("md")
+            })
+            .collect();
         entries.sort_by_key(|entry| entry.file_name());
         let excess = entries.len().saturating_sub(NOTE_HISTORY_LIMIT);
         for entry in entries.into_iter().take(excess) {
@@ -1208,8 +1268,88 @@ impl NoteStore {
     }
 
     pub fn search_content(&self, query: &str) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
+        // 优先使用 SQLite FTS5 索引
+        if crate::services::db::is_initialized() {
+            match self.search_fts(query) {
+                Ok(results) if !results.is_empty() => return Ok(results),
+                _ => {} // FTS 失败或为空则回退到 JSON 索引
+            }
+        }
         let notes = self.all_notes_for_index()?;
         crate::services::library::search(&self.data_dir, query, &notes)
+    }
+
+    /// 使用 FTS5 全文搜索（trigram tokenizer）
+    fn search_fts(&self, query: &str) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
+        use crate::services::library::SearchResult;
+
+        // UTF-8 安全字符边界辅助函数
+        fn floor_char_boundary(s: &str, index: usize) -> usize {
+            if index >= s.len() { return s.len(); }
+            let mut i = index;
+            while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+            i
+        }
+        fn ceil_char_boundary(s: &str, index: usize) -> usize {
+            if index >= s.len() { return s.len(); }
+            let mut i = index;
+            while i < s.len() && !s.is_char_boundary(i) { i += 1; }
+            i
+        }
+
+        let ids = crate::services::db::db_search_fts(query)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let normalized = query.trim().to_lowercase();
+        let mut results = Vec::new();
+
+        for id in &ids {
+            if let Ok(note) = self.read_note(id) {
+                let title = if note.title.trim().is_empty() { "无标题笔记".into() } else { note.title.clone() };
+                let content_lower = note.content.to_lowercase();
+                let title_lower = note.title.to_lowercase();
+                let pos = content_lower.find(&normalized);
+
+                let (source, match_pos, score) = if let Some(p) = pos {
+                    // 安全：p 来自 content_lower，极少数 Unicode 大小写转换可能改变字节长度，
+                    // 这里 min 确保不会越界 note.content
+                    let safe_p = p.min(note.content.len().saturating_sub(1));
+                    (&note.content, safe_p, 10 + title_lower.find(&normalized).map(|_| 8).unwrap_or(0))
+                } else if let Some(p) = title_lower.find(&normalized) {
+                    (&note.title, p, 18)
+                } else {
+                    // FTS 匹配但精确子串不匹配（trigram 模糊匹配），用内容开头
+                    (&note.content, 0usize, 5)
+                };
+
+                let start = match_pos.saturating_sub(44);
+                let end = (match_pos + normalized.len() + 90).min(source.len());
+                // 确保 UTF-8 字符边界安全：找到 start 处最近的字符边界
+                let safe_start = floor_char_boundary(source, start);
+                let safe_end = ceil_char_boundary(source, end);
+                let snippet = format!(
+                    "{}{}{}",
+                    if safe_start > 0 { "\u{2026}" } else { "" },
+                    source[safe_start..safe_end].replace('\n', " "),
+                    if safe_end < source.len() { "\u{2026}" } else { "" }
+                );
+
+                results.push(SearchResult {
+                    note_id: note.id,
+                    title,
+                    category: note.category,
+                    snippet,
+                    match_start: match_pos,
+                    score,
+                });
+            }
+        }
+
+        results.sort_by(|a, b| b.score.cmp(&a.score));
+        results.truncate(80);
+        Ok(results)
     }
 
     pub fn add_attachment(&self, note_id: &str, source: &Path) -> Result<crate::services::library::Attachment, AppError> {

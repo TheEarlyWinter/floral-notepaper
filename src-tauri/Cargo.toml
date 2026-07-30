@@ -38,6 +38,8 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 semver = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
+rusqlite = { version = "0.31", features = ["bundled"] }
+blake3 = "1"
 dirs = "6"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
