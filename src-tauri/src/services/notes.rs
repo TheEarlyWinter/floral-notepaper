@@ -1794,14 +1794,15 @@ impl NoteStore {
         if json_path.exists() {
             match serde_json::from_str::<MetadataFile>(&fs::read_to_string(&json_path)?) {
                 Ok(metadata) => {
-                    for note in &metadata.notes {
-                        let _ = crate::services::db::db_notes_upsert(note);
+                    // 事务包裹的批量迁移
+                    if let Err(e) = crate::services::db::db_notes_replace_all(&metadata.notes) {
+                        eprintln!("[花笺] SQLite 迁移失败 ({e})，继续使用 JSON");
+                    } else {
+                        eprintln!("[花笺] 已从 metadata.json 迁移 {} 条笔记到 SQLite", metadata.notes.len());
                     }
-                    eprintln!("[花笺] 已从 metadata.json 迁移 {} 条笔记到 SQLite", metadata.notes.len());
                     return Ok(metadata);
                 }
                 Err(_) => {
-                    // JSON 损坏 → 备份后重建
                     let corrupt_name = format!(
                         "metadata.corrupt-{}.json",
                         Utc::now().format("%Y%m%d%H%M%S")
@@ -1811,8 +1812,8 @@ impl NoteStore {
             }
         }
         let rebuilt = self.rebuild_metadata()?;
-        for note in &rebuilt.notes {
-            let _ = crate::services::db::db_notes_upsert(note);
+        if let Err(e) = crate::services::db::db_notes_replace_all(&rebuilt.notes) {
+            eprintln!("[花笺] SQLite 新建写入失败: {e}");
         }
         Ok(rebuilt)
     }

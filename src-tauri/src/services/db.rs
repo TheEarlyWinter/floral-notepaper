@@ -63,6 +63,18 @@ pub fn init_db(data_dir: &Path) -> Result<(), AppError> {
 
 /// 执行数据库迁移
 fn migrate(conn: &Connection) -> Result<(), AppError> {
+    // 启动时完整性检查，损坏时提前发现
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("数据库完整性检查失败: {e}"),
+            details: Default::default(),
+        })?;
+    if integrity != "ok" {
+        eprintln!("[花笺] 数据库完整性警告: {integrity}");
+    }
+
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS notes (
             id TEXT PRIMARY KEY,
@@ -76,6 +88,8 @@ fn migrate(conn: &Connection) -> Result<(), AppError> {
             tags TEXT NOT NULL DEFAULT '[]',
             pinned INTEGER NOT NULL DEFAULT 0
         );
+
+        CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
             note_id UNINDEXED,
@@ -223,24 +237,35 @@ pub fn db_notes_get_all() -> Result<Vec<crate::services::notes::NoteMetadata>, A
 
         let notes: Vec<NoteMetadata> = stmt
             .query_map([], |row| {
-                let created_at_str: String = row.get(5)?;
-                let updated_at_str: String = row.get(6)?;
-                let tags_json: String = row.get(8)?;
+                let created_at_str: String = row.get("created_at")?;
+                let updated_at_str: String = row.get("updated_at")?;
+                let tags_json: String = row.get("tags")?;
+                let id: String = row.get("id")?;
+                let id_for_log = id.clone();
                 Ok(NoteMetadata {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    file_name: row.get(2)?,
-                    category: row.get(3)?,
+                    id,
+                    title: row.get("title")?,
+                    file_name: row.get("file_name")?,
+                    category: row.get("category")?,
                     created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
-                        .unwrap_or_default()
+                        .unwrap_or_else(|_| {
+                            eprintln!("[花笺] 警告: 笔记 {id_for_log} 的 created_at 损坏: '{created_at_str}'");
+                            chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap()
+                        })
                         .with_timezone(&chrono::Utc),
                     updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at_str)
-                        .unwrap_or_default()
+                        .unwrap_or_else(|_| {
+                            eprintln!("[花笺] 警告: 笔记 {id_for_log} 的 updated_at 损坏: '{updated_at_str}'");
+                            chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00+00:00").unwrap()
+                        })
                         .with_timezone(&chrono::Utc),
-                    word_count: row.get::<_, i64>(7)? as usize,
-                    preview: row.get(9)?,
-                    tags: serde_json::from_str(&tags_json).unwrap_or_default(),
-                    pinned: row.get::<_, i64>(10)? != 0,
+                    word_count: row.get::<_, i64>("word_count")? as usize,
+                    preview: row.get("preview")?,
+                    tags: serde_json::from_str(&tags_json).unwrap_or_else(|_| {
+                        eprintln!("[花笺] 警告: 笔记 {id_for_log} 的 tags 解析失败");
+                        vec![]
+                    }),
+                    pinned: row.get::<_, i64>("pinned")? != 0,
                 })
             })
             .map_err(|e| AppError {
