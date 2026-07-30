@@ -127,7 +127,10 @@ function matchShortcut(event: KeyboardEvent, shortcut: string): boolean {
   const hasMeta = parts.includes("meta") || parts.includes("cmd");
   const keyPart = parts.find((p) => !["ctrl", "alt", "shift", "meta", "cmd"].includes(p));
   if (!keyPart) return false;
-  if (event.ctrlKey !== hasCtrl && event.metaKey !== hasMeta) return false;
+  // Ctrl 和 Meta 互认：Mac 上用 Cmd(Meta) 等价于 Windows 的 Ctrl
+  const hasModKey = hasCtrl || hasMeta;
+  const eventHasModKey = event.ctrlKey || event.metaKey;
+  if (eventHasModKey !== hasModKey) return false;
   if (event.altKey !== hasAlt) return false;
   if (event.shiftKey !== hasShift) return false;
   return event.key.toLowerCase() === keyPart;

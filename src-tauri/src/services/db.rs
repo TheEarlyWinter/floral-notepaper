@@ -1,12 +1,13 @@
 //! SQLite 数据库层。
-//! 管理连接、schema 迁移、FTS5 全文搜索。
+//! 管理连接、schema 迁移、FTS5 全文搜索、notes 元数据存储。
 //!
 //! 数据库文件：{data_dir}/floral.db
 //! 使用 WAL 模式支持多窗口并发读。
 //!
-//! 注意：当前 notes 元数据仍走 metadata.json。
-//! notes 表和 db_insert_note/db_delete_note 留待 Phase 2c（metadata→SQLite）实现。
-//! 目前只有 FTS5 索引（notes_fts）在生产中使用。
+//! 锁层级（必须遵守，否则可能死锁）：
+//!   1. METADATA_MUTATION_LOCK（notes.rs，进程级互斥）
+//!   2. DB Mutex（本模块内，保护 SQLite 连接）
+//! 调用链为 1→2，不存在逆序。
 
 use crate::services::notes::AppError;
 use rusqlite::{params, Connection, OpenFlags};
@@ -333,5 +334,58 @@ pub fn db_notes_is_empty() -> Result<bool, AppError> {
                 details: Default::default(),
             })?;
         Ok(count == 0)
+    })
+}
+
+/// 事务包裹的全量替换：先清空再批量插入，任一步失败自动回滚
+pub fn db_notes_replace_all(notes: &[crate::services::notes::NoteMetadata]) -> Result<(), AppError> {
+    with_db(|conn| {
+        let tx = conn.unchecked_transaction().map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("事务开始失败: {e}"),
+            details: Default::default(),
+        })?;
+
+        tx.execute("DELETE FROM notes", []).map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("清空笔记元数据失败: {e}"),
+            details: Default::default(),
+        })?;
+
+        for note in notes {
+            let tags_json =
+                serde_json::to_string(&note.tags).unwrap_or_else(|_| "[]".into());
+            tx.execute(
+                "INSERT OR REPLACE INTO notes
+                 (id, title, file_name, category, created_at, updated_at,
+                  word_count, preview, tags, pinned)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    note.id,
+                    note.title,
+                    note.file_name,
+                    note.category,
+                    note.created_at.to_rfc3339(),
+                    note.updated_at.to_rfc3339(),
+                    note.word_count as i64,
+                    note.preview,
+                    tags_json,
+                    note.pinned as i64,
+                ],
+            )
+            .map_err(|e| AppError {
+                code: "db".into(),
+                message: format!("写入笔记元数据失败: {}", e),
+                details: Default::default(),
+            })?;
+        }
+
+        tx.commit().map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("事务提交失败: {e}"),
+            details: Default::default(),
+        })?;
+
+        Ok(())
     })
 }
