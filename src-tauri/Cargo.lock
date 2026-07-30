@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "floral-notepaper"
-version = "1.1.6"
+version = "1.1.7"
 dependencies = [
  "blake3",
  "block2",

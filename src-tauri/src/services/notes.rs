@@ -2,7 +2,7 @@ use crate::json_io::write_json_atomic;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     env, fmt, fs, io,
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
@@ -21,10 +21,15 @@ const LEGACY_MACOS_GLOBAL_SHORTCUTS: [&str; 5] = [
 ];
 const MACOS_SHORTCUT_MIGRATION_MARKER: &str = ".macos-shortcut-default-v3";
 const NOTE_HISTORY_LIMIT: usize = 20;
+const CORRUPT_METADATA_BACKUP_KEEP: usize = 5;
 
 // default_store() 会为每个命令创建一个新的 NoteStore；这把进程内锁覆盖完整
 // 读-改-写区间，避免多个窗口用旧 metadata.json 覆盖彼此的更新。
 static METADATA_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+// 每次应用进程首次接触一个数据目录时，扫描一次未登记 Markdown。
+// 这能恢复“文件已写入、metadata 尚未来得及提交”时留下的孤儿笔记，
+// 又避免每一条 IPC 请求都递归扫描整个笔记库。
+static RECONCILED_DATA_DIRS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -295,11 +300,14 @@ pub struct NoteStore {
 pub fn default_store() -> Result<NoteStore, AppError> {
     let config_dir = default_config_dir()?;
     let data_dir = resolve_data_dir(&config_dir)?;
-    // 确保 SQLite 数据库已初始化（幂等）。失败不阻塞启动，回退到 JSON 索引
-    if let Err(e) = crate::services::db::init_db(&data_dir) {
+    let store = NoteStore::new(config_dir, data_dir);
+    // 必须先处理可能存在的数据目录迁移。若先创建 floral.db，空目标目录会被误判为
+    // "已有用户数据"，从而跳过旧 JSON/Markdown 的迁移。
+    store.load_config()?;
+    if let Err(e) = crate::services::db::init_db(store.data_dir()) {
         eprintln!("[花笺] 数据库初始化失败，FTS5 搜索不可用: {e}");
     }
-    Ok(NoteStore::new(config_dir, data_dir))
+    Ok(store)
 }
 
 pub(crate) fn default_config_dir() -> Result<PathBuf, AppError> {
@@ -399,9 +407,35 @@ fn data_dir_from_notes_dir(notes_dir: &str) -> PathBuf {
     path.to_path_buf()
 }
 
+// 这里故意不包含 floral.db / floral.db-wal / floral.db-shm：SQLite 是可重建的
+// 派生索引。复制活动 WAL 文件会产生不完整快照，迁移后统一从 JSON/Markdown 重建。
 const DATA_DIR_ITEMS: [&str; 9] = [
-    "metadata.json", "notes", "images", "attachments", "attachments.json", "backgrounds", "history", "reminders.json", "search-index.json",
+    "metadata.json",
+    "notes",
+    "images",
+    "attachments",
+    "attachments.json",
+    "backgrounds",
+    "history",
+    "reminders.json",
+    "search-index.json",
 ];
+const DERIVED_DB_ITEMS: [&str; 3] = ["floral.db", "floral.db-wal", "floral.db-shm"];
+
+fn remove_derived_database_files(data_dir: &Path) {
+    crate::services::db::close_db(data_dir);
+    for name in DERIVED_DB_ITEMS {
+        let path = data_dir.join(name);
+        if path.exists() {
+            if let Err(error) = fs::remove_file(&path) {
+                eprintln!(
+                    "failed to remove derived database {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
 
 // 旧版无论 notesDir 指向哪里，metadata.json、images、backgrounds 都固定存放在旧主目录；
 // 数据目录解析到其他位置时必须一并带走，否则笔记内图片引用全部失效、created_at 丢失
@@ -559,6 +593,33 @@ fn canonical_for_compare(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+fn reconciliation_key(path: &Path) -> PathBuf {
+    canonical_for_compare(path)
+}
+
+fn data_dir_needs_reconciliation(path: &Path) -> bool {
+    let set = RECONCILED_DATA_DIRS.get_or_init(|| Mutex::new(HashSet::new()));
+    set.lock()
+        .map(|set| !set.contains(&reconciliation_key(path)))
+        .unwrap_or(false)
+}
+
+fn mark_data_dir_reconciled(path: &Path) {
+    let set = RECONCILED_DATA_DIRS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut set) = set.lock() {
+        set.insert(reconciliation_key(path));
+    }
+}
+
+fn invalidate_data_dir_reconciliation(path: &Path) {
+    let Some(set) = RECONCILED_DATA_DIRS.get() else {
+        return;
+    };
+    if let Ok(mut set) = set.lock() {
+        set.remove(&reconciliation_key(path));
+    }
+}
+
 fn known_data_migration_candidates() -> Vec<PathBuf> {
     known_data_migration_candidates_for(env::var("HOME").ok(), env::var("USERPROFILE").ok())
 }
@@ -599,10 +660,11 @@ fn move_or_copy_dir(from: &Path, to: &Path) -> Result<(), AppError> {
 }
 
 fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), AppError> {
-    // 拒绝把目录复制进自身子目录：否则递归无限展开、磁盘耗尽。
-    // migrate_data_to 上层已用 canonical_for_compare 拦截，这里做底层兜底，
-    // 与 updater::helper 的同名实现保持一致的自递归防护
-    if to.starts_with(from) && to != from {
+    // 拒绝把目录复制进自身子目录：必须使用规范化后的路径比较，避免 Windows
+    // 分隔符、大小写、junction 或 verbatim 前缀让词法 starts_with 失效。
+    let canonical_from = canonical_for_compare(from);
+    let canonical_to = canonical_for_compare(to);
+    if canonical_to.starts_with(&canonical_from) && canonical_to != canonical_from {
         return Err(AppError::new("unsafePath", "目标目录不能位于源目录内部"));
     }
     fs::create_dir_all(to)?;
@@ -718,7 +780,7 @@ impl NoteStore {
         let mut config: AppConfig = serde_json::from_str(&fs::read_to_string(&path)?)?;
         // config 中记录的 dataDir 是上次运行时数据所在位置；若本次 resolve 出的
         // self.data_dir 与之不同（如 FLORAL_NOTEPAPER_DATA_DIR 被改），尝试搬运旧数据
-        self.migrate_data_dir_if_relocated(&mut config);
+        self.migrate_data_dir_if_relocated(&mut config)?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
         write_json_atomic(&path, &config)?;
@@ -817,11 +879,7 @@ impl NoteStore {
             pinned: metadata.pinned,
         };
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
-        let _ = self.rebuild_search_index();
-        // 增量更新 FTS5
-        if crate::services::db::is_initialized() {
-            let _ = crate::services::db::db_fts_upsert(&created.id, &created.title, &created.content);
-        }
+        self.update_fts_after_mutation(&metadata_file, &[&created], &[]);
         Ok(created)
     }
 
@@ -859,13 +917,6 @@ impl NoteStore {
         }
         fs::write(&new_path, &request.content)?;
 
-        if old_file_name != new_file_name || old_category != new_category {
-            if old_path.exists() && old_path != new_path {
-                trash::delete(&old_path)
-                    .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
-            }
-        }
-
         note.title = request.title;
         note.file_name = new_file_name.clone();
         note.category = new_category.clone();
@@ -879,7 +930,7 @@ impl NoteStore {
             id: note.id.clone(),
             title: note.title.clone(),
             file_name: note.file_name.clone(),
-            category: new_category,
+            category: new_category.clone(),
             created_at: note.created_at,
             updated_at: note.updated_at,
             word_count: note.word_count,
@@ -889,11 +940,21 @@ impl NoteStore {
         };
 
         self.save_metadata(&metadata_file)?;
-        let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
-        let _ = self.rebuild_search_index();
-        if crate::services::db::is_initialized() {
-            let _ = crate::services::db::db_fts_upsert(&result.id, &result.title, &result.content);
+        // 元数据提交成功后才清理旧文件；清理失败只会留下冗余副本，不能让一次
+        // 编辑因为回收站不可用而丢掉原笔记。
+        if (old_file_name != new_file_name || old_category != new_category)
+            && old_path.exists()
+            && old_path != new_path
+        {
+            if let Err(error) = trash::delete(&old_path) {
+                eprintln!(
+                    "[花笺] 新笔记已保存，但旧文件未能移入回收站 {}: {error}",
+                    old_path.display()
+                );
+            }
         }
+        let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
+        self.update_fts_after_mutation(&metadata_file, &[&result], &[]);
         Ok(result)
     }
 
@@ -926,9 +987,19 @@ impl NoteStore {
         }
 
         let source_title = source.title.trim();
-        let source_heading = if source_title.is_empty() { "未命名笔记" } else { source_title };
-        let source_content = source.content.replace(&source_image_prefix, &target_image_prefix);
-        let separator = if target.content.trim().is_empty() { "" } else { "\n\n---\n\n" };
+        let source_heading = if source_title.is_empty() {
+            "未命名笔记"
+        } else {
+            source_title
+        };
+        let source_content = source
+            .content
+            .replace(&source_image_prefix, &target_image_prefix);
+        let separator = if target.content.trim().is_empty() {
+            ""
+        } else {
+            "\n\n---\n\n"
+        };
         let merged_content = format!(
             "{}{}## 合并自：{}\n\n{}",
             target.content, separator, source_heading, source_content
@@ -958,25 +1029,26 @@ impl NoteStore {
             .position(|note| note.id == source.id)
             .ok_or_else(|| AppError::note_not_found(&source.id))?;
         let source_metadata = metadata_file.notes.remove(source_index);
-        let source_path = self.note_path_in_category(&source_metadata.file_name, &source_metadata.category);
-        if source_path.exists() {
-            trash::delete(&source_path)
-                .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
-        }
+        let source_path =
+            self.note_path_in_category(&source_metadata.file_name, &source_metadata.category);
+        // 先提交清单；若回收站失败则把元数据放回去，源笔记仍可正常访问。
         self.save_metadata(&metadata_file)?;
+        if source_path.exists() {
+            if let Err(error) = trash::delete(&source_path) {
+                metadata_file.notes.insert(source_index, source_metadata);
+                let _ = self.save_metadata(&metadata_file);
+                return Err(AppError::new("trash", format!("移入回收站失败: {error}")));
+            }
+        }
         let _ = self.delete_note_images(&source.id);
-        let _ = crate::services::library::move_note_attachments(&self.data_dir, &source.id, &target.id);
+        let _ =
+            crate::services::library::move_note_attachments(&self.data_dir, &source.id, &target.id);
         let source_history = self.note_history_dir(&source.id);
         if source_history.exists() {
             let _ = fs::remove_dir_all(source_history);
         }
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
-        let _ = self.rebuild_search_index();
-        // FTS5: 删除源笔记索引，更新目标笔记索引
-        if crate::services::db::is_initialized() {
-            let _ = crate::services::db::db_fts_delete(&source.id);
-            let _ = crate::services::db::db_fts_upsert(&merged.id, &merged.title, &merged.content);
-        }
+        self.update_fts_after_mutation(&metadata_file, &[&merged], &[&source.id]);
 
         Ok(merged)
     }
@@ -992,11 +1064,14 @@ impl NoteStore {
             .ok_or_else(|| AppError::note_not_found(id))?;
         let metadata = metadata_file.notes.remove(index);
         let path = self.note_path_in_category(&metadata.file_name, &metadata.category);
-        if path.exists() {
-            trash::delete(&path)
-                .map_err(|e| AppError::new("trash", format!("移入回收站失败: {e}")))?;
-        }
         self.save_metadata(&metadata_file)?;
+        if path.exists() {
+            if let Err(error) = trash::delete(&path) {
+                metadata_file.notes.insert(index, metadata);
+                let _ = self.save_metadata(&metadata_file);
+                return Err(AppError::new("trash", format!("移入回收站失败: {error}")));
+            }
+        }
         let _ = self.delete_note_images(id);
         let _ = crate::services::library::delete_note_attachments(&self.data_dir, id);
         let history_dir = self.note_history_dir(id);
@@ -1004,10 +1079,7 @@ impl NoteStore {
             let _ = fs::remove_dir_all(history_dir);
         }
         let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
-        let _ = self.rebuild_search_index();
-        if crate::services::db::is_initialized() {
-            let _ = crate::services::db::db_fts_delete(id);
-        }
+        self.update_fts_after_mutation(&metadata_file, &[], &[id]);
         Ok(())
     }
 
@@ -1023,7 +1095,9 @@ impl NoteStore {
         if chrono::NaiveDateTime::parse_from_str(version_id, "%Y%m%dT%H%M%S%.fZ").is_err() {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
-        Ok(self.note_history_dir(note_id).join(format!("{version_id}.md")))
+        Ok(self
+            .note_history_dir(note_id)
+            .join(format!("{version_id}.md")))
     }
 
     fn save_note_version(&self, note_id: &str, content: &str) -> Result<(), AppError> {
@@ -1042,7 +1116,7 @@ impl NoteStore {
         // 计算内容 blake3 hash
         let hash = blake3::hash(content.as_bytes()).to_hex().to_string();
 
-        // 检查是否与最新版本内容重复
+        // 在完整保留窗口中去重。A→B→A 不应把同一内容重复写入历史。
         let mut entries: Vec<_> = fs::read_dir(&dir)?
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
@@ -1055,11 +1129,12 @@ impl NoteStore {
             .collect();
         entries.sort_by_key(|entry| entry.file_name());
 
-        if let Some(last) = entries.last() {
-            let existing = fs::read_to_string(last.path()).unwrap_or_default();
-            if blake3::hash(existing.as_bytes()).to_hex().to_string() == hash {
-                return Ok(()); // 内容未变，跳过
-            }
+        if entries.iter().any(|entry| {
+            fs::read_to_string(entry.path())
+                .map(|existing| blake3::hash(existing.as_bytes()).to_hex().to_string() == hash)
+                .unwrap_or(false)
+        }) {
+            return Ok(());
         }
 
         // 存储新版本（纯时间戳格式，与 list_note_versions / restore_note_version 兼容）
@@ -1095,12 +1170,19 @@ impl NoteStore {
         self.find_metadata(note_id)?;
 
         const ALLOWED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+        const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(AppError::new("imageTooLarge", "单张图片不能超过 50 MB"));
+        }
         let ext = extension.to_ascii_lowercase();
         if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
             return Err(AppError::new(
                 "unsupportedImageFormat",
                 format!("不支持的图片格式: {ext}"),
             ));
+        }
+        if !image_payload_matches_extension(data, &ext) {
+            return Err(AppError::new("invalidImageData", "图片内容与扩展名不匹配"));
         }
 
         let dir = self.images_dir(note_id);
@@ -1151,10 +1233,8 @@ impl NoteStore {
             let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                 continue;
             };
-            let Ok(created_at) = chrono::NaiveDateTime::parse_from_str(
-                stem,
-                "%Y%m%dT%H%M%S%.fZ",
-            ) else {
+            let Ok(created_at) = chrono::NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S%.fZ")
+            else {
                 continue;
             };
             let content = fs::read_to_string(&path)?;
@@ -1261,88 +1341,75 @@ impl NoteStore {
     }
 
     pub fn all_notes_for_index(&self) -> Result<Vec<Note>, AppError> {
-        self.list_notes()?.into_iter().map(|metadata| self.read_note(&metadata.id)).collect()
+        self.ensure_storage()?;
+        let metadata = self.load_metadata()?;
+        self.notes_for_metadata(&metadata)
     }
 
+    /// 用户主动重建搜索索引时，同时重建 JSON 兼容索引和 SQLite FTS5。
     pub fn rebuild_search_index(&self) -> Result<(), AppError> {
-        let notes = self.all_notes_for_index()?;
-        crate::services::library::rebuild_search_index(&self.data_dir, &notes)
+        self.ensure_storage()?;
+        let metadata = self.load_metadata()?;
+        self.rebuild_derived_indexes(&metadata)
     }
 
-    pub fn search_content(&self, query: &str) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
-        // 优先使用 SQLite FTS5 索引
-        if crate::services::db::is_initialized() {
+    pub fn search_content(
+        &self,
+        query: &str,
+    ) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
+        self.ensure_storage()?;
+        let metadata = self.load_metadata()?;
+        if crate::services::db::is_initialized(&self.data_dir) {
             match self.search_fts(query) {
                 Ok(results) if !results.is_empty() => return Ok(results),
-                _ => {} // FTS 失败或为空则回退到 JSON 索引
+                Ok(_) | Err(_) => {} // FTS 无结果或暂不可用时，权威 Markdown 回退搜索
             }
         }
-        let notes = self.all_notes_for_index()?;
+        let notes = self.notes_for_metadata(&metadata)?;
         crate::services::library::search(&self.data_dir, query, &notes)
     }
 
-    /// 使用 FTS5 全文搜索（trigram tokenizer）
-    fn search_fts(&self, query: &str) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
-        use crate::services::library::SearchResult;
+    /// 使用 FTS5 全文搜索（trigram tokenizer）。摘要位置始终从原始 UTF-8 字符串
+    /// 计算，不能复用 lowercase 后的字节偏移。
+    fn search_fts(
+        &self,
+        query: &str,
+    ) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
+        use crate::services::library::{case_insensitive_find, safe_snippet, SearchResult};
 
-        // UTF-8 安全字符边界辅助函数
-        fn floor_char_boundary(s: &str, index: usize) -> usize {
-            if index >= s.len() { return s.len(); }
-            let mut i = index;
-            while i > 0 && !s.is_char_boundary(i) { i -= 1; }
-            i
-        }
-        fn ceil_char_boundary(s: &str, index: usize) -> usize {
-            if index >= s.len() { return s.len(); }
-            let mut i = index;
-            while i < s.len() && !s.is_char_boundary(i) { i += 1; }
-            i
-        }
-
-        let ids = crate::services::db::db_search_fts(query)?;
+        let ids = crate::services::db::db_search_fts(&self.data_dir, query)?;
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let normalized = query.trim().to_lowercase();
         let mut results = Vec::new();
-
         for id in &ids {
             if let Ok(note) = self.read_note(id) {
-                let title = if note.title.trim().is_empty() { "无标题笔记".into() } else { note.title.clone() };
-                let content_lower = note.content.to_lowercase();
-                let title_lower = note.title.to_lowercase();
-                let pos = content_lower.find(&normalized);
-
-                let (source, match_pos, score) = if let Some(p) = pos {
-                    // 安全：p 来自 content_lower，极少数 Unicode 大小写转换可能改变字节长度，
-                    // 这里 min 确保不会越界 note.content
-                    let safe_p = p.min(note.content.len().saturating_sub(1));
-                    (&note.content, safe_p, 10 + title_lower.find(&normalized).map(|_| 8).unwrap_or(0))
-                } else if let Some(p) = title_lower.find(&normalized) {
-                    (&note.title, p, 18)
+                let title = if note.title.trim().is_empty() {
+                    "无标题笔记".into()
                 } else {
-                    // FTS 匹配但精确子串不匹配（trigram 模糊匹配），用内容开头
-                    (&note.content, 0usize, 5)
+                    note.title.clone()
                 };
-
-                let start = match_pos.saturating_sub(44);
-                let end = (match_pos + normalized.len() + 90).min(source.len());
-                // 确保 UTF-8 字符边界安全：找到 start 处最近的字符边界
-                let safe_start = floor_char_boundary(source, start);
-                let safe_end = ceil_char_boundary(source, end);
-                let snippet = format!(
-                    "{}{}{}",
-                    if safe_start > 0 { "\u{2026}" } else { "" },
-                    source[safe_start..safe_end].replace('\n', " "),
-                    if safe_end < source.len() { "\u{2026}" } else { "" }
-                );
-
+                let content_pos = case_insensitive_find(&note.content, &normalized);
+                let title_pos = case_insensitive_find(&note.title, &normalized);
+                let (source, match_pos, score) = if let Some(position) = content_pos {
+                    (
+                        &note.content,
+                        position,
+                        10 + title_pos.map(|_| 8).unwrap_or(0),
+                    )
+                } else if let Some(position) = title_pos {
+                    (&note.title, position, 18)
+                } else {
+                    // FTS 可处理 trigram 边界匹配；没有精确子串时给出安全的内容开头。
+                    (&note.content, 0, 5)
+                };
                 results.push(SearchResult {
                     note_id: note.id,
                     title,
                     category: note.category,
-                    snippet,
+                    snippet: safe_snippet(source, match_pos, query),
                     match_start: match_pos,
                     score,
                 });
@@ -1354,12 +1421,19 @@ impl NoteStore {
         Ok(results)
     }
 
-    pub fn add_attachment(&self, note_id: &str, source: &Path) -> Result<crate::services::library::Attachment, AppError> {
+    pub fn add_attachment(
+        &self,
+        note_id: &str,
+        source: &Path,
+    ) -> Result<crate::services::library::Attachment, AppError> {
         self.read_note(note_id)?;
         crate::services::library::add_attachment(&self.data_dir, note_id, source)
     }
 
-    pub fn list_attachments(&self, note_id: &str) -> Result<Vec<crate::services::library::Attachment>, AppError> {
+    pub fn list_attachments(
+        &self,
+        note_id: &str,
+    ) -> Result<Vec<crate::services::library::Attachment>, AppError> {
         self.read_note(note_id)?;
         crate::services::library::list_attachments(&self.data_dir, note_id)
     }
@@ -1369,8 +1443,16 @@ impl NoteStore {
     }
 
     pub fn attachment_path(&self, note_id: &str, attachment_id: &str) -> Result<PathBuf, AppError> {
-        let attachment = self.list_attachments(note_id)?.into_iter().find(|item| item.id == attachment_id).ok_or_else(|| AppError::new("attachmentNotFound", "找不到附件"))?;
-        Ok(self.data_dir.join("attachments").join(note_id).join(attachment.file_name))
+        let attachment = self
+            .list_attachments(note_id)?
+            .into_iter()
+            .find(|item| item.id == attachment_id)
+            .ok_or_else(|| AppError::new("attachmentNotFound", "找不到附件"))?;
+        Ok(self
+            .data_dir
+            .join("attachments")
+            .join(note_id)
+            .join(attachment.file_name))
     }
 
     pub fn create_backup(&self, destination: &Path) -> Result<(), AppError> {
@@ -1378,7 +1460,9 @@ impl NoteStore {
         crate::services::library::create_manual_backup(&self.data_dir, destination)
     }
 
-    pub fn ensure_daily_backup(&self) -> Result<Option<crate::services::library::BackupInfo>, AppError> {
+    pub fn ensure_daily_backup(
+        &self,
+    ) -> Result<Option<crate::services::library::BackupInfo>, AppError> {
         self.ensure_storage()?;
         crate::services::library::ensure_daily_backup(&self.data_dir)
     }
@@ -1390,6 +1474,11 @@ impl NoteStore {
     pub fn restore_backup(&self, backup: &Path) -> Result<(), AppError> {
         let _lock = self.lock_metadata_mutation()?;
         crate::services::library::restore_backup(&self.data_dir, backup)?;
+        invalidate_data_dir_reconciliation(&self.data_dir);
+        // floral.db 不参与备份，恢复后的 JSON/Markdown 必须主动覆盖旧派生缓存。
+        if let Err(error) = crate::services::db::reset_derived_data(&self.data_dir) {
+            eprintln!("[花笺] 无法重置恢复前的 SQLite 缓存，将在后续访问时尝试重建: {error}");
+        }
         self.ensure_storage()?;
         self.rebuild_search_index()
     }
@@ -1452,7 +1541,11 @@ impl NoteStore {
                 note.category = new_name.to_string();
             }
         }
-        self.save_metadata(&metadata_file)?;
+        if let Err(error) = self.save_metadata(&metadata_file) {
+            let _ = fs::rename(&new_path, &old_path);
+            return Err(error);
+        }
+        self.update_fts_after_mutation(&metadata_file, &[], &[]);
         Ok(())
     }
 
@@ -1490,6 +1583,7 @@ impl NoteStore {
                 }
             }
             self.save_metadata(&metadata_file)?;
+            self.update_fts_after_mutation(&metadata_file, &[], &[]);
 
             // Move to recycle bin instead of permanent deletion
             trash::delete(&category_path)
@@ -1507,6 +1601,7 @@ impl NoteStore {
             }
             if changed {
                 self.save_metadata(&metadata_file)?;
+                self.update_fts_after_mutation(&metadata_file, &[], &[]);
             }
         }
         Ok(())
@@ -1542,7 +1637,13 @@ impl NoteStore {
 
         note.category = new_category.to_string();
         let result = note.clone();
-        self.save_metadata(&metadata_file)?;
+        if let Err(error) = self.save_metadata(&metadata_file) {
+            if new_path.exists() && old_path != new_path {
+                let _ = fs::rename(&new_path, &old_path);
+            }
+            return Err(error);
+        }
+        self.update_fts_after_mutation(&metadata_file, &[], &[]);
         Ok(result)
     }
 
@@ -1720,16 +1821,31 @@ impl NoteStore {
         self.ensure_data_dir()?;
         let _config = self.load_config()?;
         fs::create_dir_all(self.notes_dir())?;
-        if !self.metadata_path().exists() {
-            let metadata = self.rebuild_metadata()?;
-            self.save_metadata(&metadata)?;
+        if let Err(error) = crate::services::db::init_db(&self.data_dir) {
+            eprintln!("[花笺] SQLite 初始化失败，继续使用 Markdown/JSON: {error}");
+        }
+
+        let mut metadata = if !self.metadata_path().exists() {
+            let rebuilt = self.rebuild_metadata()?;
+            self.save_metadata(&rebuilt)?;
+            rebuilt
         } else {
             let metadata = self.load_metadata()?;
             if metadata.notes.is_empty() && self.notes_dir_has_md_files() {
                 let rebuilt = self.rebuild_metadata()?;
                 self.save_metadata(&rebuilt)?;
+                rebuilt
+            } else {
+                metadata
             }
+        };
+        if data_dir_needs_reconciliation(&self.data_dir) {
+            if self.reconcile_metadata_with_files(&mut metadata)? {
+                self.save_metadata(&metadata)?;
+            }
+            mark_data_dir_reconciled(&self.data_dir);
         }
+        self.ensure_fts_current(&metadata)?;
         Ok(())
     }
 
@@ -1763,62 +1879,14 @@ impl NoteStore {
         }
     }
 
+    /// 从权威 JSON/Markdown 读取元数据。SQLite 只是派生索引，绝不反向覆盖这里。
     fn load_metadata(&self) -> Result<MetadataFile, AppError> {
         self.ensure_data_dir()?;
-
-        // 优先从 SQLite 读取。首次启动时若 SQLite 为空且 metadata.json 存在，自动迁移
-        if crate::services::db::is_initialized() {
-            // unwrap_or(true): 查询失败时假设为空 → 走迁移路径，upsert 幂等安全
-            if crate::services::db::db_notes_is_empty().unwrap_or(true) {
-                return self.migrate_json_to_sqlite_or_rebuild();
-            }
-
-            // SQLite 中有数据，直接读取
-            match crate::services::db::db_notes_get_all() {
-                Ok(notes) => return Ok(MetadataFile { notes }),
-                Err(e) => {
-                    // SQLite 损坏 → 回退到 JSON，再不行就文件系统重建
-                    eprintln!("[花笺] SQLite 读取失败 ({e})，尝试从 JSON 恢复");
-                    return self.fallback_load_from_json_or_rebuild();
-                }
-            }
-        }
-
-        // 数据库未初始化 → JSON 回退
         self.fallback_load_from_json_or_rebuild()
     }
 
-    /// 从 metadata.json 迁移到 SQLite（首次启动），或从文件系统重建
-    fn migrate_json_to_sqlite_or_rebuild(&self) -> Result<MetadataFile, AppError> {
-        let json_path = self.metadata_path();
-        if json_path.exists() {
-            match serde_json::from_str::<MetadataFile>(&fs::read_to_string(&json_path)?) {
-                Ok(metadata) => {
-                    // 事务包裹的批量迁移
-                    if let Err(e) = crate::services::db::db_notes_replace_all(&metadata.notes) {
-                        eprintln!("[花笺] SQLite 迁移失败 ({e})，继续使用 JSON");
-                    } else {
-                        eprintln!("[花笺] 已从 metadata.json 迁移 {} 条笔记到 SQLite", metadata.notes.len());
-                    }
-                    return Ok(metadata);
-                }
-                Err(_) => {
-                    let corrupt_name = format!(
-                        "metadata.corrupt-{}.json",
-                        Utc::now().format("%Y%m%d%H%M%S")
-                    );
-                    let _ = fs::rename(&json_path, self.data_dir.join(&corrupt_name));
-                }
-            }
-        }
-        let rebuilt = self.rebuild_metadata()?;
-        if let Err(e) = crate::services::db::db_notes_replace_all(&rebuilt.notes) {
-            eprintln!("[花笺] SQLite 新建写入失败: {e}");
-        }
-        Ok(rebuilt)
-    }
-
-    /// JSON / 文件系统回退加载（SQLite 不可用时）
+    /// JSON / 文件系统回退加载。metadata.json 不存在或损坏时，Markdown 文件是最后的
+    /// 权威来源；损坏 JSON 会保留副本，便于用户事后取证。
     fn fallback_load_from_json_or_rebuild(&self) -> Result<MetadataFile, AppError> {
         let path = self.metadata_path();
         if !path.exists() {
@@ -1829,13 +1897,7 @@ impl NoteStore {
         match serde_json::from_str(&fs::read_to_string(&path)?) {
             Ok(metadata) => Ok(metadata),
             Err(_) => {
-                let corrupt_name = format!(
-                    "metadata.corrupt-{}.json",
-                    Utc::now().format("%Y%m%d%H%M%S")
-                );
-                if let Err(error) = fs::rename(&path, self.data_dir.join(&corrupt_name)) {
-                    eprintln!("failed to back up corrupt metadata {}: {error}", path.display());
-                }
+                self.back_up_corrupt_metadata(&path);
                 let rebuilt = self.rebuild_metadata()?;
                 self.save_metadata(&rebuilt)?;
                 Ok(rebuilt)
@@ -1843,18 +1905,164 @@ impl NoteStore {
         }
     }
 
+    fn back_up_corrupt_metadata(&self, path: &Path) {
+        let corrupt_name = format!(
+            "metadata.corrupt-{}.json",
+            Utc::now().format("%Y%m%d%H%M%S")
+        );
+        if let Err(error) = fs::rename(path, self.data_dir.join(corrupt_name)) {
+            eprintln!(
+                "failed to back up corrupt metadata {}: {error}",
+                path.display()
+            );
+            return;
+        }
+        let Ok(mut backups) = fs::read_dir(&self.data_dir).map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("metadata.corrupt-")
+                })
+                .collect::<Vec<_>>()
+        }) else {
+            return;
+        };
+        backups.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+        for entry in backups.into_iter().skip(CORRUPT_METADATA_BACKUP_KEEP) {
+            if let Err(error) = fs::remove_file(entry.path()) {
+                eprintln!(
+                    "failed to prune corrupt metadata backup {}: {error}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
+
+    /// 先提交权威 JSON；SQLite 镜像失败不会把一次已成功落盘的笔记伪装成保存失败。
+    /// 后续 FTS 指纹校验会自动重建该镜像。
     fn save_metadata(&self, metadata: &MetadataFile) -> Result<(), AppError> {
         self.ensure_data_dir()?;
-
-        // 1. 先写 JSON（原子写入，始终保留最近完整快照，作为降级安全网）
         write_json_atomic(&self.metadata_path(), metadata)?;
-
-        // 2. 再写 SQLite（主存储）。事务包裹保证原子性，失败时 JSON 仍是最新完整快照
-        if crate::services::db::is_initialized() {
-            crate::services::db::db_notes_replace_all(&metadata.notes)?;
+        if crate::services::db::is_initialized(&self.data_dir) {
+            if let Err(error) =
+                crate::services::db::db_notes_replace_all(&self.data_dir, &metadata.notes)
+            {
+                eprintln!("[花笺] SQLite 元数据镜像失败，将在后续自动重建: {error}");
+            }
         }
-
         Ok(())
+    }
+
+    fn fts_fingerprint(metadata: &MetadataFile) -> String {
+        let mut notes = metadata.notes.iter().collect::<Vec<_>>();
+        notes.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut hasher = blake3::Hasher::new();
+        for note in notes {
+            let updated_at = note.updated_at.to_rfc3339();
+            for value in [
+                note.id.as_str(),
+                note.title.as_str(),
+                note.file_name.as_str(),
+                note.category.as_str(),
+                updated_at.as_str(),
+            ] {
+                hasher.update(value.as_bytes());
+                hasher.update(&[0]);
+            }
+        }
+        hasher.finalize().to_hex().to_string()
+    }
+
+    fn notes_for_metadata(&self, metadata: &MetadataFile) -> Result<Vec<Note>, AppError> {
+        metadata
+            .notes
+            .iter()
+            .filter(|note| {
+                self.note_path_in_category(&note.file_name, &note.category)
+                    .is_file()
+            })
+            .map(|metadata| {
+                let content = fs::read_to_string(
+                    self.note_path_in_category(&metadata.file_name, &metadata.category),
+                )?;
+                Ok(Note {
+                    id: metadata.id.clone(),
+                    title: metadata.title.clone(),
+                    file_name: metadata.file_name.clone(),
+                    category: metadata.category.clone(),
+                    created_at: metadata.created_at,
+                    updated_at: metadata.updated_at,
+                    word_count: metadata.word_count,
+                    content,
+                    tags: metadata.tags.clone(),
+                    pinned: metadata.pinned,
+                })
+            })
+            .collect()
+    }
+
+    fn rebuild_derived_indexes(&self, metadata: &MetadataFile) -> Result<(), AppError> {
+        let notes = self.notes_for_metadata(metadata)?;
+        // 保留 JSON 索引文件以兼容已有备份；回退搜索不会再信任它作为权威来源。
+        crate::services::library::rebuild_search_index(&self.data_dir, &notes)?;
+        if crate::services::db::is_initialized(&self.data_dir) {
+            crate::services::db::db_rebuild_from_notes(
+                &self.data_dir,
+                &notes,
+                &Self::fts_fingerprint(metadata),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn ensure_fts_current(&self, metadata: &MetadataFile) -> Result<(), AppError> {
+        if let Err(error) = crate::services::db::init_db(&self.data_dir) {
+            eprintln!("[花笺] SQLite 初始化失败，改用本地回退搜索: {error}");
+            return Ok(());
+        }
+        let fingerprint = Self::fts_fingerprint(metadata);
+        match crate::services::db::db_fts_is_current(&self.data_dir, &fingerprint) {
+            Ok(true) => Ok(()),
+            Ok(false) => self.rebuild_derived_indexes(metadata),
+            Err(error) => {
+                eprintln!("[花笺] FTS 状态读取失败，尝试重建: {error}");
+                self.rebuild_derived_indexes(metadata)
+            }
+        }
+    }
+
+    fn update_fts_after_mutation(
+        &self,
+        metadata: &MetadataFile,
+        upserts: &[&Note],
+        deletes: &[&str],
+    ) {
+        if !crate::services::db::is_initialized(&self.data_dir) {
+            return;
+        }
+        let result = (|| -> Result<(), AppError> {
+            for id in deletes {
+                crate::services::db::db_fts_delete(&self.data_dir, id)?;
+            }
+            for note in upserts {
+                crate::services::db::db_fts_upsert(
+                    &self.data_dir,
+                    &note.id,
+                    &note.title,
+                    &note.content,
+                )?;
+            }
+            crate::services::db::db_set_fts_fingerprint(
+                &self.data_dir,
+                &Self::fts_fingerprint(metadata),
+            )
+        })();
+        if let Err(error) = result {
+            eprintln!("[花笺] FTS 增量更新失败，将在下次访问时自动重建: {error}");
+        }
     }
 
     fn notes_dir_has_md_files(&self) -> bool {
@@ -1893,6 +2101,41 @@ impl NoteStore {
         }
 
         Ok(MetadataFile { notes })
+    }
+
+    /// 将磁盘上可恢复、但 metadata.json 尚未登记的笔记纳入清单。
+    /// 对已有 id，只有 metadata 指向的文件已不存在时才用扫描结果纠正路径，
+    /// 这样可保留用户原有的标签、置顶和创建时间。
+    fn reconcile_metadata_with_files(&self, metadata: &mut MetadataFile) -> Result<bool, AppError> {
+        let scanned = self.rebuild_metadata()?;
+        let mut changed = false;
+        for scanned_note in scanned.notes {
+            match metadata
+                .notes
+                .iter_mut()
+                .find(|note| note.id == scanned_note.id)
+            {
+                Some(existing) => {
+                    let existing_path =
+                        self.note_path_in_category(&existing.file_name, &existing.category);
+                    if !existing_path.is_file() {
+                        let tags = existing.tags.clone();
+                        let pinned = existing.pinned;
+                        let created_at = existing.created_at;
+                        *existing = scanned_note;
+                        existing.tags = tags;
+                        existing.pinned = pinned;
+                        existing.created_at = created_at;
+                        changed = true;
+                    }
+                }
+                None => {
+                    metadata.notes.push(scanned_note);
+                    changed = true;
+                }
+            }
+        }
+        Ok(changed)
     }
 
     fn scan_dir_for_notes(
@@ -1952,6 +2195,8 @@ impl NoteStore {
             ));
         }
         fs::create_dir_all(new_data_dir)?;
+        // 读取当前配置但不修改其 data_dir；真正提交只发生在新目录已完成索引重建之后。
+        let mut config = self.load_config()?;
 
         // 第一阶段：只复制不删除。中途失败时源数据完好、配置不变，重试时覆盖续传
         for item in DATA_DIR_ITEMS {
@@ -1967,15 +2212,28 @@ impl NoteStore {
             }
         }
 
-        // 第二阶段：切换配置指向新目录（提交点）
+        // 第二阶段：先从新目录的权威 JSON/Markdown 重建派生索引；这里失败时
+        // 旧目录和旧配置仍完整保留，绝不把半迁移目录设为新的权威位置。
         let new_store = NoteStore::new(self.config_dir.clone(), new_data_dir.to_path_buf());
-        let mut config = new_store.load_config()?;
+        if let Err(error) = crate::services::db::init_db(new_data_dir) {
+            eprintln!("[花笺] 新数据目录 SQLite 初始化失败，将使用回退搜索: {error}");
+        }
+        let new_metadata = new_store.load_metadata()?;
+        if let Err(error) = new_store.rebuild_derived_indexes(&new_metadata) {
+            crate::services::db::close_db(new_data_dir);
+            return Err(AppError::new(
+                "dataMigration",
+                format!("新数据目录索引重建失败，旧数据未删除: {error}"),
+            ));
+        }
+
+        // 第三阶段：切换配置指向新目录（提交点）
         config.background_image_path =
             remap_path_prefix(&config.background_image_path, &self.data_dir, new_data_dir);
         config.data_dir = Some(new_data_dir.to_string_lossy().to_string());
         new_store.save_config(config)?;
 
-        // 第三阶段：清理旧位置。失败只会留下冗余副本，不影响新目录的数据，
+        // 第四阶段：清理旧位置。失败只会留下冗余副本，不影响新目录的数据,
         // 但需记录日志：否则用户可能困惑哪份是权威数据
         for item in DATA_DIR_ITEMS {
             let src = self.data_dir.join(item);
@@ -1995,51 +2253,99 @@ impl NoteStore {
                 }
             }
         }
+        // SQLite 不是需要搬运的用户数据；新位置已验证重建成功后再清理旧缓存。
+        remove_derived_database_files(&self.data_dir);
 
         Ok(new_store)
     }
 
     // 跨重启自动迁移：config 持久化的 dataDir 与本次 resolve 的 self.data_dir 不一致时
-    // （典型为修改 FLORAL_NOTEPAPER_DATA_DIR 环境变量），把旧位置数据搬到新位置。
-    // 关键不变量：仅当新位置尚无用户数据时才迁移，否则保留两边、不合并，避免交叉污染。
-    // 失败不阻断启动——记录日志后继续，旧数据仍在原地不会丢失
-    fn migrate_data_dir_if_relocated(&self, config: &mut AppConfig) {
+    // （典型为修改 FLORAL_NOTEPAPER_DATA_DIR 环境变量），先完整复制，再重建派生索引，
+    // 最后才删除旧数据。复制/重建任何一步失败，都不修改 config 且旧数据保持完整。
+    fn migrate_data_dir_if_relocated(&self, config: &mut AppConfig) -> Result<(), AppError> {
         let Some(ref last_dir) = config.data_dir else {
-            return;
+            return Ok(());
         };
         let old_dir = PathBuf::from(last_dir);
-        if canonical_for_compare(&old_dir) == canonical_for_compare(&self.data_dir) {
-            return;
-        }
-        if !old_dir.exists() {
-            return;
+        if canonical_for_compare(&old_dir) == canonical_for_compare(&self.data_dir)
+            || !old_dir.exists()
+        {
+            return Ok(());
         }
         match self.data_dir_has_user_data() {
-            Ok(true) | Err(_) => return,
+            Ok(true) => return Ok(()),
+            Err(error) => return Err(error),
             Ok(false) => {}
         }
+
         eprintln!(
             "data dir relocated, migrating from {} to {}",
             old_dir.display(),
             self.data_dir.display()
         );
+        fs::create_dir_all(&self.data_dir)?;
+        let mut copied_items = Vec::new();
+        let copy_result = (|| -> Result<(), AppError> {
+            for item in DATA_DIR_ITEMS {
+                let src = old_dir.join(item);
+                let dst = self.data_dir.join(item);
+                if !src.exists() {
+                    continue;
+                }
+                if src.is_dir() {
+                    copy_dir_recursive(&src, &dst)?;
+                } else {
+                    fs::copy(&src, &dst)?;
+                }
+                copied_items.push(item);
+            }
+            if let Err(error) = crate::services::db::init_db(&self.data_dir) {
+                eprintln!("[花笺] 重定位目标 SQLite 初始化失败，将使用回退搜索: {error}");
+            }
+            let metadata = self.load_metadata()?;
+            self.rebuild_derived_indexes(&metadata)?;
+            Ok(())
+        })();
+
+        if let Err(error) = copy_result {
+            // 目标此前确认没有用户数据，因此失败时仅清理本次写入，不触碰旧目录。
+            for item in copied_items {
+                let path = self.data_dir.join(item);
+                let _ = if path.is_dir() {
+                    fs::remove_dir_all(path)
+                } else {
+                    fs::remove_file(path)
+                };
+            }
+            remove_derived_database_files(&self.data_dir);
+            return Err(AppError::new(
+                "dataMigration",
+                format!("数据目录迁移失败，旧数据未删除: {error}"),
+            ));
+        }
+
         for item in DATA_DIR_ITEMS {
             let src = old_dir.join(item);
-            let dst = self.data_dir.join(item);
-            if !src.exists() || dst.exists() {
-                continue;
-            }
-            if let Err(error) = move_path(&src, &dst) {
-                eprintln!(
-                    "failed to migrate {item} from {} to {}: {}",
-                    old_dir.display(),
-                    self.data_dir.display(),
-                    error.message
-                );
+            if src.is_dir() {
+                if let Err(error) = fs::remove_dir_all(&src) {
+                    eprintln!(
+                        "data migrated, but failed to clean up {}: {error}",
+                        src.display()
+                    );
+                }
+            } else if src.is_file() {
+                if let Err(error) = fs::remove_file(&src) {
+                    eprintln!(
+                        "data migrated, but failed to clean up {}: {error}",
+                        src.display()
+                    );
+                }
             }
         }
+        remove_derived_database_files(&old_dir);
         config.background_image_path =
             remap_path_prefix(&config.background_image_path, &old_dir, &self.data_dir);
+        Ok(())
     }
 
     // 新数据目录是否已有用户数据（config.json 不算，它属于配置目录、且可能与数据目录重合）
@@ -2100,6 +2406,26 @@ fn safe_file_stem(title: &str) -> String {
     }
 
     stem.trim_matches('_').to_string()
+}
+
+fn image_payload_matches_extension(data: &[u8], extension: &str) -> bool {
+    match extension {
+        "png" => data.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" | "jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "gif" => data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a"),
+        "webp" => data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP",
+        "bmp" => data.starts_with(b"BM"),
+        // SVG 是文本格式。它会作为 img 资源加载，仍限制为 SVG 根节点而非任意文本。
+        "svg" => std::str::from_utf8(data)
+            .ok()
+            .map(|text| {
+                let trimmed = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
+                trimmed.starts_with("<svg")
+                    || (trimmed.starts_with("<?xml") && trimmed.contains("<svg"))
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn count_words(content: &str) -> usize {
@@ -2396,7 +2722,10 @@ mod tests {
         assert_eq!(merged.tags, ["机械", "待整理"]);
         assert!(store.read_note(&source.id).is_err());
         assert_eq!(store.list_notes().expect("list notes").len(), 1);
-        assert_eq!(store.list_note_versions(&target.id).expect("history").len(), 1);
+        assert_eq!(
+            store.list_note_versions(&target.id).expect("history").len(),
+            1
+        );
         assert!(store
             .merge_notes(MergeNotesRequest {
                 target_id: target.id.clone(),
@@ -2455,7 +2784,9 @@ mod tests {
             )
             .expect("update note");
 
-        let versions = store.list_note_versions(&created.id).expect("list versions");
+        let versions = store
+            .list_note_versions(&created.id)
+            .expect("list versions");
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].preview, "第一版");
 
@@ -2464,7 +2795,13 @@ mod tests {
             .expect("restore version");
         assert_eq!(restored.content, "第一版");
         // 恢复前的第二版也会被保留为可再次恢复的快照。
-        assert_eq!(store.list_note_versions(&created.id).expect("list restored history").len(), 2);
+        assert_eq!(
+            store
+                .list_note_versions(&created.id)
+                .expect("list restored history")
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -2495,7 +2832,13 @@ mod tests {
                 .expect("update note");
         }
 
-        assert_eq!(store.list_note_versions(&created.id).expect("list versions").len(), 20);
+        assert_eq!(
+            store
+                .list_note_versions(&created.id)
+                .expect("list versions")
+                .len(),
+            20
+        );
     }
 
     #[test]
@@ -2589,6 +2932,7 @@ mod tests {
             data_dir: None,
             global_shortcut: "Alt+Space".into(),
             close_to_tray: false,
+            close_tab_shortcut: default_close_tab_shortcut(),
             autostart: true,
             default_view_mode: "preview".into(),
             note_auto_save: false,
@@ -3178,5 +3522,145 @@ mod tests {
             fs::read_to_string(export_path).expect("read exported markdown"),
             content
         );
+    }
+
+    #[test]
+    fn reconciles_an_orphan_markdown_file_without_losing_existing_metadata() {
+        let store = test_store("orphan-markdown-recovery");
+        let existing = store
+            .create_note(SaveNoteRequest {
+                title: "已有笔记".into(),
+                content: "已有内容".into(),
+                category: String::new(),
+                tags: vec!["kept".into()],
+                pinned: true,
+            })
+            .expect("create existing note");
+        let orphan_id = Uuid::new_v4().to_string();
+        let orphan_file = format!("{orphan_id}_崩溃后留下的笔记.md");
+        fs::write(
+            store.notes_dir().join(&orphan_file),
+            "# 崩溃恢复\n这篇文件写入后 metadata 尚未来得及提交。",
+        )
+        .expect("write orphan markdown");
+
+        invalidate_data_dir_reconciliation(store.data_dir());
+        let notes = store.list_notes().expect("reconcile orphan note");
+        assert_eq!(notes.len(), 2);
+        assert!(notes.iter().any(|note| note.id == orphan_id));
+        let kept = notes
+            .iter()
+            .find(|note| note.id == existing.id)
+            .expect("existing note");
+        assert_eq!(kept.tags, ["kept"]);
+        assert!(kept.pinned);
+    }
+
+    #[test]
+    fn rebuilds_fts_for_existing_json_notes_when_derived_state_is_missing() {
+        let store = test_store("fts-initial-migration");
+        let first = store
+            .create_note(SaveNoteRequest {
+                title: "旧笔记一".into(),
+                content: "水稻田里的第一条旧记录".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create first note");
+        let second = store
+            .create_note(SaveNoteRequest {
+                title: "旧笔记二".into(),
+                content: "水稻田里的第二条旧记录".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create second note");
+
+        crate::services::db::reset_derived_data(store.data_dir()).expect("clear derived state");
+        let results = store
+            .search_content("水稻田")
+            .expect("search after migration");
+        let ids = results
+            .iter()
+            .map(|item| item.note_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert!(ids.contains(&first.id.as_str()));
+        assert!(ids.contains(&second.id.as_str()));
+    }
+
+    #[test]
+    fn restore_backup_rebuilds_metadata_and_fts_from_restored_files() {
+        let store = test_store("restore-rebuilds-derived-indexes");
+        let restored = store
+            .create_note(SaveNoteRequest {
+                title: "备份中的笔记".into(),
+                content: "恢复后应该能搜索到水稻田".into(),
+                category: String::new(),
+                tags: vec!["backup".into()],
+                pinned: false,
+            })
+            .expect("create backup note");
+        let backup = store.data_dir().join("restore-source.zip");
+        store.create_backup(&backup).expect("create backup");
+
+        store.delete_note(&restored.id).expect("delete backup note");
+        let current = store
+            .create_note(SaveNoteRequest {
+                title: "恢复前的当前笔记".into(),
+                content: "这篇不应留在恢复结果中".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create current note");
+
+        store.restore_backup(&backup).expect("restore backup");
+        let notes = store.list_notes().expect("list restored notes");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, restored.id);
+        assert_ne!(notes[0].id, current.id);
+
+        let results = store
+            .search_content("水稻田")
+            .expect("search restored notes");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].note_id, restored.id);
+    }
+
+    #[test]
+    fn explicit_data_migration_rebuilds_fts_without_copying_live_sqlite() {
+        let root = test_root("migrate-rebuilds-derived-indexes");
+        let data_dir = root.join("source");
+        let target_dir = root.join("target");
+        let store = NoteStore::new(root.join("config"), data_dir.clone());
+        fs::create_dir_all(store.config_dir()).expect("create config dir");
+        write_json_atomic(&store.config_path(), &store.default_config()).expect("write config");
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "迁移索引".into(),
+                content: "迁移后也能搜索水稻田".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create note");
+
+        let migrated = store.migrate_data_to(&target_dir).expect("migrate data");
+        assert!(
+            !data_dir.join("floral.db").exists(),
+            "old derived database should be cleaned"
+        );
+        assert!(
+            target_dir.join("floral.db").exists(),
+            "new database should be rebuilt"
+        );
+        let results = migrated
+            .search_content("水稻田")
+            .expect("search migrated data");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].note_id, note.id);
     }
 }

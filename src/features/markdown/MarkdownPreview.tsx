@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { isValidElement, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -229,13 +229,8 @@ const staticComponents: Components = {
   pre: ({ children }) => {
     // Extract language from the <code> element's className
     let language = "";
-    if (
-      children != null &&
-      typeof children === "object" &&
-      "props" in (children as React.ReactElement)
-    ) {
-      const codeProps = (children as React.ReactElement<{ className?: string }>).props;
-      const match = codeProps.className?.match(/language-(\S+)/);
+    if (isValidElement<{ className?: string }>(children)) {
+      const match = children.props.className?.match(/language-(\S+)/);
       if (match) language = match[1];
     }
 

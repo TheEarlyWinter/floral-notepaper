@@ -1,7 +1,11 @@
+import GithubSlugger from "github-slugger";
+
 /**
  * 从 Markdown 文本中提取标题，生成大纲结构。
+ *
+ * ID 必须由与 rehype-slug 相同的 github-slugger 生成，不能维护另一套近似
+ * slugify 规则，否则特殊符号或重复标题会让大纲找不到预览中的真实 DOM 节点。
  */
-
 export interface OutlineHeading {
   level: number;
   text: string;
@@ -9,43 +13,51 @@ export interface OutlineHeading {
   line: number;
 }
 
-/** 生成与 rehype-slug（github-slugger）一致的 slug */
-function slugify(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
+const HEADING_RE = /^\s{0,3}(#{1,6})[ \t]+(.+?)\s*$/;
+
+function closesFence(line: string, marker: string): boolean {
+  const escaped = marker[0] === "`" ? "`" : "~";
+  return new RegExp(`^\\s{0,3}${escaped}{${marker.length},}\\s*$`).test(line);
 }
 
-const HEADING_RE = /^(#{1,6})\s+(.+)$/gm;
+function normalizeHeadingText(raw: string): string {
+  // CommonMark 会忽略 ATX 标题末尾由空白分隔的 closing sequence。
+  return raw.replace(/[ \t]+#+[ \t]*$/, "").trim();
+}
 
 export function extractOutlineHeadings(content: string): OutlineHeading[] {
   const headings: OutlineHeading[] = [];
-  const slugCount = new Map<string, number>();
+  const slugger = new GithubSlugger();
+  let openFence: string | null = null;
+  const lines = content.split("\n");
 
-  HEADING_RE.lastIndex = 0;
-
-  let match: RegExpExecArray | null;
-  while ((match = HEADING_RE.exec(content)) !== null) {
-    const level = match[1].length;
-    const text = match[2].trim();
-    if (!text) continue;
-
-    let baseSlug = slugify(text) || `heading-${headings.length + 1}`;
-    const count = slugCount.get(baseSlug) ?? 0;
-    if (count > 0) {
-      baseSlug = `${baseSlug}-${count}`;
+  lines.forEach((line, index) => {
+    if (openFence) {
+      if (closesFence(line, openFence)) {
+        openFence = null;
+      }
+      return;
     }
-    slugCount.set(slugify(text), count + 1);
 
-    const beforeMatch = content.slice(0, match.index);
-    const line = beforeMatch.split("\n").length;
+    const fence = line.match(FENCE_RE)?.[1];
+    if (fence) {
+      openFence = fence;
+      return;
+    }
 
-    headings.push({ level, text, id: baseSlug, line });
-  }
+    const match = line.match(HEADING_RE);
+    if (!match) return;
+    const text = normalizeHeadingText(match[2]);
+    if (!text) return;
+
+    headings.push({
+      level: match[1].length,
+      text,
+      id: slugger.slug(text) || `heading-${headings.length + 1}`,
+      line: index + 1,
+    });
+  });
 
   return headings;
 }

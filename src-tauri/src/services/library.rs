@@ -1,12 +1,27 @@
-use crate::{json_io::write_json_atomic, services::notes::{AppError, Note}};
+use crate::{
+    json_io::write_json_atomic,
+    services::notes::{AppError, Note},
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fs, io::{Seek, Write}, path::{Component, Path, PathBuf}};
+use std::{
+    fs,
+    io::{Seek, Write},
+    path::{Component, Path, PathBuf},
+};
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const BACKUP_KEEP: usize = 30;
-const BACKUP_ITEMS: [&str; 7] = ["metadata.json", "notes", "images", "attachments", "attachments.json", "history", "reminders.json"];
+const BACKUP_ITEMS: [&str; 7] = [
+    "metadata.json",
+    "notes",
+    "images",
+    "attachments",
+    "attachments.json",
+    "history",
+    "reminders.json",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,17 +79,31 @@ struct SearchDocument {
 }
 
 fn err(code: &str, message: impl Into<String>) -> AppError {
-    AppError { code: code.into(), message: message.into(), details: Default::default() }
+    AppError {
+        code: code.into(),
+        message: message.into(),
+        details: Default::default(),
+    }
 }
 
-fn attachments_path(data_dir: &Path) -> PathBuf { data_dir.join("attachments.json") }
-fn attachments_dir(data_dir: &Path, note_id: &str) -> PathBuf { data_dir.join("attachments").join(note_id) }
-fn backup_dir(data_dir: &Path) -> PathBuf { data_dir.join("backups") }
-fn index_path(data_dir: &Path) -> PathBuf { data_dir.join("search-index.json") }
+fn attachments_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("attachments.json")
+}
+fn attachments_dir(data_dir: &Path, note_id: &str) -> PathBuf {
+    data_dir.join("attachments").join(note_id)
+}
+fn backup_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("backups")
+}
+fn index_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("search-index.json")
+}
 
 fn load_attachments(data_dir: &Path) -> Result<AttachmentFile, AppError> {
     let path = attachments_path(data_dir);
-    if !path.exists() { return Ok(AttachmentFile::default()); }
+    if !path.exists() {
+        return Ok(AttachmentFile::default());
+    }
     Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
 
@@ -83,22 +112,54 @@ fn save_attachments(data_dir: &Path, file: &AttachmentFile) -> Result<(), AppErr
 }
 
 fn safe_file_name(value: &str) -> String {
-    let result: String = value.chars().map(|ch| if "<>:\"/\\|?*".contains(ch) || ch.is_control() { '_' } else { ch }).collect();
+    let result: String = value
+        .chars()
+        .map(|ch| {
+            if "<>:\"/\\|?*".contains(ch) || ch.is_control() {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect();
     let result = result.trim_matches(['.', ' ']);
-    if result.is_empty() { "attachment".into() } else { result.chars().take(120).collect() }
+    if result.is_empty() {
+        "attachment".into()
+    } else {
+        result.chars().take(120).collect()
+    }
 }
 
-pub fn add_attachment(data_dir: &Path, note_id: &str, source: &Path) -> Result<Attachment, AppError> {
-    if !source.is_file() { return Err(err("attachmentSource", "附件源文件不存在")); }
+pub fn add_attachment(
+    data_dir: &Path,
+    note_id: &str,
+    source: &Path,
+) -> Result<Attachment, AppError> {
+    if !source.is_file() {
+        return Err(err("attachmentSource", "附件源文件不存在"));
+    }
     let metadata = fs::metadata(source)?;
-    if metadata.len() > 100 * 1024 * 1024 { return Err(err("attachmentTooLarge", "单个附件不能超过 100 MB")); }
-    let name = source.file_name().and_then(|name| name.to_str()).unwrap_or("attachment").to_string();
+    if metadata.len() > 100 * 1024 * 1024 {
+        return Err(err("attachmentTooLarge", "单个附件不能超过 100 MB"));
+    }
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("attachment")
+        .to_string();
     let id = Uuid::new_v4().to_string();
     let file_name = format!("{}_{}", id, safe_file_name(&name));
     let dir = attachments_dir(data_dir, note_id);
     fs::create_dir_all(&dir)?;
     fs::copy(source, dir.join(&file_name))?;
-    let attachment = Attachment { id, note_id: note_id.into(), name, file_name, size: metadata.len(), created_at: Utc::now() };
+    let attachment = Attachment {
+        id,
+        note_id: note_id.into(),
+        name,
+        file_name,
+        size: metadata.len(),
+        created_at: Utc::now(),
+    };
     let mut file = load_attachments(data_dir)?;
     file.attachments.push(attachment.clone());
     save_attachments(data_dir, &file)?;
@@ -106,18 +167,36 @@ pub fn add_attachment(data_dir: &Path, note_id: &str, source: &Path) -> Result<A
 }
 
 pub fn list_attachments(data_dir: &Path, note_id: &str) -> Result<Vec<Attachment>, AppError> {
-    let mut attachments: Vec<_> = load_attachments(data_dir)?.attachments.into_iter().filter(|item| item.note_id == note_id).collect();
-    attachments.retain(|item| attachments_dir(data_dir, note_id).join(&item.file_name).is_file());
+    let mut attachments: Vec<_> = load_attachments(data_dir)?
+        .attachments
+        .into_iter()
+        .filter(|item| item.note_id == note_id)
+        .collect();
+    attachments.retain(|item| {
+        attachments_dir(data_dir, note_id)
+            .join(&item.file_name)
+            .is_file()
+    });
     attachments.sort_by_key(|item| std::cmp::Reverse(item.created_at));
     Ok(attachments)
 }
 
-pub fn delete_attachment(data_dir: &Path, note_id: &str, attachment_id: &str) -> Result<(), AppError> {
+pub fn delete_attachment(
+    data_dir: &Path,
+    note_id: &str,
+    attachment_id: &str,
+) -> Result<(), AppError> {
     let mut file = load_attachments(data_dir)?;
-    let index = file.attachments.iter().position(|item| item.id == attachment_id && item.note_id == note_id).ok_or_else(|| err("attachmentNotFound", "找不到附件"))?;
+    let index = file
+        .attachments
+        .iter()
+        .position(|item| item.id == attachment_id && item.note_id == note_id)
+        .ok_or_else(|| err("attachmentNotFound", "找不到附件"))?;
     let attachment = file.attachments.remove(index);
     let path = attachments_dir(data_dir, note_id).join(attachment.file_name);
-    if path.exists() { trash::delete(&path).map_err(|error| err("trash", format!("移入回收站失败: {error}")))?; }
+    if path.exists() {
+        trash::delete(&path).map_err(|error| err("trash", format!("移入回收站失败: {error}")))?;
+    }
     save_attachments(data_dir, &file)
 }
 
@@ -126,34 +205,59 @@ pub fn delete_note_attachments(data_dir: &Path, note_id: &str) -> Result<(), App
     file.attachments.retain(|item| item.note_id != note_id);
     save_attachments(data_dir, &file)?;
     let dir = attachments_dir(data_dir, note_id);
-    if dir.exists() { let _ = trash::delete(dir); }
+    if dir.exists() {
+        let _ = trash::delete(dir);
+    }
     Ok(())
 }
 
-pub fn move_note_attachments(data_dir: &Path, source_id: &str, target_id: &str) -> Result<(), AppError> {
+pub fn move_note_attachments(
+    data_dir: &Path,
+    source_id: &str,
+    target_id: &str,
+) -> Result<(), AppError> {
     let source = attachments_dir(data_dir, source_id);
     let target = attachments_dir(data_dir, target_id);
     if source.exists() {
         fs::create_dir_all(&target)?;
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
-            if entry.path().is_file() { fs::rename(entry.path(), target.join(entry.file_name()))?; }
+            if entry.path().is_file() {
+                fs::rename(entry.path(), target.join(entry.file_name()))?;
+            }
         }
         let _ = fs::remove_dir(&source);
     }
     let mut file = load_attachments(data_dir)?;
-    for attachment in &mut file.attachments { if attachment.note_id == source_id { attachment.note_id = target_id.to_string(); } }
+    for attachment in &mut file.attachments {
+        if attachment.note_id == source_id {
+            attachment.note_id = target_id.to_string();
+        }
+    }
     save_attachments(data_dir, &file)
 }
 
-fn add_dir_to_zip<W: Write + Seek>(zip: &mut ZipWriter<W>, root: &Path, path: &Path) -> Result<(), AppError> {
+fn add_dir_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    root: &Path,
+    path: &Path,
+) -> Result<(), AppError> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let entry_path = entry.path();
-        let relative = entry_path.strip_prefix(root).map_err(|_| err("backup", "备份路径无效"))?.to_string_lossy().replace('\\', "/");
-        if entry.file_type()?.is_dir() { add_dir_to_zip(zip, root, &entry_path)?; }
-        else if entry.file_type()?.is_file() {
-            zip.start_file(relative, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(|e| err("backup", e.to_string()))?;
+        let relative = entry_path
+            .strip_prefix(root)
+            .map_err(|_| err("backup", "备份路径无效"))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if entry.file_type()?.is_dir() {
+            add_dir_to_zip(zip, root, &entry_path)?;
+        } else if entry.file_type()?.is_file() {
+            zip.start_file(
+                relative,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .map_err(|e| err("backup", e.to_string()))?;
             let mut source = fs::File::open(entry_path)?;
             std::io::copy(&mut source, zip)?;
         }
@@ -162,32 +266,54 @@ fn add_dir_to_zip<W: Write + Seek>(zip: &mut ZipWriter<W>, root: &Path, path: &P
 }
 
 fn create_backup(data_dir: &Path, destination: &Path) -> Result<(), AppError> {
-    if let Some(parent) = destination.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let temp = destination.with_extension("zip.tmp");
     let file = fs::File::create(&temp)?;
     let mut zip = ZipWriter::new(file);
     for name in BACKUP_ITEMS {
         let path = data_dir.join(name);
         if path.is_file() {
-            zip.start_file(name, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).map_err(|e| err("backup", e.to_string()))?;
+            zip.start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .map_err(|e| err("backup", e.to_string()))?;
             let mut source = fs::File::open(path)?;
             std::io::copy(&mut source, &mut zip)?;
-        } else if path.is_dir() { add_dir_to_zip(&mut zip, data_dir, &path)?; }
+        } else if path.is_dir() {
+            add_dir_to_zip(&mut zip, data_dir, &path)?;
+        }
     }
     zip.finish().map_err(|e| err("backup", e.to_string()))?;
     fs::rename(temp, destination)?;
     Ok(())
 }
 
-fn backup_name(prefix: &str) -> String { format!("{prefix}-{}.zip", Utc::now().format("%Y%m%d-%H%M%S")) }
+fn backup_name(prefix: &str) -> String {
+    format!("{prefix}-{}.zip", Utc::now().format("%Y%m%d-%H%M%S"))
+}
 
-pub fn create_manual_backup(data_dir: &Path, destination: &Path) -> Result<(), AppError> { create_backup(data_dir, destination) }
+pub fn create_manual_backup(data_dir: &Path, destination: &Path) -> Result<(), AppError> {
+    create_backup(data_dir, destination)
+}
 
 pub fn ensure_daily_backup(data_dir: &Path) -> Result<Option<BackupInfo>, AppError> {
     let dir = backup_dir(data_dir);
     fs::create_dir_all(&dir)?;
     let today = Utc::now().format("%Y%m%d").to_string();
-    if fs::read_dir(&dir)?.filter_map(|entry| entry.ok()).any(|entry| entry.file_name().to_string_lossy().starts_with(&format!("auto-{today}"))) { return Ok(None); }
+    if fs::read_dir(&dir)?
+        .filter_map(|entry| entry.ok())
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("auto-{today}"))
+        })
+    {
+        return Ok(None);
+    }
     let path = dir.join(backup_name("auto"));
     create_backup(data_dir, &path)?;
     prune_backups(&dir)?;
@@ -196,28 +322,67 @@ pub fn ensure_daily_backup(data_dir: &Path) -> Result<Option<BackupInfo>, AppErr
 
 fn backup_info(path: &Path) -> Result<BackupInfo, AppError> {
     let metadata = fs::metadata(path)?;
-    let created_at = metadata.modified().ok().and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok()).map(|value| DateTime::<Utc>::from(std::time::UNIX_EPOCH + value)).unwrap_or_else(Utc::now);
-    Ok(BackupInfo { file_name: path.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string(), created_at, size: metadata.len(), automatic: path.file_name().and_then(|name| name.to_str()).map(|name| name.starts_with("auto-")).unwrap_or(false) })
+    let created_at = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| DateTime::<Utc>::from(std::time::UNIX_EPOCH + value))
+        .unwrap_or_else(Utc::now);
+    Ok(BackupInfo {
+        file_name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string(),
+        created_at,
+        size: metadata.len(),
+        automatic: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.starts_with("auto-"))
+            .unwrap_or(false),
+    })
 }
 
 fn prune_backups(dir: &Path) -> Result<(), AppError> {
-    let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|entry| entry.ok()).filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("zip")).collect();
-    entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata().and_then(|meta| meta.modified()).ok()));
-    for entry in entries.into_iter().skip(BACKUP_KEEP) { let _ = fs::remove_file(entry.path()); }
+    let mut entries: Vec<_> = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("zip"))
+        .collect();
+    entries.sort_by_key(|entry| {
+        std::cmp::Reverse(entry.metadata().and_then(|meta| meta.modified()).ok())
+    });
+    for entry in entries.into_iter().skip(BACKUP_KEEP) {
+        let _ = fs::remove_file(entry.path());
+    }
     Ok(())
 }
 
 pub fn list_backups(data_dir: &Path) -> Result<Vec<BackupInfo>, AppError> {
     let dir = backup_dir(data_dir);
-    if !dir.exists() { return Ok(Vec::new()); }
-    let mut items = fs::read_dir(dir)?.filter_map(|entry| entry.ok()).filter_map(|entry| backup_info(&entry.path()).ok()).collect::<Vec<_>>();
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut items = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| backup_info(&entry.path()).ok())
+        .collect::<Vec<_>>();
     items.sort_by_key(|item| std::cmp::Reverse(item.created_at));
     Ok(items)
 }
 
 fn safe_archive_path(name: &str) -> Result<PathBuf, AppError> {
     let path = Path::new(name);
-    if path.is_absolute() || path.components().any(|part| matches!(part, Component::ParentDir | Component::RootDir | Component::Prefix(_))) { return Err(err("backupUnsafe", "备份文件包含不安全路径")); }
+    if path.is_absolute()
+        || path.components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(err("backupUnsafe", "备份文件包含不安全路径"));
+    }
     Ok(path.to_path_buf())
 }
 
@@ -227,43 +392,159 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
     let staging = data_dir.join(format!(".restore-{}", Uuid::new_v4()));
     fs::create_dir_all(&staging)?;
     let file = fs::File::open(backup)?;
-    let mut archive = ZipArchive::new(file).map_err(|error| err("backupInvalid", error.to_string()))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| err("backupInvalid", error.to_string()))?;
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|error| err("backupInvalid", error.to_string()))?;
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| err("backupInvalid", error.to_string()))?;
         let relative = safe_archive_path(entry.name())?;
         let output = staging.join(relative);
-        if entry.is_dir() { fs::create_dir_all(output)?; } else {
-            if let Some(parent) = output.parent() { fs::create_dir_all(parent)?; }
+        if entry.is_dir() {
+            fs::create_dir_all(output)?;
+        } else {
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)?;
+            }
             let mut target = fs::File::create(output)?;
             std::io::copy(&mut entry, &mut target)?;
         }
     }
-    if !staging.join("metadata.json").is_file() || !staging.join("notes").is_dir() { let _ = fs::remove_dir_all(&staging); return Err(err("backupInvalid", "备份缺少笔记数据")); }
-    for name in BACKUP_ITEMS { let target = data_dir.join(name); if target.exists() { let _ = fs::remove_dir_all(&target); let _ = fs::remove_file(&target); } let source = staging.join(name); if source.exists() { fs::rename(source, target)?; } }
+    if !staging.join("metadata.json").is_file() || !staging.join("notes").is_dir() {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(err("backupInvalid", "备份缺少笔记数据"));
+    }
+    for name in BACKUP_ITEMS {
+        let target = data_dir.join(name);
+        if target.exists() {
+            let _ = fs::remove_dir_all(&target);
+            let _ = fs::remove_file(&target);
+        }
+        let source = staging.join(name);
+        if source.exists() {
+            fs::rename(source, target)?;
+        }
+    }
     let _ = fs::remove_dir_all(staging);
     Ok(())
 }
 
 pub fn rebuild_search_index(data_dir: &Path, notes: &[Note]) -> Result<(), AppError> {
-    let index = SearchIndex { documents: notes.iter().map(|note| SearchDocument { note_id: note.id.clone(), title: note.title.clone(), category: note.category.clone(), content: note.content.clone(), updated_at: note.updated_at }).collect() };
+    let index = SearchIndex {
+        documents: notes
+            .iter()
+            .map(|note| SearchDocument {
+                note_id: note.id.clone(),
+                title: note.title.clone(),
+                category: note.category.clone(),
+                content: note.content.clone(),
+                updated_at: note.updated_at,
+            })
+            .collect(),
+    };
     write_json_atomic(&index_path(data_dir), &index)
 }
 
-pub fn search(data_dir: &Path, query: &str, fallback: &[Note]) -> Result<Vec<SearchResult>, AppError> {
+/// 在权威笔记集合中执行 JSON/文件系统回退搜索。
+///
+/// `search-index.json` 曾被当作优先来源，但它可能落后于 Markdown 与 metadata，
+/// 既会漏搜，也曾因按字节截取中文摘要而 panic。SQLite 不可用时宁可直接扫描
+/// 当前权威笔记，保证结果正确；FTS 可用时由 notes.rs 负责走高性能路径。
+pub fn search(
+    _data_dir: &Path,
+    query: &str,
+    fallback: &[Note],
+) -> Result<Vec<SearchResult>, AppError> {
     let normalized = query.trim().to_lowercase();
-    if normalized.is_empty() { return Ok(Vec::new()); }
-    let index: SearchIndex = fs::read_to_string(index_path(data_dir)).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_else(|| SearchIndex { documents: fallback.iter().map(|note| SearchDocument { note_id: note.id.clone(), title: note.title.clone(), category: note.category.clone(), content: note.content.clone(), updated_at: note.updated_at }).collect() });
-    let mut results = index.documents.into_iter().filter_map(|document| {
-        let title_pos = document.title.to_lowercase().find(&normalized);
-        let content_pos = document.content.to_lowercase().find(&normalized);
-        let (source, pos, score) = if let Some(position) = content_pos { (&document.content, position, 10 + title_pos.map(|_| 8).unwrap_or(0)) } else if let Some(position) = title_pos { (&document.title, position, 18) } else { return None; };
-        let start = pos.saturating_sub(44);
-        let end = (pos + normalized.len() + 90).min(source.len());
-        let snippet = format!("{}{}{}", if start > 0 { "…" } else { "" }, source[start..end].replace('\n', " "), if end < source.len() { "…" } else { "" });
-        let title = if document.title.trim().is_empty() { "无标题笔记".into() } else { document.title };
-        Some(SearchResult { note_id: document.note_id, title, category: document.category, snippet, match_start: pos, score })
-    }).collect::<Vec<_>>();
-    results.sort_by(|left, right| right.score.cmp(&left.score)); results.truncate(80); Ok(results)
+    if normalized.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut results = fallback
+        .iter()
+        .filter_map(|note| {
+            let title_pos = case_insensitive_find(&note.title, &normalized);
+            let content_pos = case_insensitive_find(&note.content, &normalized);
+            let (source, pos, score) = if let Some(position) = content_pos {
+                (
+                    &note.content,
+                    position,
+                    10 + title_pos.map(|_| 8).unwrap_or(0),
+                )
+            } else if let Some(position) = title_pos {
+                (&note.title, position, 18)
+            } else {
+                return None;
+            };
+
+            let snippet = safe_snippet(source, pos, query);
+            let title = if note.title.trim().is_empty() {
+                "无标题笔记".into()
+            } else {
+                note.title.clone()
+            };
+            Some(SearchResult {
+                note_id: note.id.clone(),
+                title,
+                category: note.category.clone(),
+                snippet,
+                match_start: pos,
+                score,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    results.sort_by(|left, right| right.score.cmp(&left.score));
+    results.truncate(80);
+    Ok(results)
+}
+
+pub(crate) fn case_insensitive_find(source: &str, normalized_query: &str) -> Option<usize> {
+    if source.to_lowercase().starts_with(normalized_query) {
+        return Some(0);
+    }
+    // Unicode lowercase conversion can change byte length (for example İ → i̇), so a byte
+    // offset obtained from `source.to_lowercase()` cannot be used to slice `source`.
+    // Compare at original character boundaries instead. This path is the JSON fallback only.
+    source.char_indices().find_map(|(offset, _)| {
+        source[offset..]
+            .to_lowercase()
+            .starts_with(normalized_query)
+            .then_some(offset)
+    })
+}
+
+fn floor_char_boundary(source: &str, index: usize) -> usize {
+    let mut index = index.min(source.len());
+    while index > 0 && !source.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(source: &str, index: usize) -> usize {
+    let mut index = index.min(source.len());
+    while index < source.len() && !source.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+pub(crate) fn safe_snippet(source: &str, match_start: usize, query: &str) -> String {
+    let start = floor_char_boundary(source, match_start.saturating_sub(44));
+    let matched_chars = query.chars().count().max(1);
+    let match_end = source[match_start..]
+        .char_indices()
+        .nth(matched_chars)
+        .map(|(offset, _)| match_start + offset)
+        .unwrap_or(source.len());
+    let end = ceil_char_boundary(source, (match_end + 90).min(source.len()));
+    format!(
+        "{}{}{}",
+        if start > 0 { "…" } else { "" },
+        source[start..end].replace('\n', " "),
+        if end < source.len() { "…" } else { "" }
+    )
 }
 
 #[cfg(test)]
@@ -278,7 +559,18 @@ mod tests {
     }
 
     fn sample_note(id: &str, title: &str, content: &str) -> Note {
-        Note { id: id.into(), title: title.into(), file_name: format!("{id}.md"), category: "学习".into(), created_at: Utc::now(), updated_at: Utc::now(), word_count: content.len(), content: content.into(), tags: Vec::new(), pinned: false }
+        Note {
+            id: id.into(),
+            title: title.into(),
+            file_name: format!("{id}.md"),
+            category: "学习".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            word_count: content.len(),
+            content: content.into(),
+            tags: Vec::new(),
+            pinned: false,
+        }
     }
 
     #[test]
@@ -289,7 +581,9 @@ mod tests {
         let attachment = add_attachment(&dir, "note-a", &source).expect("add attachment");
         assert_eq!(list_attachments(&dir, "note-a").expect("list").len(), 1);
         delete_attachment(&dir, "note-a", &attachment.id).expect("delete attachment");
-        assert!(list_attachments(&dir, "note-a").expect("list after delete").is_empty());
+        assert!(list_attachments(&dir, "note-a")
+            .expect("list after delete")
+            .is_empty());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -306,19 +600,55 @@ mod tests {
         create_manual_backup(&dir, &backup).expect("backup");
         fs::write(dir.join("notes").join("a.md"), "changed").expect("change note");
         restore_backup(&dir, &backup).expect("restore");
-        assert_eq!(fs::read_to_string(dir.join("notes").join("a.md")).expect("read note"), "backup content");
+        assert_eq!(
+            fs::read_to_string(dir.join("notes").join("a.md")).expect("read note"),
+            "backup content"
+        );
         assert_eq!(list_attachments(&dir, "a").expect("attachments").len(), 1);
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn search_uses_rebuildable_local_index() {
+    fn fallback_search_uses_current_authoritative_notes() {
         let dir = temp_dir("search");
-        let notes = vec![sample_note("a", "机械设计", "齿轮强度计算"), sample_note("b", "菜谱", "番茄炒蛋")];
-        rebuild_search_index(&dir, &notes).expect("rebuild");
-        let results = search(&dir, "齿轮", &[]).expect("search");
+        let notes = vec![
+            sample_note("a", "机械设计", "齿轮强度计算"),
+            sample_note("b", "菜谱", "番茄炒蛋"),
+        ];
+        // 即使磁盘上的旧 search-index.json 已存在，回退搜索也必须以传入的权威笔记为准。
+        rebuild_search_index(&dir, &notes).expect("write compatibility index");
+        let results = search(&dir, "齿轮", &notes).expect("search");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].note_id, "a");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fallback_search_handles_chinese_utf8_boundaries() {
+        let dir = temp_dir("utf8-search");
+        let content = format!(
+            "{}水稻田{}",
+            "春风吹过田野。".repeat(40),
+            "收成很好。".repeat(40)
+        );
+        let notes = vec![sample_note("rice", "农学", &content)];
+        let results = search(&dir, "水稻", &notes).expect("search should not panic");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("水稻田"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fallback_search_keeps_unicode_casefold_offsets_safe() {
+        let dir = temp_dir("unicode-casefold");
+        let notes = vec![sample_note(
+            "turkish",
+            "İstanbul",
+            "İstanbul 的字节长度会变化",
+        )];
+        let results = search(&dir, "i̇stan", &notes).expect("unicode search should not panic");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].snippet.contains("İstanbul"));
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -15,8 +15,8 @@ function useActiveHeading(
   scrollContainer: HTMLElement | null,
 ): string | null {
   const [activeId, setActiveId] = useState<string | null>(null);
-  // 只依赖 id 列表（字符串），避免 headings 对象引用每次变化导致监听器重建
-  const headingIds = headings.map((h) => h.id).filter(Boolean).join(",");
+  // 序列化完整 id 列表，避免用逗号拼接时发生边界碰撞。
+  const headingIds = JSON.stringify(headings.map((heading) => heading.id).filter(Boolean));
 
   useEffect(() => {
     if (!scrollContainer || headings.length === 0) return;
@@ -56,15 +56,13 @@ export function OutlinePanel({ headings, previewScrollRef, onClose }: OutlinePan
   const scrollContainer = previewScrollRef?.current ?? null;
   const activeId = useActiveHeading(headings, scrollContainer);
 
-  const handleClick = useCallback(
-    (id: string) => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    },
-    [],
-  );
+  const handleClick = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (el) {
+      // center 避免预览区顶部工具栏把目标标题盖住。
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, []);
 
   // 自动滚动大纲面板，让激活项可见
   useEffect(() => {
@@ -93,7 +91,15 @@ export function OutlinePanel({ headings, previewScrollRef, onClose }: OutlinePan
           aria-label="关闭大纲"
           className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
             <path d="M2 2l8 8M10 2l-8 8" />
           </svg>
         </button>
@@ -103,8 +109,12 @@ export function OutlinePanel({ headings, previewScrollRef, onClose }: OutlinePan
       <div ref={containerRef} className="flex-1 overflow-y-auto px-2 py-2">
         {!hasHeadings ? (
           <div className="py-8 text-center text-[12px] text-ink-ghost leading-relaxed">
-            这篇笔记还没有标题。<br />
-            试试用 <code className="px-1 py-0.5 bg-paper-warm rounded text-[11px]"># 一级标题</code> 来组织内容。
+            这篇笔记还没有标题。
+            <br />
+            试试用 <code className="px-1 py-0.5 bg-paper-warm rounded text-[11px]">
+              # 一级标题
+            </code>{" "}
+            来组织内容。
           </div>
         ) : (
           <div className="space-y-0.5">

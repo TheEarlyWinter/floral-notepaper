@@ -16,6 +16,12 @@ describe("MarkdownPreview", () => {
     expect(markup).toContain("正文");
   });
 
+  test("uses rehype-slug IDs that match the outline generator for punctuation", () => {
+    const markup = renderToStaticMarkup(<MarkdownPreview content="# 标题 & 测试" />);
+
+    expect(markup).toContain('id="标题--测试"');
+  });
+
   test("keeps code block controls outside the horizontally scrollable pre", () => {
     const markup = renderToStaticMarkup(
       <MarkdownPreview content={"```text\nvery long code line\n```"} />,

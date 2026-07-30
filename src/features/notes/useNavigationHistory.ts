@@ -49,6 +49,19 @@ export function useNavigationHistory() {
     [syncFlags],
   );
 
+  const replaceCurrent = useCallback(
+    (noteId: string, title: string) => {
+      const state = stateRef.current;
+      if (state.index < 0 || state.stack[state.index]?.noteId !== noteId) return;
+      const stack = [...state.stack];
+      stack[state.index] = { noteId, title };
+      const newState: NavigationState = { ...state, stack };
+      stateRef.current = newState;
+      syncFlags(newState);
+    },
+    [syncFlags],
+  );
+
   const goBack = useCallback((): string | null => {
     const state = stateRef.current;
     if (state.index <= 0) return null;
@@ -75,5 +88,14 @@ export function useNavigationHistory() {
     return state.stack.slice(0, state.index + 1);
   };
 
-  return { push, goBack, goForward, canGoBack, canGoForward, currentEntry, breadcrumbs };
+  return {
+    push,
+    replaceCurrent,
+    goBack,
+    goForward,
+    canGoBack,
+    canGoForward,
+    currentEntry,
+    breadcrumbs,
+  };
 }

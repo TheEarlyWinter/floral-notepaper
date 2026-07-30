@@ -29,14 +29,12 @@ const MIRROR_CHYAN_RES_ID: &str = "floral";
 const MIRROR_CHYAN_RES_ID_OVERRIDE_ENV: &str = "FLORAL_NOTEPAPER_MIRROR_CHYAN_RES_ID";
 const MIRROR_CHYAN_USER_AGENT: &str = "floral_notepaper";
 
-fn mirror_chyan_res_id() -> &'static str {
-    if let Ok(value) = env::var(MIRROR_CHYAN_RES_ID_OVERRIDE_ENV) {
-        let trimmed = value.trim().to_string();
-        if !trimmed.is_empty() {
-            return Box::leak(trimmed.into_boxed_str());
-        }
-    }
-    MIRROR_CHYAN_RES_ID
+fn mirror_chyan_res_id() -> String {
+    env::var(MIRROR_CHYAN_RES_ID_OVERRIDE_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| MIRROR_CHYAN_RES_ID.to_string())
 }
 
 macro_rules! debug_log {

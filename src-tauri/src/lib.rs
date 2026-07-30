@@ -15,6 +15,80 @@ use services::{
     reminders::{self, Reminder},
 };
 use std::{env, fs, io::Write, path::PathBuf};
+
+const MAX_EXTERNAL_TEXT_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+const EXTERNAL_TEXT_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "html", "htm"];
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+
+fn io_error(message: impl Into<String>) -> AppError {
+    AppError {
+        code: "io".into(),
+        message: message.into(),
+        details: Default::default(),
+    }
+}
+
+/// 外部文件是用户显式打开/保存的文本文档，而不是通用文件系统 API。
+/// 限制绝对路径、文本扩展名、常规文件和大小，保留编辑 Markdown/TXT 与导出 HTML。
+fn validate_external_text_path(raw_path: &str, allow_new_file: bool) -> Result<PathBuf, AppError> {
+    let path = PathBuf::from(raw_path.trim());
+    if !path.is_absolute() {
+        return Err(io_error("外部文件路径必须是绝对路径"));
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !EXTERNAL_TEXT_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(io_error("外部文件仅支持 Markdown、TXT 或 HTML"));
+    }
+
+    match fs::metadata(&path) {
+        Ok(metadata) => {
+            if !metadata.is_file() {
+                return Err(io_error("外部文件必须是普通文件"));
+            }
+            if metadata.len() > MAX_EXTERNAL_TEXT_BYTES {
+                return Err(io_error("外部文本文件不能超过 25 MB"));
+            }
+        }
+        Err(error) if allow_new_file && error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| io_error("外部文件没有有效父目录"))?;
+            if !parent.is_dir() {
+                return Err(io_error("外部文件的目标文件夹不存在"));
+            }
+        }
+        Err(error) => return Err(io_error(error.to_string())),
+    }
+    Ok(path)
+}
+
+fn validate_image_source_path(raw_path: &str) -> Result<PathBuf, AppError> {
+    let path = PathBuf::from(raw_path.trim());
+    if !path.is_absolute() {
+        return Err(io_error("图片路径必须是绝对路径"));
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(io_error("不支持的图片格式"));
+    }
+    let metadata = fs::metadata(&path).map_err(|error| io_error(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(io_error("图片源必须是普通文件"));
+    }
+    if metadata.len() > MAX_IMAGE_BYTES as u64 {
+        return Err(io_error("单张图片不能超过 50 MB"));
+    }
+    Ok(path)
+}
 use tauri::{AppHandle, Emitter, Manager};
 
 #[tauri::command]
@@ -87,7 +161,11 @@ fn reminders_list() -> Result<Vec<Reminder>, AppError> {
 }
 
 #[tauri::command]
-fn reminders_create(note_id: String, message: String, remind_at: chrono::DateTime<chrono::Utc>) -> Result<Reminder, AppError> {
+fn reminders_create(
+    note_id: String,
+    message: String,
+    remind_at: chrono::DateTime<chrono::Utc>,
+) -> Result<Reminder, AppError> {
     let store = default_store()?;
     reminders::create(store.data_dir(), note_id, message, remind_at)
 }
@@ -126,7 +204,11 @@ fn notes_rebuild_search_index() -> Result<(), AppError> {
 }
 
 #[tauri::command]
-fn attachments_add(app: AppHandle, note_id: String, source_path: String) -> Result<Attachment, AppError> {
+fn attachments_add(
+    app: AppHandle,
+    note_id: String,
+    source_path: String,
+) -> Result<Attachment, AppError> {
     let attachment = default_store()?.add_attachment(&note_id, &PathBuf::from(source_path))?;
     let _ = app.emit("notes-changed", ());
     Ok(attachment)
@@ -138,7 +220,11 @@ fn attachments_list(note_id: String) -> Result<Vec<Attachment>, AppError> {
 }
 
 #[tauri::command]
-fn attachments_delete(app: AppHandle, note_id: String, attachment_id: String) -> Result<(), AppError> {
+fn attachments_delete(
+    app: AppHandle,
+    note_id: String,
+    attachment_id: String,
+) -> Result<(), AppError> {
     default_store()?.delete_attachment(&note_id, &attachment_id)?;
     let _ = app.emit("notes-changed", ());
     Ok(())
@@ -146,7 +232,15 @@ fn attachments_delete(app: AppHandle, note_id: String, attachment_id: String) ->
 
 #[tauri::command]
 fn attachments_get_path(note_id: String, attachment_id: String) -> Result<String, AppError> {
-    default_store()?.attachment_path(&note_id, &attachment_id)?.to_str().map(str::to_string).ok_or_else(|| AppError { code: "path".into(), message: "invalid attachment path".into(), details: Default::default() })
+    default_store()?
+        .attachment_path(&note_id, &attachment_id)?
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| AppError {
+            code: "path".into(),
+            message: "invalid attachment path".into(),
+            details: Default::default(),
+        })
 }
 
 #[tauri::command]
@@ -168,25 +262,17 @@ fn backups_restore(app: AppHandle, path: String) -> Result<(), AppError> {
 
 #[tauri::command]
 fn read_external_file(path: String) -> Result<String, AppError> {
-    std::fs::read_to_string(&path).map_err(|e| AppError {
-        code: "io".into(),
-        message: e.to_string(),
-        details: Default::default(),
-    })
+    let path = validate_external_text_path(&path, false)?;
+    fs::read_to_string(path).map_err(|error| io_error(error.to_string()))
 }
 
 #[tauri::command]
 fn get_file_modified_time(path: String) -> Result<f64, AppError> {
-    let metadata = std::fs::metadata(&path).map_err(|e| AppError {
-        code: "io".into(),
-        message: e.to_string(),
-        details: Default::default(),
-    })?;
-    let modified = metadata.modified().map_err(|e| AppError {
-        code: "io".into(),
-        message: e.to_string(),
-        details: Default::default(),
-    })?;
+    let path = validate_external_text_path(&path, false)?;
+    let modified = fs::metadata(path)
+        .map_err(|error| io_error(error.to_string()))?
+        .modified()
+        .map_err(|error| io_error(error.to_string()))?;
     let duration = modified
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -195,18 +281,12 @@ fn get_file_modified_time(path: String) -> Result<f64, AppError> {
 
 #[tauri::command]
 fn save_external_file(path: String, content: String) -> Result<(), AppError> {
-    if let Some(parent) = PathBuf::from(&path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError {
-            code: "io".into(),
-            message: e.to_string(),
-            details: Default::default(),
-        })?;
+    if content.len() > MAX_EXTERNAL_TEXT_BYTES as usize {
+        return Err(io_error("外部文本文件不能超过 25 MB"));
     }
-    std::fs::write(&path, content).map_err(|e| AppError {
-        code: "io".into(),
-        message: e.to_string(),
-        details: Default::default(),
-    })
+    let path = validate_external_text_path(&path, true)?;
+    // 文件选择器已选择目标目录；这里不再递归创建任意目录，避免命令被滥用为写入 API。
+    fs::write(path, content).map_err(|error| io_error(error.to_string()))
 }
 
 #[tauri::command]
@@ -269,6 +349,13 @@ fn images_save(request: tauri::ipc::Request<'_>) -> Result<String, AppError> {
                 details: Default::default(),
             })
     };
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(AppError {
+            code: "imageTooLarge".into(),
+            message: "单张图片不能超过 50 MB".into(),
+            details: Default::default(),
+        });
+    }
     let note_id = header("x-note-id")?;
     let extension = header("x-image-ext")?;
     default_store()?.save_image(&note_id, data, &extension)
@@ -276,8 +363,8 @@ fn images_save(request: tauri::ipc::Request<'_>) -> Result<String, AppError> {
 
 #[tauri::command]
 fn images_save_from_path(note_id: String, file_path: String) -> Result<String, AppError> {
-    let path = PathBuf::from(&file_path);
-    let data = std::fs::read(&path)?;
+    let path = validate_image_source_path(&file_path)?;
+    let data = fs::read(&path)?;
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -312,14 +399,11 @@ fn config_get() -> Result<AppConfig, AppError> {
 
 #[tauri::command]
 fn copy_background_image(_app: AppHandle, source_path: String) -> Result<String, AppError> {
-    let source = PathBuf::from(source_path.trim());
-    if !source.is_file() {
-        return Err(AppError {
-            code: "invalidSource".into(),
-            message: "background image source not found".into(),
-            details: Default::default(),
-        });
-    }
+    let source = validate_image_source_path(&source_path).map_err(|error| AppError {
+        code: "invalidSource".into(),
+        message: error.message,
+        details: error.details,
+    })?;
 
     let store = default_store()?;
     let dir = store.data_dir().join("backgrounds");

@@ -358,8 +358,9 @@ function applyFormat(
   }
 
   textarea.focus();
-  textarea.setSelectionRange(0, value.length);
-  document.execCommand("insertText", false, result);
+  // 只替换 textarea 当前内容，不走已废弃的 execCommand("insertText")。
+  // setRangeText 仍保留原生输入控件的编辑语义，React state 同步后再恢复光标。
+  textarea.setRangeText(result, 0, value.length, "preserve");
   setContent(result);
   markDirty();
   requestAnimationFrame(() => {
@@ -439,10 +440,11 @@ export function MainWindow({
   const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [outlineOpen, setOutlineOpen] = useState(initialConfig?.showOutline ?? false);
   const [focusMode, setFocusMode] = useState(false);
   const navHistory = useNavigationHistory();
   const handleSelectNoteRef = useRef<(id: string) => Promise<void>>(async () => {});
+  const handleSelectExternalFileRef = useRef<(id: string) => Promise<void>>(async () => {});
   const [readingMode, setReadingMode] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
@@ -673,8 +675,8 @@ export function MainWindow({
                 : remindersOpen && selectedId && !isExternal
                   ? "reminders"
                   : settingsOpen && settingsConfig
-                  ? "settings"
-                  : null;
+                    ? "settings"
+                    : null;
   const sidePanelExpanded = visibleSidePanel !== null;
   const effectiveViewMode: ViewMode = readingMode ? "preview" : viewMode;
   const openWorkspace = useCallback((mode: NotesWorkspaceMode) => {
@@ -699,13 +701,9 @@ export function MainWindow({
     [settingsConfig?.templates],
   );
 
-  const headings = useMemo(() => extractOutlineHeadings(content), [content]);
-
   // showOutline 配置变更时同步大纲面板开关
   useEffect(() => {
-    if (settingsConfig?.showOutline) {
-      setOutlineOpen(true);
-    }
+    setOutlineOpen(Boolean(settingsConfig?.showOutline));
   }, [settingsConfig?.showOutline]);
 
   const filteredNotes = useMemo(
@@ -743,6 +741,8 @@ export function MainWindow({
   // 打字时输入框优先响应：预览渲染与字数/字节统计使用延迟值，
   // 连续输入期间 React 会自动合并这些重计算，停顿时再追上
   const deferredContent = useDeferredValue(content);
+  // 大纲与预览必须消费同一份延迟内容，避免快速输入标题时点到尚未渲染的锚点。
+  const headings = useMemo(() => extractOutlineHeadings(deferredContent), [deferredContent]);
 
   const lineCount = useMemo(() => deferredContent.split("\n").length, [deferredContent]);
   const byteSize = useMemo(
@@ -828,7 +828,7 @@ export function MainWindow({
           getFileModifiedTime(filePath),
         ]);
         const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
-        const displayTitle = fileName.replace(/\.(md|txt)$/i, "");
+        const displayTitle = fileName.replace(/\.(md|markdown|txt)$/i, "");
 
         setExternalFiles((current) => {
           if (current.some((f) => f.id === filePath)) {
@@ -859,11 +859,12 @@ export function MainWindow({
         setSaveState("saved");
         setNoteTransitionKey((k) => k + 1);
         externalFileMtimeRef.current = mtime;
+        navHistory.push(filePath, displayTitle || "无标题文件");
       } catch (error) {
         showToast(getErrorMessage(error));
       }
     },
-    [loadEpoch],
+    [loadEpoch, navHistory.push],
   );
 
   useEffect(() => {
@@ -894,7 +895,10 @@ export function MainWindow({
         setCollapsedCategories(new Set(loadedCategories));
         if (loadedNotes[0]) {
           const note = await getNote(loadedNotes[0].id);
-          if (!cancelled) applyNote(note);
+          if (!cancelled) {
+            applyNote(note);
+            navHistory.push(note.id, note.title || "无标题笔记");
+          }
         } else {
           clearCurrentNote();
         }
@@ -916,7 +920,7 @@ export function MainWindow({
     return () => {
       cancelled = true;
     };
-  }, [applyNote, clearCurrentNote]);
+  }, [applyNote, clearCurrentNote, navHistory.push]);
 
   useEffect(() => {
     let active = true;
@@ -1068,6 +1072,7 @@ export function MainWindow({
                   }
                   applyNote(note);
                   replaceNoteMetadata(note);
+                  navHistory.replaceCurrent(note.id, note.title || "无标题笔记");
                 })
                 .catch(() => undefined);
             }
@@ -1084,7 +1089,15 @@ export function MainWindow({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshNotes, loadNote, clearCurrentNote, loadEpoch, applyNote, replaceNoteMetadata]);
+  }, [
+    refreshNotes,
+    loadNote,
+    clearCurrentNote,
+    loadEpoch,
+    applyNote,
+    replaceNoteMetadata,
+    navHistory.replaceCurrent,
+  ]);
 
   useEffect(() => {
     function handleFocus() {
@@ -1719,7 +1732,13 @@ export function MainWindow({
       setIsLoading(false);
     }
   };
-  handleSelectNoteRef.current = handleSelectNote;
+  handleSelectNoteRef.current = async (id: string) => {
+    if (externalFilesRef.current.some((file) => file.id === id)) {
+      await handleSelectExternalFileRef.current(id);
+      return;
+    }
+    await handleSelectNote(id);
+  };
 
   useEffect(() => {
     const unlisten = listen<Reminder>("reminder://due", (event) => {
@@ -1755,15 +1774,21 @@ export function MainWindow({
       setSelectedId(id);
       setTitle(file.title);
       setContent(fileContent);
+      setNoteTags([]);
+      setIsPinned(false);
+      tagsValueRef.current = [];
+      pinnedValueRef.current = false;
       setSaveState("saved");
       setNoteTransitionKey((k) => k + 1);
       externalFileMtimeRef.current = mtime;
+      navHistory.push(id, file.title || "无标题文件");
     } catch (error) {
       showToast(getErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
   };
+  handleSelectExternalFileRef.current = handleSelectExternalFile;
 
   const handleRemoveExternalFile = async (id: string) => {
     if (selectedId === id && saveState === "dirty") {
@@ -2595,18 +2620,40 @@ export function MainWindow({
                   onClick={() => openWorkspace("inbox")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M21 8v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8" />
                     <path d="M1 3h22v5H1zM10 12h4" />
                   </svg>
                   <span>收件箱</span>
-                  {inboxCount > 0 ? <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-bamboo-mist text-[9px] leading-4 text-bamboo text-center">{inboxCount}</span> : null}
+                  {inboxCount > 0 ? (
+                    <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-bamboo-mist text-[9px] leading-4 text-bamboo text-center">
+                      {inboxCount}
+                    </span>
+                  ) : null}
                 </button>
                 <button
                   onClick={() => openWorkspace("journal")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="3" y="4" width="18" height="17" rx="2" />
                     <path d="M8 2v4M16 2v4M7 10h10M8 14h8M8 17h5" />
                   </svg>
@@ -2616,8 +2663,20 @@ export function MainWindow({
                   onClick={() => openWorkspace("dashboard")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
                   </svg>
                   <span>笔记仪表盘</span>
                 </button>
@@ -3133,7 +3192,9 @@ export function MainWindow({
             >
               <div
                 className={`flex items-center gap-1 overflow-hidden transition-[max-width,opacity] duration-200 ${
-                  settingsOpen || focusMode ? "max-w-0 opacity-0 pointer-events-none" : "max-w-[900px] opacity-100"
+                  settingsOpen || focusMode
+                    ? "max-w-0 opacity-0 pointer-events-none"
+                    : "max-w-[900px] opacity-100"
                 }`}
               >
                 <button
@@ -3178,13 +3239,23 @@ export function MainWindow({
                     });
                   }}
                   className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
-                    outlineOpen && (effectiveViewMode === "split" || effectiveViewMode === "preview")
+                    outlineOpen &&
+                    (effectiveViewMode === "split" || effectiveViewMode === "preview")
                       ? "text-bamboo bg-bamboo-mist/50"
                       : "text-ink-ghost hover:text-ink-faint hover:bg-paper-warm"
                   }`}
                   title="目录大纲"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <line x1="8" y1="6" x2="21" y2="6" />
                     <line x1="8" y1="12" x2="21" y2="12" />
                     <line x1="8" y1="18" x2="21" y2="18" />
@@ -3246,7 +3317,16 @@ export function MainWindow({
                   title="反向链接"
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" />
                     <path d="M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15" />
                   </svg>
@@ -3272,7 +3352,16 @@ export function MainWindow({
                   title="知识图谱"
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <circle cx="6" cy="8" r="2.5" />
                     <circle cx="17" cy="5" r="2" />
                     <circle cx="12" cy="16" r="3" />
@@ -3288,7 +3377,16 @@ export function MainWindow({
                   title="复制稳定链接"
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="9" y="9" width="11" height="11" rx="2" />
                     <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />
                   </svg>
@@ -3313,7 +3411,16 @@ export function MainWindow({
                   title="添加提醒"
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <circle cx="12" cy="13" r="8" />
                     <path d="M12 9v4l2.5 1.5M9 3h6M12 3v2" />
                   </svg>
@@ -3324,23 +3431,63 @@ export function MainWindow({
                   title="资料与备份"
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 4v16M11 9h5M11 13h5" /></svg>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M4 4h16v16H4z" />
+                    <path d="M8 4v16M11 9h5M11 13h5" />
+                  </svg>
                 </button>
                 <button
-                  onClick={() => { setReadingMode(false); setFocusMode((active) => !active); }}
+                  onClick={() => {
+                    setReadingMode(false);
+                    setFocusMode((active) => !active);
+                  }}
                   aria-label={focusMode ? "退出专注写作" : "专注写作"}
                   title={focusMode ? "退出专注写作" : "专注写作"}
                   className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${focusMode ? "text-bamboo bg-bamboo-mist" : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm"}`}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  >
+                    <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+                  </svg>
                 </button>
                 <button
-                  onClick={() => { setFocusMode(false); setReadingMode((active) => !active); }}
+                  onClick={() => {
+                    setFocusMode(false);
+                    setReadingMode((active) => !active);
+                  }}
                   aria-label={readingMode ? "退出阅读模式" : "沉浸阅读"}
                   title={readingMode ? "退出阅读模式" : "沉浸阅读"}
                   className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${readingMode ? "text-bamboo bg-bamboo-mist" : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm"}`}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z" /><path d="M4 5.5v16M8 7h8M8 11h8M8 15h5" /></svg>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z" />
+                    <path d="M4 5.5v16M8 7h8M8 11h8M8 15h5" />
+                  </svg>
                 </button>
                 <button
                   onClick={handleSaveAsTemplate}
@@ -3583,8 +3730,24 @@ export function MainWindow({
               {settingsOpen && (
                 <span className="px-2 text-[11px] text-ink-ghost font-body">设置已打开</span>
               )}
-              {focusMode && <button type="button" onClick={() => setFocusMode(false)} className="px-2 text-[11px] text-bamboo cursor-pointer">退出专注</button>}
-              {readingMode && <button type="button" onClick={() => setReadingMode(false)} className="px-2 text-[11px] text-bamboo cursor-pointer">退出阅读</button>}
+              {focusMode && (
+                <button
+                  type="button"
+                  onClick={() => setFocusMode(false)}
+                  className="px-2 text-[11px] text-bamboo cursor-pointer"
+                >
+                  退出专注
+                </button>
+              )}
+              {readingMode && (
+                <button
+                  type="button"
+                  onClick={() => setReadingMode(false)}
+                  className="px-2 text-[11px] text-bamboo cursor-pointer"
+                >
+                  退出阅读
+                </button>
+              )}
             </div>
 
             <div
@@ -3664,9 +3827,13 @@ export function MainWindow({
                   {(effectiveViewMode === "edit" || effectiveViewMode === "split") && (
                     <div
                       className="flex flex-col min-h-0 shrink-0"
-                      style={{ width: effectiveViewMode === "split" ? `${splitRatio * 100}%` : "100%" }}
+                      style={{
+                        width: effectiveViewMode === "split" ? `${splitRatio * 100}%` : "100%",
+                      }}
                     >
-                      <div className={`flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0 ${focusMode ? "hidden" : ""}`}>
+                      <div
+                        className={`flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0 ${focusMode ? "hidden" : ""}`}
+                      >
                         {toolbarButtons.map((button) => (
                           <button
                             key={button.label}
@@ -3744,7 +3911,8 @@ export function MainWindow({
 
                   {(effectiveViewMode === "preview" || effectiveViewMode === "split") && (
                     <div className="flex flex-col min-h-0 min-w-0 flex-1">
-                      {(effectiveViewMode === "split" || (settingsConfig?.showOutline && headings.length > 0)) && (
+                      {(effectiveViewMode === "split" ||
+                        (settingsConfig?.showOutline && headings.length > 0)) && (
                         <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center justify-between">
                           <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
                             {t("main.editor.previewLabel", { defaultValue: "Preview" })}
@@ -3754,7 +3922,9 @@ export function MainWindow({
                               type="button"
                               onClick={() => setOutlineOpen((o) => !o)}
                               className={`text-[10px] font-mono transition-colors cursor-pointer ${
-                                outlineOpen ? "text-bamboo" : "text-ink-ghost/50 hover:text-ink-ghost"
+                                outlineOpen
+                                  ? "text-bamboo"
+                                  : "text-ink-ghost/50 hover:text-ink-ghost"
                               }`}
                               title={outlineOpen ? "隐藏目录" : "显示目录"}
                             >
@@ -3784,29 +3954,40 @@ export function MainWindow({
                     outlineOpen &&
                     headings.length > 0 &&
                     effectiveViewMode !== "edit" && (
-                    <OutlinePanel
-                      headings={headings}
-                      previewScrollRef={previewScrollRef}
-                      onClose={() => setOutlineOpen(false)}
-                    />
-                  )}
+                      <OutlinePanel
+                        headings={headings}
+                        previewScrollRef={previewScrollRef}
+                        onClose={() => setOutlineOpen(false)}
+                      />
+                    )}
                 </>
               )}
             </div>
 
-            <div className={`flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0 ${focusMode ? "hidden" : ""}`}>
+            <div
+              className={`flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0 ${focusMode ? "hidden" : ""}`}
+            >
               <div className="flex items-center gap-3">
                 {navHistory.canGoBack && (
                   <button
                     type="button"
                     onClick={() => {
                       const noteId = navHistory.goBack();
-                      if (noteId) void handleSelectNote(noteId);
+                      if (noteId) void handleSelectNoteRef.current(noteId);
                     }}
                     className="p-0.5 rounded text-ink-ghost hover:text-ink hover:bg-paper-warm transition-colors cursor-pointer"
                     title="后退 (Alt+←)"
                   >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M7.5 2.5L4 6l3.5 3.5" />
                     </svg>
                   </button>
@@ -3816,12 +3997,21 @@ export function MainWindow({
                     type="button"
                     onClick={() => {
                       const noteId = navHistory.goForward();
-                      if (noteId) void handleSelectNote(noteId);
+                      if (noteId) void handleSelectNoteRef.current(noteId);
                     }}
                     className="p-0.5 rounded text-ink-ghost hover:text-ink hover:bg-paper-warm transition-colors cursor-pointer"
                     title="前进 (Alt+→)"
                   >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M4.5 2.5L8 6l-3.5 3.5" />
                     </svg>
                   </button>
@@ -3959,7 +4149,11 @@ export function MainWindow({
                   noteId={selectedId && !isExternal ? selectedId : null}
                   noteTitle={title}
                   onClose={() => setLibraryOpen(false)}
-                  onRestored={() => { setLibraryOpen(false); void refreshNotes(); clearCurrentNote(); }}
+                  onRestored={() => {
+                    setLibraryOpen(false);
+                    void refreshNotes();
+                    clearCurrentNote();
+                  }}
                 />
               ) : null}
             </div>
@@ -4005,7 +4199,11 @@ export function MainWindow({
                   }}
                   onMoveNote={(noteId, category) => void handleMoveNote(noteId, category)}
                   onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
-                  onWeeklyReviewCreated={(note) => { replaceNoteMetadata(note); applyNote(note); setWorkspaceMode(null); }}
+                  onWeeklyReviewCreated={(note) => {
+                    replaceNoteMetadata(note);
+                    applyNote(note);
+                    setWorkspaceMode(null);
+                  }}
                   onClose={() => setWorkspaceMode(null)}
                 />
               ) : null}
@@ -4249,7 +4447,9 @@ function TagFilterBar({
         </svg>
         <span className="flex-1 text-left">标签</span>
         {selectedTag ? (
-          <span className="max-w-[90px] truncate rounded-full bg-bamboo/10 px-1.5 py-0.5 text-[10px]">#{selectedTag}</span>
+          <span className="max-w-[90px] truncate rounded-full bg-bamboo/10 px-1.5 py-0.5 text-[10px]">
+            #{selectedTag}
+          </span>
         ) : (
           <span className="text-[10px] text-ink-ghost">{allTags.length}</span>
         )}
@@ -4348,6 +4548,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           onKeyDown={(e) => {
             if (e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s")) {
               e.preventDefault();
+              e.stopPropagation();
               addTag();
             }
             if (e.key === "Backspace" && !input && tags.length > 0)
