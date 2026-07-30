@@ -38,6 +38,8 @@ pub struct AppConfig {
     pub data_dir: Option<String>,
     pub global_shortcut: String,
     pub close_to_tray: bool,
+    #[serde(default = "default_close_tab_shortcut")]
+    pub close_tab_shortcut: String,
     pub autostart: bool,
     pub default_view_mode: String,
     #[serde(default = "default_note_auto_save")]
@@ -1560,6 +1562,7 @@ impl NoteStore {
             #[cfg(not(target_os = "macos"))]
             global_shortcut: "Ctrl+Space".into(),
             close_to_tray: true,
+            close_tab_shortcut: default_close_tab_shortcut(),
             autostart: false,
             default_view_mode: "split".into(),
             note_auto_save: true,
@@ -2116,6 +2119,10 @@ fn default_note_surface_auto_save() -> bool {
 
 fn default_tile_color() -> String {
     "#f6f3ec".into()
+}
+
+fn default_close_tab_shortcut() -> String {
+    "Ctrl+W".into()
 }
 
 fn default_tile_color_mode() -> String {

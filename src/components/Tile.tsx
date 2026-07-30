@@ -75,7 +75,7 @@ export function Tile({
   width = 260,
   rotation = 0,
   fontSize = 14,
-  renderMarkdown = false,
+  renderMarkdown: renderMarkdownProp = false,
   imageBaseDir,
   className = "",
   style,
@@ -83,6 +83,8 @@ export function Tile({
   ...divProps
 }: TileProps) {
   const { t } = useTranslation();
+  // 内容包含图片标记时自动启用 Markdown 渲染
+  const renderMarkdown = renderMarkdownProp || (/!\[[^\]]*\]\([^)]+\)/.test(content ?? ""));
   const tileColor = normalizeTileColor(color);
   const { borderColor, cornerColor, titleColor, contentColor, emptyColor } = useMemo(() => {
     const isLightBg = chroma(tileColor).luminance() > 0.18;

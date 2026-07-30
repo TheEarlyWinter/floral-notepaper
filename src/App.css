@@ -342,11 +342,11 @@
 }
 
 :root[data-theme="dark"] {
-  --color-paper: #222120;
-  --color-paper-warm: #2c2a27;
-  --color-paper-deep: #3c3935;
-  --color-ink: #e5e1da;
-  --color-ink-soft: #b5b1a8;
+  --color-paper: #1a1817;
+  --color-paper-warm: #242220;
+  --color-paper-deep: #343230;
+  --color-ink: #f0ebe0;
+  --color-ink-soft: #c8c3b8;
   --color-ink-faint: #928f87;
   --color-ink-ghost: #706d67;
   --color-bamboo: #4faa70;

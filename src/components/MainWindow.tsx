@@ -117,6 +117,22 @@ import {
   syncPinnedTileIds,
 } from "../features/windows/tileWindowEvents";
 
+/** 解析 "Ctrl+W"、"Alt+F4" 等快捷键字符串并匹配键盘事件 */
+function matchShortcut(event: KeyboardEvent, shortcut: string): boolean {
+  if (!shortcut) return false;
+  const parts = shortcut.split("+").map((s) => s.trim().toLowerCase());
+  const hasCtrl = parts.includes("ctrl");
+  const hasAlt = parts.includes("alt");
+  const hasShift = parts.includes("shift");
+  const hasMeta = parts.includes("meta") || parts.includes("cmd");
+  const keyPart = parts.find((p) => !["ctrl", "alt", "shift", "meta", "cmd"].includes(p));
+  if (!keyPart) return false;
+  if (event.ctrlKey !== hasCtrl && event.metaKey !== hasMeta) return false;
+  if (event.altKey !== hasAlt) return false;
+  if (event.shiftKey !== hasShift) return false;
+  return event.key.toLowerCase() === keyPart;
+}
+
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 type SidePanelMode =
   | "about"
@@ -1370,6 +1386,12 @@ export function MainWindow({
       if ((event.ctrlKey || event.metaKey) && event.key === "s") {
         event.preventDefault();
         void saveCurrentNote(true);
+      }
+      // 可配置的关闭标签快捷键
+      const shortcut = (settingsConfig?.closeTabShortcut || "Ctrl+W").trim();
+      if (shortcut && matchShortcut(event, shortcut)) {
+        event.preventDefault();
+        clearCurrentNote();
       }
       if (event.altKey && event.key === "ArrowLeft") {
         event.preventDefault();

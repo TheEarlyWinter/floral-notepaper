@@ -25,6 +25,7 @@ export interface AppConfig {
   dataDir: string;
   globalShortcut: string;
   closeToTray: boolean;
+  closeTabShortcut: string;
   autostart: boolean;
   defaultViewMode: string;
   noteAutoSave: boolean;

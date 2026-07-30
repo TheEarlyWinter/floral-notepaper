@@ -245,6 +245,18 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             checked={config.closeToTray}
             onChange={(checked) => setConfigValue("closeToTray", checked)}
           />
+          <div className="flex items-center justify-between py-1">
+            <span className="text-[13px] text-ink-soft">
+              {t("settings.closeTabShortcut", { defaultValue: "关闭标签快捷键" })}
+            </span>
+            <input
+              type="text"
+              value={config.closeTabShortcut || "Ctrl+W"}
+              onChange={(e) => setConfigValue("closeTabShortcut", e.target.value)}
+              placeholder="Ctrl+W"
+              className="w-28 h-7 rounded-lg border border-paper-deep/30 bg-paper-warm/60 px-2 text-[12px] text-ink-soft font-mono text-center"
+            />
+          </div>
           <ToggleRow
             label={t("settings.autostart", { defaultValue: "开机自启" })}
             checked={config.autostart}
