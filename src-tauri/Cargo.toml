@@ -1,6 +1,6 @@
 [package]
 name = "floral-notepaper"
-version = "1.1.5"
+version = "1.1.6"
 description = "A lightweight cross-platform desktop note app"
 authors = ["Achilng"]
 edition = "2021"
@@ -39,6 +39,7 @@ semver = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
 dirs = "6"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

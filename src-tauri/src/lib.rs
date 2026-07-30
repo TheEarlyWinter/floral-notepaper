@@ -7,6 +7,7 @@ pub mod updater;
 
 use locales::Locale;
 use services::{
+    library::{Attachment, BackupInfo, SearchResult},
     notes::{
         default_store, AppConfig, AppError, MergeNotesRequest, Note, NoteMetadata, SaveNoteRequest,
     },
@@ -111,6 +112,57 @@ fn notes_import_markdown(
 #[tauri::command]
 fn notes_export_markdown(id: String, path: String) -> Result<(), AppError> {
     default_store()?.export_markdown_file(&id, &PathBuf::from(path))
+}
+
+#[tauri::command]
+fn notes_search(query: String) -> Result<Vec<SearchResult>, AppError> {
+    default_store()?.search_content(&query)
+}
+
+#[tauri::command]
+fn notes_rebuild_search_index() -> Result<(), AppError> {
+    default_store()?.rebuild_search_index()
+}
+
+#[tauri::command]
+fn attachments_add(app: AppHandle, note_id: String, source_path: String) -> Result<Attachment, AppError> {
+    let attachment = default_store()?.add_attachment(&note_id, &PathBuf::from(source_path))?;
+    let _ = app.emit("notes-changed", ());
+    Ok(attachment)
+}
+
+#[tauri::command]
+fn attachments_list(note_id: String) -> Result<Vec<Attachment>, AppError> {
+    default_store()?.list_attachments(&note_id)
+}
+
+#[tauri::command]
+fn attachments_delete(app: AppHandle, note_id: String, attachment_id: String) -> Result<(), AppError> {
+    default_store()?.delete_attachment(&note_id, &attachment_id)?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn attachments_get_path(note_id: String, attachment_id: String) -> Result<String, AppError> {
+    default_store()?.attachment_path(&note_id, &attachment_id)?.to_str().map(str::to_string).ok_or_else(|| AppError { code: "path".into(), message: "invalid attachment path".into(), details: Default::default() })
+}
+
+#[tauri::command]
+fn backups_create(path: String) -> Result<(), AppError> {
+    default_store()?.create_backup(&PathBuf::from(path))
+}
+
+#[tauri::command]
+fn backups_list() -> Result<Vec<BackupInfo>, AppError> {
+    default_store()?.list_backups()
+}
+
+#[tauri::command]
+fn backups_restore(app: AppHandle, path: String) -> Result<(), AppError> {
+    default_store()?.restore_backup(&PathBuf::from(path))?;
+    let _ = app.emit("notes-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -531,6 +583,15 @@ pub fn run() {
             reminders_delete,
             notes_import_markdown,
             notes_export_markdown,
+            notes_search,
+            notes_rebuild_search_index,
+            attachments_add,
+            attachments_list,
+            attachments_delete,
+            attachments_get_path,
+            backups_create,
+            backups_list,
+            backups_restore,
             notes_move_category,
             read_external_file,
             save_external_file,

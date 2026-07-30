@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { getNote } from "../features/notes/api";
+import { createNote, createReminder, getNote, searchNotes } from "../features/notes/api";
 import {
-  buildSearchHits,
   calculateDashboardStats,
   findDuplicatePairs,
   findDuplicateSuggestions,
@@ -11,7 +10,8 @@ import {
   type SearchHit,
 } from "../features/notes/insights";
 import { getDisplayTitle } from "../features/notes/noteUtils";
-import type { Note, NoteMetadata } from "../features/notes/types";
+import type { IndexedSearchResult, Note, NoteMetadata } from "../features/notes/types";
+import { buildWeeklyReviewMarkdown, calculateWeeklyReview } from "../features/notes/reviewUtils";
 
 export type NotesWorkspaceMode = "dashboard" | "inbox" | "journal" | "search";
 
@@ -24,6 +24,7 @@ interface NotesWorkspacePanelProps {
   onMoveNote: (noteId: string, category: string) => void;
   onMergeNotes: (targetId: string, sourceId: string) => void;
   onClose: () => void;
+  onWeeklyReviewCreated?: (note: Note) => void;
 }
 
 function highlight(text: string, query: string) {
@@ -74,9 +75,13 @@ export function NotesWorkspacePanel({
   onMoveNote,
   onMergeNotes,
   onClose,
+  onWeeklyReviewCreated,
 }: NotesWorkspacePanelProps) {
   const [loadedNotes, setLoadedNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
+  const [indexedSearchHits, setIndexedSearchHits] = useState<IndexedSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [creatingReview, setCreatingReview] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -97,24 +102,34 @@ export function NotesWorkspacePanel({
     () => notes.filter(isDailyNote).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [notes],
   );
-  const searchHits = useMemo(() => buildSearchHits(loadedNotes, query), [loadedNotes, query]);
   const stats = useMemo(() => calculateDashboardStats(notes, loadedNotes), [notes, loadedNotes]);
   const duplicatePairs = useMemo(() => findDuplicatePairs(loadedNotes), [loadedNotes]);
+  const weeklyReview = useMemo(() => calculateWeeklyReview(notes, loadedNotes), [notes, loadedNotes]);
+
+  useEffect(() => {
+    if (mode !== "search" || !query.trim()) { setIndexedSearchHits([]); return; }
+    let active = true;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      void searchNotes(query).then((hits) => { if (active) setIndexedSearchHits(hits); }).catch(() => { if (active) setIndexedSearchHits([]); }).finally(() => { if (active) setSearching(false); });
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [mode, query]);
 
   if (mode === "search") {
     return (
       <div className="h-full flex flex-col bg-paper/70">
         <PanelHeader title="搜索结果" subtitle={query ? `“${query}” 的正文命中` : "输入关键词后会在标题与正文中查找"} onClose={onClose} />
         <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
-          {loading ? <EmptyState>正在翻找笔记内容…</EmptyState> : null}
-          {!loading && !query.trim() ? <EmptyState>输入关键词，就能看到带上下文的命中结果。</EmptyState> : null}
-          {!loading && query.trim() && searchHits.length === 0 ? <EmptyState>没有找到正文命中。</EmptyState> : null}
+          {searching ? <EmptyState>正在查本地索引…</EmptyState> : null}
+          {!searching && !query.trim() ? <EmptyState>输入关键词，就能看到带上下文的命中结果。</EmptyState> : null}
+          {!searching && query.trim() && indexedSearchHits.length === 0 ? <EmptyState>没有找到正文命中。</EmptyState> : null}
           <div className="space-y-2">
-            {searchHits.map((hit) => (
+            {indexedSearchHits.map((hit) => (
               <button
                 key={`${hit.noteId}:${hit.matchStart}`}
                 type="button"
-                onClick={() => onOpenNote(hit.noteId, hit)}
+                onClick={() => onOpenNote(hit.noteId, { ...hit, matchLength: query.trim().length })}
                 className="w-full rounded-xl border border-paper-deep/25 bg-cloud/45 px-3 py-2.5 text-left hover:border-bamboo/35 hover:bg-bamboo-mist/30 transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 text-[12px] font-medium text-ink-soft">
@@ -162,6 +177,7 @@ export function NotesWorkspacePanel({
                         {categories.filter((category) => category !== INBOX_CATEGORY).map((category) => <option key={category} value={category}>{category}</option>)}
                       </select>
                     </label>
+                    <button type="button" onClick={() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0); void createReminder(metadata.id, `整理收件箱：${getDisplayTitle(metadata)}`, tomorrow.toISOString()); }} className="h-7 px-2 rounded-lg text-[10px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist cursor-pointer">明天看</button>
                     <button type="button" onClick={() => onOpenNote(metadata.id)} className="h-7 px-2 rounded-lg text-[10px] text-bamboo hover:bg-bamboo-mist cursor-pointer">编辑</button>
                   </div>
                   {duplicates.length > 0 ? (
@@ -244,6 +260,11 @@ export function NotesWorkspacePanel({
               {dailyNotes.slice(0, 3).map((note) => <button key={note.id} type="button" onClick={() => onOpenNote(note.id)} className="block w-full truncate text-left text-[11px] text-ink-faint hover:text-bamboo cursor-pointer">{getDisplayTitle(note)}</button>)}
               {dailyNotes.length === 0 ? <p className="text-[11px] text-ink-ghost">还没有每日便笺。</p> : null}
             </div>
+          </section>
+          <section className="rounded-xl border border-paper-deep/20 bg-cloud/45 p-3">
+            <div className="flex items-center justify-between gap-2"><h3 className="text-[12px] font-medium text-ink">本周回顾</h3><button type="button" disabled={creatingReview} onClick={() => { setCreatingReview(true); void createNote({ title: `本周回顾 ${weeklyReview.weekLabel}`, content: buildWeeklyReviewMarkdown(weeklyReview), category: "每周回顾", tags: ["weekly-review"], pinned: false }).then((note) => onWeeklyReviewCreated?.(note)).finally(() => setCreatingReview(false)); }} className="shrink-0 text-[10px] text-bamboo disabled:opacity-40 cursor-pointer">{creatingReview ? "生成中…" : "生成草稿"}</button></div>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-ghost">本周新建 {weeklyReview.created} 篇、更新 {weeklyReview.updated} 篇，收件箱还有 {weeklyReview.inboxCount} 条。</p>
+            {weeklyReview.topTags.length ? <p className="mt-1 text-[10px] text-ink-ghost">常见主题：{weeklyReview.topTags.map((tag) => `#${tag}`).join(" · ")}</p> : null}
           </section>
           <section className="rounded-xl border border-paper-deep/20 bg-cloud/45 p-3">
             <div className="flex items-center justify-between"><h3 className="text-[12px] font-medium text-ink">重复整理建议</h3><span className="text-[10px] text-ink-ghost">{duplicatePairs.length} 组</span></div>

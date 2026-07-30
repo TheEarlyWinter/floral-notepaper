@@ -1,6 +1,9 @@
 import { t, type TFunction } from "i18next";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Attachment,
+  BackupInfo,
+  IndexedSearchResult,
   MergeNotesRequest,
   Note,
   NoteMetadata,
@@ -56,6 +59,42 @@ export function mergeNotes(request: MergeNotesRequest): Promise<Note> {
 
 export function openDailyNote(): Promise<Note> {
   return invoke("notes_open_daily");
+}
+
+export function searchNotes(query: string): Promise<IndexedSearchResult[]> {
+  return invoke("notes_search", { query });
+}
+
+export function rebuildSearchIndex(): Promise<void> {
+  return invoke("notes_rebuild_search_index");
+}
+
+export function addAttachment(noteId: string, sourcePath: string): Promise<Attachment> {
+  return invoke("attachments_add", { noteId, sourcePath });
+}
+
+export function listAttachments(noteId: string): Promise<Attachment[]> {
+  return invoke("attachments_list", { noteId });
+}
+
+export function deleteAttachment(noteId: string, attachmentId: string): Promise<void> {
+  return invoke("attachments_delete", { noteId, attachmentId });
+}
+
+export function getAttachmentPath(noteId: string, attachmentId: string): Promise<string> {
+  return invoke("attachments_get_path", { noteId, attachmentId });
+}
+
+export function createBackup(path: string): Promise<void> {
+  return invoke("backups_create", { path });
+}
+
+export function listBackups(): Promise<BackupInfo[]> {
+  return invoke("backups_list");
+}
+
+export function restoreBackup(path: string): Promise<void> {
+  return invoke("backups_restore", { path });
 }
 
 export function listNoteVersions(id: string): Promise<NoteVersion[]> {

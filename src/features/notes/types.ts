@@ -47,3 +47,28 @@ export interface ExternalFile {
   title: string;
   filePath: string;
 }
+
+export interface Attachment {
+  id: string;
+  noteId: string;
+  name: string;
+  fileName: string;
+  size: number;
+  createdAt: string;
+}
+
+export interface BackupInfo {
+  fileName: string;
+  createdAt: string;
+  size: number;
+  automatic: boolean;
+}
+
+export interface IndexedSearchResult {
+  noteId: string;
+  title: string;
+  category: string;
+  snippet: string;
+  matchStart: number;
+  score: number;
+}

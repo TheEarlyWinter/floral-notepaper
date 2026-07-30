@@ -52,6 +52,7 @@ import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { ReminderPanel } from "./ReminderPanel";
 import { NotesWorkspacePanel, type NotesWorkspaceMode } from "./NotesWorkspacePanel";
+import { LibraryPanel } from "./LibraryPanel";
 import {
   createNote,
   createCategory,
@@ -120,6 +121,7 @@ type SidePanelMode =
   | "history"
   | "backlinks"
   | "reminders"
+  | "library"
   | "workspace";
 
 const BUILT_IN_TEMPLATES: NoteTemplate[] = [
@@ -410,6 +412,9 @@ export function MainWindow({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [readingMode, setReadingMode] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
     initialSettingsOpen && initialConfig ? "settings" : null,
@@ -632,12 +637,15 @@ export function MainWindow({
           ? "history"
           : backlinksOpen && selectedId && !isExternal
             ? "backlinks"
-            : remindersOpen && selectedId && !isExternal
-              ? "reminders"
-              : settingsOpen && settingsConfig
+            : libraryOpen
+              ? "library"
+              : remindersOpen && selectedId && !isExternal
+                ? "reminders"
+                : settingsOpen && settingsConfig
                 ? "settings"
                 : null;
   const sidePanelExpanded = visibleSidePanel !== null;
+  const effectiveViewMode: ViewMode = readingMode ? "preview" : viewMode;
   const openWorkspace = useCallback((mode: NotesWorkspaceMode) => {
     setSettingsOpen(false);
     setAboutOpen(false);
@@ -645,6 +653,7 @@ export function MainWindow({
     setHistoryOpen(false);
     setBacklinksOpen(false);
     setRemindersOpen(false);
+    setLibraryOpen(false);
     setWorkspaceMode(mode);
   }, []);
   const openAboutPanel = useCallback(() => {
@@ -1546,6 +1555,17 @@ export function MainWindow({
     showToast("已存为模板");
   }, [content, handleSettingsChange, isExternal, settingsConfig, title]);
 
+  const handleToggleLibrary = useCallback(() => {
+    setSettingsOpen(false);
+    setAboutOpen(false);
+    setTodosOpen(false);
+    setHistoryOpen(false);
+    setBacklinksOpen(false);
+    setRemindersOpen(false);
+    setWorkspaceMode(null);
+    setLibraryOpen((open) => !open);
+  }, []);
+
   const handleOpenDailyNote = useCallback(async () => {
     try {
       const note = await openDailyNote();
@@ -2418,7 +2438,7 @@ export function MainWindow({
         <div className="relative z-10 flex flex-1 min-h-0 main-layout-row">
           <div
             className="border-r border-paper-deep/30 bg-paper/40 shrink-0 overflow-hidden transition-[width] duration-[600ms] main-sidebar"
-            style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
+            style={{ width: sidebarCollapsed || focusMode ? 0 : sidebarWidth }}
           >
             <div className="flex flex-col h-full" style={{ width: `${sidebarWidth}px` }}>
               <div className="px-3 pt-3 pb-2 shrink-0">
@@ -3042,12 +3062,12 @@ export function MainWindow({
           <div className="flex-1 flex flex-col min-w-0">
             <div
               className={`flex items-center h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20 transition-all duration-200 ${
-                settingsOpen ? "justify-end px-2" : "justify-between px-4"
+                settingsOpen || focusMode ? "justify-end px-2" : "justify-between px-4"
               }`}
             >
               <div
                 className={`flex items-center gap-1 overflow-hidden transition-[max-width,opacity] duration-200 ${
-                  settingsOpen ? "max-w-0 opacity-0 pointer-events-none" : "max-w-[900px] opacity-100"
+                  settingsOpen || focusMode ? "max-w-0 opacity-0 pointer-events-none" : "max-w-[900px] opacity-100"
                 }`}
               >
                 <button
@@ -3166,6 +3186,30 @@ export function MainWindow({
                     <circle cx="12" cy="13" r="8" />
                     <path d="M12 9v4l2.5 1.5M9 3h6M12 3v2" />
                   </svg>
+                </button>
+                <button
+                  onClick={handleToggleLibrary}
+                  aria-label="资料与备份"
+                  title="资料与备份"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v16H4z" /><path d="M8 4v16M11 9h5M11 13h5" /></svg>
+                </button>
+                <button
+                  onClick={() => { setReadingMode(false); setFocusMode((active) => !active); }}
+                  aria-label={focusMode ? "退出专注写作" : "专注写作"}
+                  title={focusMode ? "退出专注写作" : "专注写作"}
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${focusMode ? "text-bamboo bg-bamboo-mist" : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm"}`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+                </button>
+                <button
+                  onClick={() => { setFocusMode(false); setReadingMode((active) => !active); }}
+                  aria-label={readingMode ? "退出阅读模式" : "沉浸阅读"}
+                  title={readingMode ? "退出阅读模式" : "沉浸阅读"}
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${readingMode ? "text-bamboo bg-bamboo-mist" : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm"}`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z" /><path d="M4 5.5v16M8 7h8M8 11h8M8 15h5" /></svg>
                 </button>
                 <button
                   onClick={handleSaveAsTemplate}
@@ -3397,7 +3441,7 @@ export function MainWindow({
                 )}
               </div>
 
-              {!settingsOpen && (
+              {!settingsOpen && !focusMode && (
                 <SlidingButtonGroup
                   options={viewModeOptions}
                   value={viewMode}
@@ -3408,11 +3452,13 @@ export function MainWindow({
               {settingsOpen && (
                 <span className="px-2 text-[11px] text-ink-ghost font-body">设置已打开</span>
               )}
+              {focusMode && <button type="button" onClick={() => setFocusMode(false)} className="px-2 text-[11px] text-bamboo cursor-pointer">退出专注</button>}
+              {readingMode && <button type="button" onClick={() => setReadingMode(false)} className="px-2 text-[11px] text-bamboo cursor-pointer">退出阅读</button>}
             </div>
 
             <div
               key={noteTransitionKey}
-              className="animate-note-enter px-6 pt-4 pb-2 shrink-0 border-b border-paper-deep/15"
+              className={`animate-note-enter px-6 pt-4 pb-2 shrink-0 border-b border-paper-deep/15 ${focusMode ? "hidden" : ""}`}
             >
               <input
                 type="text"
@@ -3474,7 +3520,7 @@ export function MainWindow({
             </div>
 
             <div
-              key={viewMode}
+              key={effectiveViewMode}
               ref={splitContainerRef}
               className="flex-1 flex min-h-0 animate-view-fade"
             >
@@ -3484,12 +3530,12 @@ export function MainWindow({
                 </div>
               ) : (
                 <>
-                  {(viewMode === "edit" || viewMode === "split") && (
+                  {(effectiveViewMode === "edit" || effectiveViewMode === "split") && (
                     <div
                       className="flex flex-col min-h-0 shrink-0"
-                      style={{ width: viewMode === "split" ? `${splitRatio * 100}%` : "100%" }}
+                      style={{ width: effectiveViewMode === "split" ? `${splitRatio * 100}%` : "100%" }}
                     >
-                      <div className="flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0">
+                      <div className={`flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0 ${focusMode ? "hidden" : ""}`}>
                         {toolbarButtons.map((button) => (
                           <button
                             key={button.label}
@@ -3545,7 +3591,7 @@ export function MainWindow({
                     </div>
                   )}
 
-                  {viewMode === "split" && (
+                  {effectiveViewMode === "split" && (
                     <div
                       className={`w-1.5 shrink-0 cursor-col-resize group relative flex items-center justify-center ${isResizingSplit ? "bg-bamboo/30" : "hover:bg-bamboo/20"} transition-colors`}
                       onMouseDown={(e) => {
@@ -3565,9 +3611,9 @@ export function MainWindow({
                     </div>
                   )}
 
-                  {(viewMode === "preview" || viewMode === "split") && (
+                  {(effectiveViewMode === "preview" || effectiveViewMode === "split") && (
                     <div className="flex flex-col min-h-0 min-w-0 flex-1">
-                      {viewMode === "split" && (
+                      {effectiveViewMode === "split" && (
                         <div className="px-4 pt-2.5 pb-1 shrink-0">
                           <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
                             {t("main.editor.previewLabel", { defaultValue: "Preview" })}
@@ -3578,7 +3624,7 @@ export function MainWindow({
                         ref={previewScrollRef}
                         onScroll={handlePreviewScroll}
                         className={`flex-1 overflow-y-auto px-6 pb-6 ${
-                          viewMode === "preview" ? "pt-3" : "pt-1"
+                          effectiveViewMode === "preview" ? "pt-3" : "pt-1"
                         }`}
                       >
                         <MarkdownPreview
@@ -3595,7 +3641,7 @@ export function MainWindow({
               )}
             </div>
 
-            <div className="flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0">
+            <div className={`flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0 ${focusMode ? "hidden" : ""}`}>
               <div className="flex items-center gap-3">
                 <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
                   {t("main.statusBar.lineNumber", {
@@ -3715,6 +3761,24 @@ export function MainWindow({
             </div>
             <div
               className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                mountedSidePanel === "library"
+                  ? sidePanelContentVisible && visibleSidePanel === "library"
+                    ? "translate-x-0 opacity-100"
+                    : "pointer-events-none translate-x-4 opacity-0"
+                  : "pointer-events-none translate-x-4 opacity-0"
+              }`}
+            >
+              {mountedSidePanel === "library" ? (
+                <LibraryPanel
+                  noteId={selectedId && !isExternal ? selectedId : null}
+                  noteTitle={title}
+                  onClose={() => setLibraryOpen(false)}
+                  onRestored={() => { setLibraryOpen(false); void refreshNotes(); clearCurrentNote(); }}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                 mountedSidePanel === "todos"
                   ? sidePanelContentVisible && visibleSidePanel === "todos"
                     ? "translate-x-0 opacity-100"
@@ -3755,6 +3819,7 @@ export function MainWindow({
                   }}
                   onMoveNote={(noteId, category) => void handleMoveNote(noteId, category)}
                   onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
+                  onWeeklyReviewCreated={(note) => { replaceNoteMetadata(note); applyNote(note); setWorkspaceMode(null); }}
                   onClose={() => setWorkspaceMode(null)}
                 />
               ) : null}

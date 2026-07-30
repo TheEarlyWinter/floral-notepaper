@@ -393,7 +393,9 @@ fn data_dir_from_notes_dir(notes_dir: &str) -> PathBuf {
     path.to_path_buf()
 }
 
-const DATA_DIR_ITEMS: [&str; 5] = ["metadata.json", "notes", "images", "backgrounds", "history"];
+const DATA_DIR_ITEMS: [&str; 9] = [
+    "metadata.json", "notes", "images", "attachments", "attachments.json", "backgrounds", "history", "reminders.json", "search-index.json",
+];
 
 // 旧版无论 notesDir 指向哪里，metadata.json、images、backgrounds 都固定存放在旧主目录；
 // 数据目录解析到其他位置时必须一并带走，否则笔记内图片引用全部失效、created_at 丢失
@@ -796,7 +798,7 @@ impl NoteStore {
         metadata_file.notes.push(metadata.clone());
         self.save_metadata(&metadata_file)?;
 
-        Ok(Note {
+        let created = Note {
             id,
             title: metadata.title,
             file_name,
@@ -807,7 +809,10 @@ impl NoteStore {
             content: request.content,
             tags: metadata.tags,
             pinned: metadata.pinned,
-        })
+        };
+        let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
+        let _ = self.rebuild_search_index();
+        Ok(created)
     }
 
     pub fn update_note(&self, id: &str, request: SaveNoteRequest) -> Result<Note, AppError> {
@@ -874,6 +879,8 @@ impl NoteStore {
         };
 
         self.save_metadata(&metadata_file)?;
+        let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
+        let _ = self.rebuild_search_index();
         Ok(result)
     }
 
@@ -945,10 +952,13 @@ impl NoteStore {
         }
         self.save_metadata(&metadata_file)?;
         let _ = self.delete_note_images(&source.id);
+        let _ = crate::services::library::move_note_attachments(&self.data_dir, &source.id, &target.id);
         let source_history = self.note_history_dir(&source.id);
         if source_history.exists() {
             let _ = fs::remove_dir_all(source_history);
         }
+        let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
+        let _ = self.rebuild_search_index();
 
         Ok(merged)
     }
@@ -970,10 +980,13 @@ impl NoteStore {
         }
         self.save_metadata(&metadata_file)?;
         let _ = self.delete_note_images(id);
+        let _ = crate::services::library::delete_note_attachments(&self.data_dir, id);
         let history_dir = self.note_history_dir(id);
         if history_dir.exists() {
             let _ = fs::remove_dir_all(history_dir);
         }
+        let _ = crate::services::library::ensure_daily_backup(&self.data_dir);
+        let _ = self.rebuild_search_index();
         Ok(())
     }
 
@@ -1183,6 +1196,60 @@ impl NoteStore {
         }
         fs::write(path, note.content)?;
         Ok(())
+    }
+
+    pub fn all_notes_for_index(&self) -> Result<Vec<Note>, AppError> {
+        self.list_notes()?.into_iter().map(|metadata| self.read_note(&metadata.id)).collect()
+    }
+
+    pub fn rebuild_search_index(&self) -> Result<(), AppError> {
+        let notes = self.all_notes_for_index()?;
+        crate::services::library::rebuild_search_index(&self.data_dir, &notes)
+    }
+
+    pub fn search_content(&self, query: &str) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
+        let notes = self.all_notes_for_index()?;
+        crate::services::library::search(&self.data_dir, query, &notes)
+    }
+
+    pub fn add_attachment(&self, note_id: &str, source: &Path) -> Result<crate::services::library::Attachment, AppError> {
+        self.read_note(note_id)?;
+        crate::services::library::add_attachment(&self.data_dir, note_id, source)
+    }
+
+    pub fn list_attachments(&self, note_id: &str) -> Result<Vec<crate::services::library::Attachment>, AppError> {
+        self.read_note(note_id)?;
+        crate::services::library::list_attachments(&self.data_dir, note_id)
+    }
+
+    pub fn delete_attachment(&self, note_id: &str, attachment_id: &str) -> Result<(), AppError> {
+        crate::services::library::delete_attachment(&self.data_dir, note_id, attachment_id)
+    }
+
+    pub fn attachment_path(&self, note_id: &str, attachment_id: &str) -> Result<PathBuf, AppError> {
+        let attachment = self.list_attachments(note_id)?.into_iter().find(|item| item.id == attachment_id).ok_or_else(|| AppError::new("attachmentNotFound", "找不到附件"))?;
+        Ok(self.data_dir.join("attachments").join(note_id).join(attachment.file_name))
+    }
+
+    pub fn create_backup(&self, destination: &Path) -> Result<(), AppError> {
+        self.ensure_storage()?;
+        crate::services::library::create_manual_backup(&self.data_dir, destination)
+    }
+
+    pub fn ensure_daily_backup(&self) -> Result<Option<crate::services::library::BackupInfo>, AppError> {
+        self.ensure_storage()?;
+        crate::services::library::ensure_daily_backup(&self.data_dir)
+    }
+
+    pub fn list_backups(&self) -> Result<Vec<crate::services::library::BackupInfo>, AppError> {
+        crate::services::library::list_backups(&self.data_dir)
+    }
+
+    pub fn restore_backup(&self, backup: &Path) -> Result<(), AppError> {
+        let _lock = self.lock_metadata_mutation()?;
+        crate::services::library::restore_backup(&self.data_dir, backup)?;
+        self.ensure_storage()?;
+        self.rebuild_search_index()
     }
 
     pub fn list_categories(&self) -> Result<Vec<String>, AppError> {
