@@ -1765,27 +1765,62 @@ impl NoteStore {
 
     fn load_metadata(&self) -> Result<MetadataFile, AppError> {
         self.ensure_data_dir()?;
+
+        // 优先从 SQLite 读取。首次启动时若 SQLite 为空且 metadata.json 存在，自动迁移
+        if crate::services::db::is_initialized() {
+            if crate::services::db::db_notes_is_empty().unwrap_or(true) {
+                let json_path = self.metadata_path();
+                if json_path.exists() {
+                    // 从 JSON 迁移到 SQLite
+                    match serde_json::from_str::<MetadataFile>(
+                        &fs::read_to_string(&json_path)?,
+                    ) {
+                        Ok(metadata) => {
+                            for note in &metadata.notes {
+                                let _ = crate::services::db::db_notes_upsert(note);
+                            }
+                            eprintln!("[花笺] 已从 metadata.json 迁移 {} 条笔记到 SQLite", metadata.notes.len());
+                            return Ok(metadata);
+                        }
+                        Err(_) => {
+                            // JSON 损坏，从文件系统重建
+                            let rebuilt = self.rebuild_metadata()?;
+                            for note in &rebuilt.notes {
+                                let _ = crate::services::db::db_notes_upsert(note);
+                            }
+                            return Ok(rebuilt);
+                        }
+                    }
+                }
+                // 连 JSON 都没有，从文件系统重建
+                let rebuilt = self.rebuild_metadata()?;
+                for note in &rebuilt.notes {
+                    let _ = crate::services::db::db_notes_upsert(note);
+                }
+                return Ok(rebuilt);
+            }
+
+            // SQLite 中有数据，直接读取
+            let notes = crate::services::db::db_notes_get_all().unwrap_or_default();
+            return Ok(MetadataFile { notes });
+        }
+
+        // 数据库未初始化时的回退逻辑（不应发生）
         let path = self.metadata_path();
         if !path.exists() {
             let rebuilt = self.rebuild_metadata()?;
             self.save_metadata(&rebuilt)?;
             return Ok(rebuilt);
         }
-
         match serde_json::from_str(&fs::read_to_string(&path)?) {
             Ok(metadata) => Ok(metadata),
             Err(_) => {
-                // 备份损坏文件再重建：rebuild 从文件系统推断 created_at / 分类，
-                // 与原始数据可能不一致，保留原件供事后取证分析
                 let corrupt_name = format!(
                     "metadata.corrupt-{}.json",
                     Utc::now().format("%Y%m%d%H%M%S")
                 );
                 if let Err(error) = fs::rename(&path, self.data_dir.join(&corrupt_name)) {
-                    eprintln!(
-                        "failed to back up corrupt metadata {}: {error}",
-                        path.display()
-                    );
+                    eprintln!("failed to back up corrupt metadata {}: {error}", path.display());
                 }
                 let rebuilt = self.rebuild_metadata()?;
                 self.save_metadata(&rebuilt)?;
@@ -1796,6 +1831,16 @@ impl NoteStore {
 
     fn save_metadata(&self, metadata: &MetadataFile) -> Result<(), AppError> {
         self.ensure_data_dir()?;
+
+        // 主存储：写入 SQLite
+        if crate::services::db::is_initialized() {
+            let _ = crate::services::db::db_notes_clear();
+            for note in &metadata.notes {
+                let _ = crate::services::db::db_notes_upsert(note);
+            }
+        }
+
+        // 备份：同时写入 metadata.json（过渡期双写，确保回退安全）
         write_json_atomic(&self.metadata_path(), metadata)
     }
 

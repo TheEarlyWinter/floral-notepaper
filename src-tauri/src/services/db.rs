@@ -63,7 +63,20 @@ pub fn init_db(data_dir: &Path) -> Result<(), AppError> {
 /// 执行数据库迁移
 fn migrate(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+        "CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            file_name TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
+            word_count INTEGER NOT NULL DEFAULT 0,
+            preview TEXT NOT NULL DEFAULT '',
+            tags TEXT NOT NULL DEFAULT '[]',
+            pinned INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
             note_id UNINDEXED,
             title,
             content,
@@ -198,4 +211,127 @@ fn escape_fts_query(query: &str) -> String {
 /// 检查数据库是否已初始化
 pub fn is_initialized() -> bool {
     DB.get().is_some()
+}
+
+// ── Notes 元数据 CRUD ──
+
+/// 获取所有笔记元数据
+pub fn db_notes_get_all() -> Result<Vec<crate::services::notes::NoteMetadata>, AppError> {
+    use crate::services::notes::NoteMetadata;
+    with_db(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, title, file_name, category, created_at, updated_at,
+                        word_count, preview, tags, pinned
+                 FROM notes ORDER BY updated_at DESC",
+            )
+            .map_err(|e| AppError {
+                code: "db".into(),
+                message: format!("查询笔记列表失败: {e}"),
+                details: Default::default(),
+            })?;
+
+        let notes: Vec<NoteMetadata> = stmt
+            .query_map([], |row| {
+                let created_at_str: String = row.get(5)?;
+                let updated_at_str: String = row.get(6)?;
+                let tags_json: String = row.get(8)?;
+                Ok(NoteMetadata {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    file_name: row.get(2)?,
+                    category: row.get(3)?,
+                    created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at_str)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc),
+                    word_count: row.get::<_, i64>(7)? as usize,
+                    preview: row.get(9)?,
+                    tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+                    pinned: row.get::<_, i64>(10)? != 0,
+                })
+            })
+            .map_err(|e| AppError {
+                code: "db".into(),
+                message: format!("读取笔记元数据失败: {e}"),
+                details: Default::default(),
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(notes)
+    })
+}
+
+/// 插入或替换一条笔记元数据
+pub fn db_notes_upsert(note: &crate::services::notes::NoteMetadata) -> Result<(), AppError> {
+    with_db(|conn| {
+        let tags_json = serde_json::to_string(&note.tags).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT OR REPLACE INTO notes
+             (id, title, file_name, category, created_at, updated_at,
+              word_count, preview, tags, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                note.id,
+                note.title,
+                note.file_name,
+                note.category,
+                note.created_at.to_rfc3339(),
+                note.updated_at.to_rfc3339(),
+                note.word_count as i64,
+                note.preview,
+                tags_json,
+                note.pinned as i64,
+            ],
+        )
+        .map_err(|e| AppError {
+            code: "db".into(),
+            message: format!("写入笔记元数据失败: {e}"),
+            details: Default::default(),
+        })?;
+        Ok(())
+    })
+}
+
+/// 删除一条笔记元数据
+pub fn db_notes_delete(id: &str) -> Result<(), AppError> {
+    with_db(|conn| {
+        conn.execute("DELETE FROM notes WHERE id = ?1", params![id])
+            .map_err(|e| AppError {
+                code: "db".into(),
+                message: format!("删除笔记元数据失败: {e}"),
+                details: Default::default(),
+            })?;
+        Ok(())
+    })
+}
+
+/// 清空 notes 表
+pub fn db_notes_clear() -> Result<(), AppError> {
+    with_db(|conn| {
+        conn.execute("DELETE FROM notes", [])
+            .map_err(|e| AppError {
+                code: "db".into(),
+                message: format!("清空笔记元数据失败: {e}"),
+                details: Default::default(),
+            })?;
+        Ok(())
+    })
+}
+
+/// 检查 notes 表是否为空
+pub fn db_notes_is_empty() -> Result<bool, AppError> {
+    with_db(|conn| {
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0))
+            .map_err(|e| AppError {
+                code: "db".into(),
+                message: format!("查询笔记计数失败: {e}"),
+                details: Default::default(),
+            })?;
+        Ok(count == 0)
+    })
 }
