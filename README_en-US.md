@@ -52,6 +52,18 @@ Use it as a quick desktop note or as a lightweight Markdown library: capture a t
 - **Stable links** with `[[note:note-id|label]]`, avoiding ambiguity when titles collide.
 - **Backlinks** to see which notes refer to the current note.
 - **Copy stable link** from the toolbar to paste into another note.
+- **Navigation history**: step back and forward through note jumps via status bar buttons or `Alt+←` / `Alt+→`.
+
+### Knowledge discovery
+
+- **Outline panel**: one-click toggle in the toolbar shows a clickable heading hierarchy extracted from your Markdown.
+- **Knowledge graph**: a force-directed graph visualizes cross-reference relationships between notes, colored by category with click-to-navigate nodes.
+
+### Performance & infrastructure
+
+- **FTS5 full-text search**: incremental SQLite FTS5 index with trigram tokenizer for Chinese/English mixed queries, far faster than full-scan.
+- **Deduplicated version storage**: blake3 content hashing skips duplicate saves, saving 80%+ disk space.
+- **CLI interface**: `--cli list|get|search|daily|create|export` for scripting and pipeline integration.
 
 ### Reminders and local data
 
