@@ -33,6 +33,16 @@ struct MetadataLockGuard {
     _process: MutexGuard<'static, ()>,
     _file: fs::File,
 }
+
+// config.json 是唯一没有独立写锁的 JSON：多窗口并发保存设置会互相覆盖。
+static CONFIG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn lock_config() -> Result<MutexGuard<'static, ()>, AppError> {
+    CONFIG_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| AppError::new("configLock", "配置锁已中毒，请重启应用后重试"))
+}
 // 每次应用进程首次接触一个数据目录时，扫描一次未登记 Markdown。
 // 这能恢复“文件已写入、metadata 尚未来得及提交”时留下的孤儿笔记，
 // 又避免每一条 IPC 请求都递归扫描整个笔记库。
@@ -840,14 +850,20 @@ impl NoteStore {
     }
 
     pub fn load_config(&self) -> Result<AppConfig, AppError> {
+        let _lock = lock_config()?;
         self.ensure_config_dir()?;
         let path = self.config_path();
         if !path.exists() {
             self.migrate_config_from_legacy()?;
         }
         if !path.exists() {
-            let config = self.default_config();
-            self.save_config(config.clone())?;
+            // 直接写盘创建默认配置（锁内），不再调 save_config 避免递归锁
+            let mut config = self.default_config();
+            config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
+            config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
+            is_safe_data_dir(&self.data_dir)?;
+            fs::create_dir_all(self.data_dir.join("notes"))?;
+            write_json_atomic(&path, &config)?;
             self.mark_macos_shortcut_migration_handled()?;
             return Ok(config);
         }
@@ -872,6 +888,7 @@ impl NoteStore {
     }
 
     pub fn save_config(&self, mut config: AppConfig) -> Result<AppConfig, AppError> {
+        let _lock = lock_config()?;
         self.ensure_config_dir()?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
@@ -1189,9 +1206,20 @@ impl NoteStore {
     }
 
     fn note_version_path(&self, note_id: &str, version_id: &str) -> Result<PathBuf, AppError> {
-        // 版本 ID 格式：`%Y%m%dT%H%M%S%.6fZ` 或带 `-{随机段}` 后缀（防同微秒覆盖）
-        let base = version_id.split('-').next().unwrap_or(version_id);
-        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err() {
+        // 版本 ID 格式：`%Y%m%dT%H%M%S%.6fZ` 或 `{时间戳}-{8位hex}`。
+        // 整体必须匹配白名单，杜绝路径分隔符 / .. 穿越
+        let segments: Vec<&str> = version_id.split('-').collect();
+        let base = segments.first().copied().unwrap_or(version_id);
+        let suffix_ok = match segments.len() {
+            1 => true,
+            2 => {
+                segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit())
+            }
+            _ => false,
+        };
+        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err()
+            || !suffix_ok
+        {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
         Ok(self
@@ -1234,7 +1262,11 @@ impl NoteStore {
             Utc::now().format("%Y%m%dT%H%M%S%.6fZ"),
             &Uuid::new_v4().to_string()[..8]
         );
-        fs::write(dir.join(format!("{version_id}.md")), content)?;
+        // 原子写：临时文件 + rename，崩溃不会留下半个版本文件
+        let version_path = dir.join(format!("{version_id}.md"));
+        let temp_path = dir.join(format!("{version_id}.tmp"));
+        fs::write(&temp_path, content)?;
+        fs::rename(&temp_path, &version_path)?;
 
         // 重新读取条目列表（包含新写入的版本），清理超出上限的旧版本
         let mut entries: Vec<_> = fs::read_dir(&dir)?
@@ -1335,7 +1367,11 @@ impl NoteStore {
             ) else {
                 continue;
             };
-            let content = fs::read_to_string(&path)?;
+            // 单个版本文件损坏时跳过而不是拖垮整个版本列表
+            let Ok(content) = fs::read_to_string(&path) else {
+                eprintln!("[花笺] 跳过损坏的历史版本文件: {}", path.display());
+                continue;
+            };
             versions.push(NoteVersion {
                 id: stem.to_string(),
                 created_at: created_at.and_utc(),
@@ -1563,6 +1599,9 @@ impl NoteStore {
     }
 
     pub fn create_backup(&self, destination: &Path) -> Result<(), AppError> {
+        // 手动备份持元数据锁：避免在 "先写 .md → 再写 metadata.json" 的
+        // 空窗内打包出"新正文配旧元数据"的混合备份
+        let _lock = self.lock_metadata_mutation()?;
         self.ensure_storage()?;
         crate::services::library::create_manual_backup(&self.data_dir, destination)
     }
@@ -1580,7 +1619,14 @@ impl NoteStore {
 
     pub fn restore_backup(&self, backup: &Path) -> Result<(), AppError> {
         let _lock = self.lock_metadata_mutation()?;
-        crate::services::library::restore_backup(&self.data_dir, backup)?;
+        // 恢复会整体替换 attachments.json / reminders.json：按固定顺序
+        // （metadata → attachments → reminders）持有全部锁，避免与在途
+        // 附件/提醒写入竞态；各写入路径只持单把锁，不会锁序颠倒
+        crate::services::library::with_attachment_lock(|| {
+            crate::services::reminders::with_lock(|| {
+                crate::services::library::restore_backup(&self.data_dir, backup)
+            })
+        })?;
         invalidate_data_dir_reconciliation(&self.data_dir);
         // floral.db 不参与备份，恢复后的 JSON/Markdown 必须主动覆盖旧派生缓存。
         if let Err(error) = crate::services::db::reset_derived_data(&self.data_dir) {
@@ -2307,6 +2353,18 @@ impl NoteStore {
                 }
             }
         }
+        // 清理死条目：metadata 中文件已不存在的笔记（外部删除 .md 后残留），
+        // 与 list_notes 的过滤语义一致并落盘，避免死条目永久残留在
+        // metadata.json、备份与全库指纹里
+        let before = metadata.notes.len();
+        metadata.notes.retain(|note| {
+            self.note_path_in_category(&note.file_name, &note.category)
+                .map(|path| path.is_file())
+                .unwrap_or(false)
+        });
+        if metadata.notes.len() != before {
+            changed = true;
+        }
         Ok(changed)
     }
 
@@ -2361,6 +2419,13 @@ impl NoteStore {
     }
 
     pub fn migrate_data_to(&self, new_data_dir: &Path) -> Result<NoteStore, AppError> {
+        // 迁移期间持元数据锁：避免与在途写命令竞态
+        // （写旧目录的请求在清理阶段可能打到已删除的目录上）
+        let _lock = self.lock_metadata_mutation()?;
+        self.migrate_data_to_unlocked(new_data_dir)
+    }
+
+    fn migrate_data_to_unlocked(&self, new_data_dir: &Path) -> Result<NoteStore, AppError> {
         is_safe_data_dir(new_data_dir)?;
         let canonical_new = canonical_for_compare(new_data_dir);
         let canonical_current = canonical_for_compare(&self.data_dir);

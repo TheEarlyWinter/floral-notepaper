@@ -630,8 +630,9 @@ impl UpdateDownloadService {
                 allow_insecure_localhost: self.allow_insecure_localhost,
             },
         )?;
-        // Resolve the actual filename from the final URL after redirects.
-        let final_path = resolved_final_path(plan, response.url());
+        // 目标文件名始终使用 manifest 校验过的 asset_name（plan.final_path）；
+        // 不采用重定向 URL 的文件名，避免状态元数据与实际路径不一致
+        let final_path = plan.final_path.clone();
         let content_length = response.content_length();
         debug_log!(
             "重定向后 url={} 文件={} Content-Length={:?}",
@@ -895,18 +896,6 @@ fn sanitize_url(url: &Url) -> String {
         url.host_str().unwrap_or(""),
         url.path()
     )
-}
-
-fn resolved_final_path(plan: &DownloadPlan, effective_url: &Url) -> PathBuf {
-    let filename = effective_url
-        .path_segments()
-        .and_then(|mut segments| segments.next_back())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(&plan.asset_name);
-    plan.final_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(filename)
 }
 
 fn part_path_for(final_path: &Path) -> PathBuf {

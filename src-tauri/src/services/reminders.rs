@@ -58,6 +58,12 @@ fn lock() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
         .map_err(|_| AppError { code: "reminderLock".into(), message: "提醒存储锁已中毒，请重启应用后重试".into(), details: Default::default() })
 }
 
+/// 持提醒锁执行闭包（供需要跨锁协调的路径使用，如备份恢复）。
+pub(crate) fn with_lock<T>(f: impl FnOnce() -> Result<T, AppError>) -> Result<T, AppError> {
+    let _guard = lock()?;
+    f()
+}
+
 pub fn list(data_dir: &Path) -> Result<Vec<Reminder>, AppError> {
     let mut reminders = load(data_dir)?.reminders;
     reminders.sort_by_key(|reminder| reminder.remind_at);

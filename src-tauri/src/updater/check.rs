@@ -4,8 +4,8 @@ use super::{
     settings::{self, StoredUpdateSettings},
     state,
     types::{
-        CheckSourcePreference, DownloadSourcePreference, DownloadSourceUsed, UpdateCheckResult,
-        UpdateCheckStatus, UpdateErrorDto, UpdateStateDto, UpdateStatus,
+        CheckSourcePreference, DownloadSourcePreference, DownloadSourceUsed, UpdateChannel,
+        UpdateCheckResult, UpdateCheckStatus, UpdateErrorDto, UpdateStateDto, UpdateStatus,
     },
     version, UpdatePaths,
 };
@@ -46,6 +46,7 @@ struct UpdateCheckContext {
     platform: PlatformInfo,
     current_version: Version,
     allow_prerelease: bool,
+    channel: UpdateChannel,
     previous_state: UpdateStateDto,
 }
 
@@ -264,6 +265,7 @@ impl UpdateCheckService {
                 &settings.channel,
                 settings.allow_prerelease,
             ),
+            channel: settings.channel.clone(),
             previous_state,
         };
         debug_log!(
@@ -957,6 +959,16 @@ fn load_manifest_candidate(
         errors::with_detail(error, "path", manifest_path.display().to_string())
     })?;
     let manifest = manifest::parse_manifest(&manifest_bytes)?;
+    // 通道不匹配的清单不参与候选（例如 stable 配置加载到 beta 清单），
+    // 避免把非当前通道的更新当成正式更新展示
+    if manifest.channel != context.channel {
+        debug_log!(
+            "{provider} 清单通道 {:?} 与当前 {:?} 不匹配，跳过",
+            manifest.channel,
+            context.channel
+        );
+        return Ok(ProviderCheck::NotAvailable);
+    }
     let asset = manifest::select_asset(
         &manifest,
         &context.platform,
@@ -1236,6 +1248,7 @@ mod tests {
             platform: test_platform(Os::Macos, Arch::Aarch64, install_kind),
             current_version: Version::new(1, 0, 3),
             allow_prerelease: false,
+            channel: UpdateChannel::Stable,
             previous_state: UpdateStateDto::idle_with_version("1.0.3"),
         }
     }

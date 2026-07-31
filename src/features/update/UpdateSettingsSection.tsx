@@ -323,11 +323,14 @@ export function UpdateSettingsSection({
     if (!value || value === cdkSavedValue.current) return;
     if (cdkSaveTimer.current) clearTimeout(cdkSaveTimer.current);
     cdkSaveTimer.current = setTimeout(() => {
-      cdkSavedValue.current = value;
       setBusyAction("cdk");
       setMirrorChyanCdk(value)
         .then(() => getUpdateSettings())
-        .then((saved) => setSettings(saved))
+        .then((saved) => {
+          setSettings(saved);
+          // 成功后才标记已保存：失败时保留待保存状态，允许后续重试
+          cdkSavedValue.current = value;
+        })
         .catch((error) => setNotice({ tone: "error", text: getUpdateErrorMessage(error, t) }))
         .finally(() => setBusyAction(null));
     }, 600);
@@ -341,8 +344,11 @@ export function UpdateSettingsSection({
     return () => {
       const pending = pendingCdkValue.current;
       if (!pending || pending === cdkSavedValue.current) return;
-      cdkSavedValue.current = pending;
-      setMirrorChyanCdk(pending).catch(() => {});
+      setMirrorChyanCdk(pending)
+        .then(() => {
+          cdkSavedValue.current = pending;
+        })
+        .catch(() => {});
     };
   }, []);
 

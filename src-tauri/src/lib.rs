@@ -460,10 +460,6 @@ fn copy_background_image(_app: AppHandle, source_path: String) -> Result<String,
     let dir = store.data_dir().join("backgrounds");
     fs::create_dir_all(&dir)?;
 
-    let old_config = store.load_config()?;
-    let old_path = PathBuf::from(&old_config.background_image_path);
-    let old_background_is_managed = old_path.starts_with(&dir) && old_path.is_file();
-
     let ext = source
         .extension()
         .and_then(|value| value.to_str())
@@ -472,10 +468,8 @@ fn copy_background_image(_app: AppHandle, source_path: String) -> Result<String,
     let dest = dir.join(format!("bg-{}.{}", uuid::Uuid::new_v4(), ext));
     fs::copy(&source, &dest)?;
 
-    // 先确保新图片写入成功，再清理由应用管理的旧图片，避免复制失败时丢失现有背景。
-    if old_background_is_managed && old_path != dest {
-        let _ = fs::remove_file(old_path);
-    }
+    // 不删除旧图：config 提交（前端随后 config_save）可能失败，此时配置仍指向
+    // 旧图；若先删旧图会丢失背景且不可恢复。旧图作为孤儿文件保留，无害。
 
     dest.to_str().map(str::to_string).ok_or_else(|| AppError {
         code: "path".into(),

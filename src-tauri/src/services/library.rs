@@ -25,6 +25,14 @@ fn lock_attachments() -> Result<MutexGuard<'static, ()>, AppError> {
         .map_err(|_| err("attachmentLock", "附件存储锁已中毒，请重启应用后重试"))
 }
 
+/// 持附件锁执行闭包（供需要跨锁协调的路径使用，如备份恢复）。
+pub(crate) fn with_attachment_lock<T>(
+    f: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = lock_attachments()?;
+    f()
+}
+
 const BACKUP_KEEP: usize = 30;
 const BACKUP_ITEMS: [&str; 7] = [
     "metadata.json",
@@ -190,7 +198,11 @@ pub fn add_attachment(
     };
     let mut file = load_attachments(data_dir)?;
     file.attachments.push(attachment.clone());
-    save_attachments(data_dir, &file)?;
+    if let Err(error) = save_attachments(data_dir, &file) {
+        // 清单保存失败：删除刚复制的文件，避免孤儿附件
+        let _ = fs::remove_file(dir.join(&attachment.file_name));
+        return Err(error);
+    }
     Ok(attachment)
 }
 
@@ -474,6 +486,10 @@ fn rollback_restore(
     errors
 }
 
+/// 恢复解压的上限：条目数与总字节数（防 zip 炸弹）。
+const MAX_RESTORE_ENTRIES: usize = 10_000;
+const MAX_RESTORE_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GB
+
 pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
     let rollback = backup_dir(data_dir).join(backup_name("before-restore"));
     create_backup(data_dir, &rollback)?;
@@ -484,6 +500,8 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
         let file = fs::File::open(backup)?;
         let mut archive =
             ZipArchive::new(file).map_err(|error| err("backupInvalid", error.to_string()))?;
+        let mut restore_entries = 0usize;
+        let mut restore_bytes = 0u64;
         for index in 0..archive.len() {
             let mut entry = archive
                 .by_index(index)
@@ -495,6 +513,12 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
             } else {
                 if let Some(parent) = output.parent() {
                     fs::create_dir_all(parent)?;
+                }
+                // 限制条目数与总解压大小，防 zip 炸弹写满磁盘
+                restore_entries += 1;
+                restore_bytes += entry.size();
+                if restore_entries > MAX_RESTORE_ENTRIES || restore_bytes > MAX_RESTORE_BYTES {
+                    return Err(err("backupInvalid", "备份文件过大，拒绝解压"));
                 }
                 let mut target = fs::File::create(output)?;
                 std::io::copy(&mut entry, &mut target)?;

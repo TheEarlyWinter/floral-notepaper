@@ -330,7 +330,8 @@ fn escape_fts_query(query: &str) -> String {
         .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
         .collect::<Vec<_>>();
     if terms.is_empty() {
-        "\"\"".into()
+        // FTS5 的空字符串短语会匹配全表：改用必然无结果的占位词
+        "\"__floral_no_match__\"".into()
     } else {
         terms.join(" AND ")
     }

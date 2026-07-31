@@ -812,13 +812,14 @@ export function MainWindow({
   }, []);
 
   const loadNote = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const epoch = loadEpoch.bump();
       const note = await getNote(id);
       // 加载期间用户又切换/加载了别的笔记，丢弃本次结果
-      if (!loadEpoch.isCurrent(epoch)) return;
+      if (!loadEpoch.isCurrent(epoch)) return false;
       applyNote(note);
       replaceNoteMetadata(note);
+      return true;
     },
     [applyNote, replaceNoteMetadata, loadEpoch],
   );
@@ -1327,8 +1328,15 @@ export function MainWindow({
 
   const performSave = useCallback(
     async (force: boolean): Promise<boolean> => {
-      // 非强制保存（自动保存、切换前保存）在没有未保存修改时直接视为成功
-      if (!force && saveStateRef.current !== "dirty") return true;
+      // 非强制保存（自动保存、切换前保存）在没有未保存修改时直接视为成功；
+      // 上次保存失败（error）也需要重新尝试，不能误报成功
+      if (
+        !force &&
+        saveStateRef.current !== "dirty" &&
+        saveStateRef.current !== "error"
+      ) {
+        return true;
+      }
       const id = selectedIdRef.current;
       if (!id) return false;
 
@@ -1495,7 +1503,8 @@ export function MainWindow({
   }, [saveCurrentNote, navHistory]);
 
   useEffect(() => {
-    if (!selectedId || saveState !== "dirty") return undefined;
+    // error（上次保存失败）也触发自动重试，避免失败后永远不再保存
+    if (!selectedId || (saveState !== "dirty" && saveState !== "error")) return undefined;
     if (isExternal) {
       if (!settingsConfig?.externalFileAutoSave) return undefined;
     } else {
@@ -1824,7 +1833,9 @@ export function MainWindow({
 
     setIsLoading(true);
     try {
-      await loadNote(id);
+      // 只有本次加载真正生效（未被更新的切换打断）才推入导航历史
+      const loaded = await loadNote(id);
+      if (!loaded) return;
       // 推入导航历史
       const noteMeta = notes.find((n) => n.id === id);
       if (noteMeta) {
@@ -1924,6 +1935,14 @@ export function MainWindow({
 
     setDeleteConfirm(false);
     try {
+      // 删除当前笔记前先落盘未保存修改：保存失败则取消删除，
+      // 避免未保存内容随笔记一起丢失
+      if (selectedIdRef.current === noteId) {
+        const needsSave =
+          saveStateRef.current === "dirty" || saveStateRef.current === "error";
+        const saved = needsSave ? await saveCurrentNote(true) : true;
+        if (!saved) return;
+      }
       await deleteNote(noteId);
       navHistory.remove(noteId);
       const remaining = await refreshNotes();
