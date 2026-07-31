@@ -1,6 +1,8 @@
 use crate::{
     json_io::write_json_atomic,
-    services::notes::{AppError, Note},
+    services::notes::{
+        validate_metadata_json, validate_note_id, validate_relative_file_name, AppError, Note,
+    },
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -89,8 +91,9 @@ fn err(code: &str, message: impl Into<String>) -> AppError {
 fn attachments_path(data_dir: &Path) -> PathBuf {
     data_dir.join("attachments.json")
 }
-fn attachments_dir(data_dir: &Path, note_id: &str) -> PathBuf {
-    data_dir.join("attachments").join(note_id)
+fn attachments_dir(data_dir: &Path, note_id: &str) -> Result<PathBuf, AppError> {
+    validate_note_id(note_id)?;
+    Ok(data_dir.join("attachments").join(note_id))
 }
 fn backup_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("backups")
@@ -99,12 +102,25 @@ fn index_path(data_dir: &Path) -> PathBuf {
     data_dir.join("search-index.json")
 }
 
+fn parse_attachments(raw: &str) -> Result<AttachmentFile, AppError> {
+    let file: AttachmentFile = serde_json::from_str(raw)?;
+    for attachment in &file.attachments {
+        validate_note_id(&attachment.note_id)?;
+        validate_relative_file_name(&attachment.file_name, "附件文件名")?;
+    }
+    Ok(file)
+}
+
+pub(crate) fn validate_attachments_json(path: &Path) -> Result<(), AppError> {
+    parse_attachments(&fs::read_to_string(path)?).map(|_| ())
+}
+
 fn load_attachments(data_dir: &Path) -> Result<AttachmentFile, AppError> {
     let path = attachments_path(data_dir);
     if !path.exists() {
         return Ok(AttachmentFile::default());
     }
-    Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+    parse_attachments(&fs::read_to_string(path)?)
 }
 
 fn save_attachments(data_dir: &Path, file: &AttachmentFile) -> Result<(), AppError> {
@@ -149,7 +165,7 @@ pub fn add_attachment(
         .to_string();
     let id = Uuid::new_v4().to_string();
     let file_name = format!("{}_{}", id, safe_file_name(&name));
-    let dir = attachments_dir(data_dir, note_id);
+    let dir = attachments_dir(data_dir, note_id)?;
     fs::create_dir_all(&dir)?;
     fs::copy(source, dir.join(&file_name))?;
     let attachment = Attachment {
@@ -172,11 +188,8 @@ pub fn list_attachments(data_dir: &Path, note_id: &str) -> Result<Vec<Attachment
         .into_iter()
         .filter(|item| item.note_id == note_id)
         .collect();
-    attachments.retain(|item| {
-        attachments_dir(data_dir, note_id)
-            .join(&item.file_name)
-            .is_file()
-    });
+    let dir = attachments_dir(data_dir, note_id)?;
+    attachments.retain(|item| dir.join(&item.file_name).is_file());
     attachments.sort_by_key(|item| std::cmp::Reverse(item.created_at));
     Ok(attachments)
 }
@@ -193,7 +206,7 @@ pub fn delete_attachment(
         .position(|item| item.id == attachment_id && item.note_id == note_id)
         .ok_or_else(|| err("attachmentNotFound", "找不到附件"))?;
     let attachment = file.attachments.remove(index);
-    let path = attachments_dir(data_dir, note_id).join(attachment.file_name);
+    let path = attachments_dir(data_dir, note_id)?.join(attachment.file_name);
     if path.exists() {
         trash::delete(&path).map_err(|error| err("trash", format!("移入回收站失败: {error}")))?;
     }
@@ -204,7 +217,7 @@ pub fn delete_note_attachments(data_dir: &Path, note_id: &str) -> Result<(), App
     let mut file = load_attachments(data_dir)?;
     file.attachments.retain(|item| item.note_id != note_id);
     save_attachments(data_dir, &file)?;
-    let dir = attachments_dir(data_dir, note_id);
+    let dir = attachments_dir(data_dir, note_id)?;
     if dir.exists() {
         let _ = trash::delete(dir);
     }
@@ -216,8 +229,8 @@ pub fn move_note_attachments(
     source_id: &str,
     target_id: &str,
 ) -> Result<(), AppError> {
-    let source = attachments_dir(data_dir, source_id);
-    let target = attachments_dir(data_dir, target_id);
+    let source = attachments_dir(data_dir, source_id)?;
+    let target = attachments_dir(data_dir, target_id)?;
     if source.exists() {
         fs::create_dir_all(&target)?;
         for entry in fs::read_dir(&source)? {
@@ -391,29 +404,47 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
     create_backup(data_dir, &rollback)?;
     let staging = data_dir.join(format!(".restore-{}", Uuid::new_v4()));
     fs::create_dir_all(&staging)?;
-    let file = fs::File::open(backup)?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|error| err("backupInvalid", error.to_string()))?;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| err("backupInvalid", error.to_string()))?;
-        let relative = safe_archive_path(entry.name())?;
-        let output = staging.join(relative);
-        if entry.is_dir() {
-            fs::create_dir_all(output)?;
-        } else {
-            if let Some(parent) = output.parent() {
-                fs::create_dir_all(parent)?;
+
+    let restore_result = (|| -> Result<(), AppError> {
+        let file = fs::File::open(backup)?;
+        let mut archive =
+            ZipArchive::new(file).map_err(|error| err("backupInvalid", error.to_string()))?;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| err("backupInvalid", error.to_string()))?;
+            let relative = safe_archive_path(entry.name())?;
+            let output = staging.join(relative);
+            if entry.is_dir() {
+                fs::create_dir_all(output)?;
+            } else {
+                if let Some(parent) = output.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut target = fs::File::create(output)?;
+                std::io::copy(&mut entry, &mut target)?;
             }
-            let mut target = fs::File::create(output)?;
-            std::io::copy(&mut entry, &mut target)?;
         }
-    }
-    if !staging.join("metadata.json").is_file() || !staging.join("notes").is_dir() {
+        if !staging.join("metadata.json").is_file() || !staging.join("notes").is_dir() {
+            return Err(err("backupInvalid", "备份缺少笔记数据"));
+        }
+        validate_metadata_json(&staging.join("metadata.json"))?;
+        if staging.join("attachments.json").is_file() {
+            validate_attachments_json(&staging.join("attachments.json")).map_err(|error| {
+                err(
+                    "backupInvalid",
+                    format!("备份附件元数据无效: {}", error.message),
+                )
+            })?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = restore_result {
         let _ = fs::remove_dir_all(&staging);
-        return Err(err("backupInvalid", "备份缺少笔记数据"));
+        return Err(error);
     }
+
     for name in BACKUP_ITEMS {
         let target = data_dir.join(name);
         if target.exists() {
@@ -494,7 +525,7 @@ pub fn search(
         })
         .collect::<Vec<_>>();
 
-    results.sort_by(|left, right| right.score.cmp(&left.score));
+    results.sort_by_key(|result| std::cmp::Reverse(result.score));
     results.truncate(80);
     Ok(results)
 }
@@ -605,6 +636,36 @@ mod tests {
             "backup content"
         );
         assert_eq!(list_attachments(&dir, "a").expect("attachments").len(), 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn restore_rejects_unsafe_metadata_before_replacing_live_data() {
+        let dir = temp_dir("unsafe-backup");
+        fs::create_dir_all(dir.join("notes")).expect("notes dir");
+        fs::write(dir.join("notes").join("a.md"), "live content").expect("live note");
+        fs::write(dir.join("metadata.json"), r#"{"notes":[]}"#).expect("metadata");
+
+        let backup = dir.join("malicious.zip");
+        let file = fs::File::create(&backup).expect("create malicious backup");
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("metadata.json", SimpleFileOptions::default())
+            .expect("metadata entry");
+        let metadata = format!(
+            r#"{{"notes":[{{"id":"safe","title":"x","fileName":"../escape.md","category":"","createdAt":"{0}","updatedAt":"{0}","wordCount":0,"preview":"","tags":[],"pinned":false}}]}}"#,
+            Utc::now().to_rfc3339()
+        );
+        std::io::Write::write_all(&mut zip, metadata.as_bytes()).expect("write metadata");
+        zip.add_directory("notes/", SimpleFileOptions::default())
+            .expect("notes entry");
+        zip.finish().expect("finish malicious backup");
+
+        let error = restore_backup(&dir, &backup).expect_err("unsafe backup should be rejected");
+        assert_eq!(error.code, "backupInvalid");
+        assert_eq!(
+            fs::read_to_string(dir.join("notes").join("a.md")).expect("read live note"),
+            "live content"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

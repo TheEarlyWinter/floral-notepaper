@@ -249,10 +249,10 @@ mod keyboard_hook {
                         return 1;
                     }
                 }
+                WM_KEYUP | WM_SYSKEYUP if is_modifier_vk(vk) => {
+                    update_modifier_state(vk, false);
+                }
                 WM_KEYUP | WM_SYSKEYUP => {
-                    if is_modifier_vk(vk) {
-                        update_modifier_state(vk, false);
-                    }
                     // 放行所有 key-up，避免录制快捷键期间让其他窗口误判按键仍被按住。
                 }
                 _ => {}

@@ -23,7 +23,7 @@ use std::{
 const MIRROR_CHYAN_MANIFEST_PATH_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_MIRROR_MANIFEST_PATH";
 const GITHUB_MANIFEST_PATH_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_GITHUB_MANIFEST_PATH";
 const GITHUB_REPO_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_GITHUB_REPO";
-const DEFAULT_GITHUB_REPO: &str = "Achilng/floral-notepaper";
+const DEFAULT_GITHUB_REPO: &str = "TheEarlyWinter/floral-notepaper";
 const MIRROR_CHYAN_API_BASE: &str = "https://mirrorchyan.com/api/resources";
 const MIRROR_CHYAN_RES_ID: &str = "floral";
 const MIRROR_CHYAN_RES_ID_OVERRIDE_ENV: &str = "FLORAL_NOTEPAPER_MIRROR_CHYAN_RES_ID";
@@ -1258,6 +1258,11 @@ mod tests {
         let path = paths.root_dir().join(name);
         fs::write(&path, raw).expect("write manifest fixture");
         path
+    }
+
+    #[test]
+    fn defaults_github_updates_to_the_maintained_repository() {
+        assert_eq!(DEFAULT_GITHUB_REPO, "TheEarlyWinter/floral-notepaper");
     }
 
     #[test]

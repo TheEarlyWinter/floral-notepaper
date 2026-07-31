@@ -62,6 +62,28 @@ export function useNavigationHistory() {
     [syncFlags],
   );
 
+  const remove = useCallback(
+    (noteId: string) => {
+      const state = stateRef.current;
+      if (!state.stack.some((entry) => entry.noteId === noteId)) return;
+
+      const retained = state.stack
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry }) => entry.noteId !== noteId);
+      const currentWasRemoved = state.stack[state.index]?.noteId === noteId;
+      const anchorIndex = currentWasRemoved ? state.index - 1 : state.index;
+      const anchors = retained.filter(({ index }) => index <= anchorIndex);
+      const anchor = anchors[anchors.length - 1];
+      const newState: NavigationState = {
+        stack: retained.map(({ entry }) => entry),
+        index: anchor ? retained.indexOf(anchor) : -1,
+      };
+      stateRef.current = newState;
+      syncFlags(newState);
+    },
+    [syncFlags],
+  );
+
   const goBack = useCallback((): string | null => {
     const state = stateRef.current;
     if (state.index <= 0) return null;
@@ -91,6 +113,7 @@ export function useNavigationHistory() {
   return {
     push,
     replaceCurrent,
+    remove,
     goBack,
     goForward,
     canGoBack,

@@ -291,6 +291,72 @@ struct MetadataFile {
     notes: Vec<NoteMetadata>,
 }
 
+fn unsafe_path_error(field: &str) -> AppError {
+    AppError::new("unsafePath", format!("{field} 包含不安全路径"))
+}
+
+fn validate_single_path_component(value: &str, field: &str) -> Result<(), AppError> {
+    if value.is_empty() || value.contains('\0') || value.contains(':') {
+        return Err(unsafe_path_error(field));
+    }
+
+    let mut components = Path::new(value).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err(unsafe_path_error(field)),
+    }
+}
+
+pub(crate) fn validate_note_id(note_id: &str) -> Result<(), AppError> {
+    validate_single_path_component(note_id, "note_id").map_err(|_| {
+        AppError::new("invalidNoteId", "note_id 格式无效").with_detail("noteId", note_id)
+    })
+}
+
+pub(crate) fn validate_category_name(category: &str) -> Result<(), AppError> {
+    if category.is_empty() {
+        return Ok(());
+    }
+    validate_single_path_component(category, "分类名")
+        .map_err(|_| AppError::category_name_invalid_chars())
+}
+
+pub(crate) fn validate_relative_file_name(file_name: &str, field: &str) -> Result<(), AppError> {
+    validate_single_path_component(file_name, field)
+}
+
+pub(crate) fn validate_note_file_name(file_name: &str) -> Result<(), AppError> {
+    validate_relative_file_name(file_name, "笔记文件名")?;
+    if Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("md"))
+    {
+        return Err(unsafe_path_error("笔记文件名"));
+    }
+    Ok(())
+}
+
+fn validate_metadata(metadata: &MetadataFile) -> Result<(), AppError> {
+    for note in &metadata.notes {
+        validate_note_id(&note.id)?;
+        validate_category_name(&note.category)?;
+        validate_note_file_name(&note.file_name)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_metadata_json(path: &Path) -> Result<(), AppError> {
+    let metadata: MetadataFile = serde_json::from_str(&fs::read_to_string(path)?)
+        .map_err(|_| AppError::new("backupInvalid", "备份中的 metadata.json 格式无效"))?;
+    validate_metadata(&metadata).map_err(|error| {
+        AppError::new(
+            "backupInvalid",
+            format!("备份元数据无效: {}", error.message),
+        )
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct NoteStore {
     config_dir: PathBuf,
@@ -806,7 +872,8 @@ impl NoteStore {
         let mut metadata = self.load_metadata()?.notes;
         metadata.retain(|note| {
             self.note_path_in_category(&note.file_name, &note.category)
-                .exists()
+                .map(|path| path.exists())
+                .unwrap_or(false)
         });
         metadata.sort_by_key(|note| std::cmp::Reverse(note.updated_at));
         Ok(metadata)
@@ -816,7 +883,7 @@ impl NoteStore {
         self.ensure_storage()?;
         let metadata = self.find_metadata(id)?;
         let content = fs::read_to_string(
-            self.note_path_in_category(&metadata.file_name, &metadata.category),
+            self.note_path_in_category(&metadata.file_name, &metadata.category)?,
         )?;
         Ok(Note {
             id: metadata.id,
@@ -844,7 +911,7 @@ impl NoteStore {
         let file_name = self.file_name_for(&id, &request.title);
         let word_count = count_words(&request.content);
         let category = request.category.clone();
-        let note_path = self.note_path_in_category(&file_name, &category);
+        let note_path = self.note_path_in_category(&file_name, &category)?;
         if let Some(parent) = note_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -889,6 +956,7 @@ impl NoteStore {
     }
 
     fn update_note_unlocked(&self, id: &str, request: SaveNoteRequest) -> Result<Note, AppError> {
+        validate_note_id(id)?;
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
         let note = metadata_file
@@ -904,11 +972,11 @@ impl NoteStore {
         let now = Utc::now();
         let word_count = count_words(&request.content);
 
-        let new_path = self.note_path_in_category(&new_file_name, &new_category);
+        let new_path = self.note_path_in_category(&new_file_name, &new_category)?;
         if let Some(parent) = new_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let old_path = self.note_path_in_category(&old_file_name, &old_category);
+        let old_path = self.note_path_in_category(&old_file_name, &old_category)?;
         if old_path.exists() {
             let old_content = fs::read_to_string(&old_path)?;
             if old_content != request.content {
@@ -973,8 +1041,8 @@ impl NoteStore {
         let source_image_prefix = format!("images/{}/", source.id);
         let target_image_prefix = format!("images/{}/", target.id);
         if source.content.contains(&source_image_prefix) {
-            let source_images = self.images_dir(&source.id);
-            let target_images = self.images_dir(&target.id);
+            let source_images = self.images_dir(&source.id)?;
+            let target_images = self.images_dir(&target.id)?;
             if source_images.exists() {
                 fs::create_dir_all(&target_images)?;
                 for entry in fs::read_dir(source_images)? {
@@ -1030,7 +1098,7 @@ impl NoteStore {
             .ok_or_else(|| AppError::note_not_found(&source.id))?;
         let source_metadata = metadata_file.notes.remove(source_index);
         let source_path =
-            self.note_path_in_category(&source_metadata.file_name, &source_metadata.category);
+            self.note_path_in_category(&source_metadata.file_name, &source_metadata.category)?;
         // 先提交清单；若回收站失败则把元数据放回去，源笔记仍可正常访问。
         self.save_metadata(&metadata_file)?;
         if source_path.exists() {
@@ -1043,7 +1111,7 @@ impl NoteStore {
         let _ = self.delete_note_images(&source.id);
         let _ =
             crate::services::library::move_note_attachments(&self.data_dir, &source.id, &target.id);
-        let source_history = self.note_history_dir(&source.id);
+        let source_history = self.note_history_dir(&source.id)?;
         if source_history.exists() {
             let _ = fs::remove_dir_all(source_history);
         }
@@ -1054,6 +1122,7 @@ impl NoteStore {
     }
 
     pub fn delete_note(&self, id: &str) -> Result<(), AppError> {
+        validate_note_id(id)?;
         let _lock = self.lock_metadata_mutation()?;
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
@@ -1063,7 +1132,7 @@ impl NoteStore {
             .position(|note| note.id == id)
             .ok_or_else(|| AppError::note_not_found(id))?;
         let metadata = metadata_file.notes.remove(index);
-        let path = self.note_path_in_category(&metadata.file_name, &metadata.category);
+        let path = self.note_path_in_category(&metadata.file_name, &metadata.category)?;
         self.save_metadata(&metadata_file)?;
         if path.exists() {
             if let Err(error) = trash::delete(&path) {
@@ -1074,7 +1143,7 @@ impl NoteStore {
         }
         let _ = self.delete_note_images(id);
         let _ = crate::services::library::delete_note_attachments(&self.data_dir, id);
-        let history_dir = self.note_history_dir(id);
+        let history_dir = self.note_history_dir(id)?;
         if history_dir.exists() {
             let _ = fs::remove_dir_all(history_dir);
         }
@@ -1083,12 +1152,14 @@ impl NoteStore {
         Ok(())
     }
 
-    pub fn images_dir(&self, note_id: &str) -> PathBuf {
-        self.data_dir.join("images").join(note_id)
+    pub fn images_dir(&self, note_id: &str) -> Result<PathBuf, AppError> {
+        validate_note_id(note_id)?;
+        Ok(self.data_dir.join("images").join(note_id))
     }
 
-    fn note_history_dir(&self, note_id: &str) -> PathBuf {
-        self.data_dir.join("history").join(note_id)
+    fn note_history_dir(&self, note_id: &str) -> Result<PathBuf, AppError> {
+        validate_note_id(note_id)?;
+        Ok(self.data_dir.join("history").join(note_id))
     }
 
     fn note_version_path(&self, note_id: &str, version_id: &str) -> Result<PathBuf, AppError> {
@@ -1096,21 +1167,13 @@ impl NoteStore {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
         Ok(self
-            .note_history_dir(note_id)
+            .note_history_dir(note_id)?
             .join(format!("{version_id}.md")))
     }
 
     fn save_note_version(&self, note_id: &str, content: &str) -> Result<(), AppError> {
-        // 路径穿越防护：note_id 必须是合法 UUID v4 格式
-        if note_id.len() != 36 || note_id.chars().filter(|&c| c == '-').count() != 4 {
-            return Err(AppError {
-                code: "invalidNoteId".into(),
-                message: "note_id 格式无效".into(),
-                details: Default::default(),
-            });
-        }
-
-        let dir = self.note_history_dir(note_id);
+        validate_note_id(note_id)?;
+        let dir = self.note_history_dir(note_id)?;
         fs::create_dir_all(&dir)?;
 
         // 计算内容 blake3 hash
@@ -1185,7 +1248,7 @@ impl NoteStore {
             return Err(AppError::new("invalidImageData", "图片内容与扩展名不匹配"));
         }
 
-        let dir = self.images_dir(note_id);
+        let dir = self.images_dir(note_id)?;
         fs::create_dir_all(&dir)?;
 
         let file_name = format!("{}.{}", Uuid::new_v4(), ext);
@@ -1218,7 +1281,7 @@ impl NoteStore {
 
     pub fn list_note_versions(&self, id: &str) -> Result<Vec<NoteVersion>, AppError> {
         self.read_note(id)?;
-        let dir = self.note_history_dir(id);
+        let dir = self.note_history_dir(id)?;
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -1273,7 +1336,7 @@ impl NoteStore {
     }
 
     pub fn delete_note_images(&self, note_id: &str) -> Result<(), AppError> {
-        let dir = self.images_dir(note_id);
+        let dir = self.images_dir(note_id)?;
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
         }
@@ -1285,7 +1348,7 @@ impl NoteStore {
         note_id: &str,
         content: &str,
     ) -> Result<Vec<String>, AppError> {
-        let dir = self.images_dir(note_id);
+        let dir = self.images_dir(note_id)?;
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -1416,7 +1479,7 @@ impl NoteStore {
             }
         }
 
-        results.sort_by(|a, b| b.score.cmp(&a.score));
+        results.sort_by_key(|result| std::cmp::Reverse(result.score));
         results.truncate(80);
         Ok(results)
     }
@@ -1502,9 +1565,7 @@ impl NoteStore {
         if name.is_empty() {
             return Err(AppError::category_name_empty());
         }
-        if name.contains('/') || name.contains('\\') || name.contains(':') || name.contains("..") {
-            return Err(AppError::category_name_invalid_chars());
-        }
+        validate_category_name(name)?;
         let notes_dir = self.notes_dir();
         let path = notes_dir.join(name);
         fs::create_dir_all(&path)?;
@@ -1512,18 +1573,10 @@ impl NoteStore {
     }
 
     pub fn rename_category(&self, old_name: &str, new_name: &str) -> Result<(), AppError> {
+        validate_category_name(old_name)?;
         let _lock = self.lock_metadata_mutation()?;
         let new_name = new_name.trim();
-        if new_name.is_empty() {
-            return Err(AppError::category_name_empty());
-        }
-        if new_name.contains('/')
-            || new_name.contains('\\')
-            || new_name.contains(':')
-            || new_name.contains("..")
-        {
-            return Err(AppError::category_name_invalid_chars());
-        }
+        validate_category_name(new_name)?;
         let notes_dir = self.notes_dir();
         let old_path = notes_dir.join(old_name);
         let new_path = notes_dir.join(new_name);
@@ -1550,6 +1603,7 @@ impl NoteStore {
     }
 
     pub fn delete_category(&self, name: &str) -> Result<(), AppError> {
+        validate_category_name(name)?;
         let _lock = self.lock_metadata_mutation()?;
         let notes_dir = self.notes_dir();
         let category_path = notes_dir.join(name);
@@ -1612,6 +1666,8 @@ impl NoteStore {
         id: &str,
         new_category: &str,
     ) -> Result<NoteMetadata, AppError> {
+        validate_note_id(id)?;
+        validate_category_name(new_category)?;
         let _lock = self.lock_metadata_mutation()?;
         self.ensure_storage()?;
         let mut metadata_file = self.load_metadata()?;
@@ -1626,8 +1682,8 @@ impl NoteStore {
             return Ok(note.clone());
         }
 
-        let old_path = self.note_path_in_category(&note.file_name, &old_category);
-        let new_path = self.note_path_in_category(&note.file_name, new_category);
+        let old_path = self.note_path_in_category(&note.file_name, &old_category)?;
+        let new_path = self.note_path_in_category(&note.file_name, new_category)?;
         if let Some(parent) = new_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -1853,16 +1909,19 @@ impl NoteStore {
         self.data_dir.join("notes")
     }
 
-    fn note_path_in_category(&self, file_name: &str, category: &str) -> PathBuf {
+    fn note_path_in_category(&self, file_name: &str, category: &str) -> Result<PathBuf, AppError> {
+        validate_note_file_name(file_name)?;
+        validate_category_name(category)?;
         let notes_dir = self.notes_dir();
-        if category.is_empty() {
+        Ok(if category.is_empty() {
             notes_dir.join(file_name)
         } else {
             notes_dir.join(category).join(file_name)
-        }
+        })
     }
 
     fn find_metadata(&self, id: &str) -> Result<NoteMetadata, AppError> {
+        validate_note_id(id)?;
         self.load_metadata()?
             .notes
             .into_iter()
@@ -1895,7 +1954,17 @@ impl NoteStore {
             return Ok(rebuilt);
         }
         match serde_json::from_str(&fs::read_to_string(&path)?) {
-            Ok(metadata) => Ok(metadata),
+            Ok(metadata) => {
+                if let Err(error) = validate_metadata(&metadata) {
+                    eprintln!("[花笺] metadata.json 包含不安全路径，将保留副本并重建: {error}");
+                    self.back_up_corrupt_metadata(&path);
+                    let rebuilt = self.rebuild_metadata()?;
+                    self.save_metadata(&rebuilt)?;
+                    Ok(rebuilt)
+                } else {
+                    Ok(metadata)
+                }
+            }
             Err(_) => {
                 self.back_up_corrupt_metadata(&path);
                 let rebuilt = self.rebuild_metadata()?;
@@ -1944,6 +2013,7 @@ impl NoteStore {
     /// 先提交权威 JSON；SQLite 镜像失败不会把一次已成功落盘的笔记伪装成保存失败。
     /// 后续 FTS 指纹校验会自动重建该镜像。
     fn save_metadata(&self, metadata: &MetadataFile) -> Result<(), AppError> {
+        validate_metadata(metadata)?;
         self.ensure_data_dir()?;
         write_json_atomic(&self.metadata_path(), metadata)?;
         if crate::services::db::is_initialized(&self.data_dir) {
@@ -1956,7 +2026,7 @@ impl NoteStore {
         Ok(())
     }
 
-    fn fts_fingerprint(metadata: &MetadataFile) -> String {
+    fn fts_fingerprint(&self, metadata: &MetadataFile) -> Result<String, AppError> {
         let mut notes = metadata.notes.iter().collect::<Vec<_>>();
         notes.sort_by(|left, right| left.id.cmp(&right.id));
         let mut hasher = blake3::Hasher::new();
@@ -1972,22 +2042,36 @@ impl NoteStore {
                 hasher.update(value.as_bytes());
                 hasher.update(&[0]);
             }
+
+            // Markdown 文件是正文权威来源。外部编辑不会更新 metadata.json，
+            // 因此指纹必须包含正文内容，否则 SQLite FTS 会永久保留旧索引。
+            let path = self.note_path_in_category(&note.file_name, &note.category)?;
+            match fs::read(path) {
+                Ok(content) => {
+                    hasher.update(blake3::hash(&content).to_hex().as_bytes());
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    hasher.update(b"<missing>");
+                }
+                Err(error) => return Err(error.into()),
+            }
+            hasher.update(&[0]);
         }
-        hasher.finalize().to_hex().to_string()
+        Ok(hasher.finalize().to_hex().to_string())
     }
 
     fn notes_for_metadata(&self, metadata: &MetadataFile) -> Result<Vec<Note>, AppError> {
         metadata
             .notes
             .iter()
-            .filter(|note| {
-                self.note_path_in_category(&note.file_name, &note.category)
-                    .is_file()
+            .filter_map(|note| {
+                let path = self
+                    .note_path_in_category(&note.file_name, &note.category)
+                    .ok()?;
+                path.is_file().then_some((note, path))
             })
-            .map(|metadata| {
-                let content = fs::read_to_string(
-                    self.note_path_in_category(&metadata.file_name, &metadata.category),
-                )?;
+            .map(|(metadata, path)| {
+                let content = fs::read_to_string(path)?;
                 Ok(Note {
                     id: metadata.id.clone(),
                     title: metadata.title.clone(),
@@ -2009,11 +2093,8 @@ impl NoteStore {
         // 保留 JSON 索引文件以兼容已有备份；回退搜索不会再信任它作为权威来源。
         crate::services::library::rebuild_search_index(&self.data_dir, &notes)?;
         if crate::services::db::is_initialized(&self.data_dir) {
-            crate::services::db::db_rebuild_from_notes(
-                &self.data_dir,
-                &notes,
-                &Self::fts_fingerprint(metadata),
-            )?;
+            let fingerprint = self.fts_fingerprint(metadata)?;
+            crate::services::db::db_rebuild_from_notes(&self.data_dir, &notes, &fingerprint)?;
         }
         Ok(())
     }
@@ -2023,7 +2104,7 @@ impl NoteStore {
             eprintln!("[花笺] SQLite 初始化失败，改用本地回退搜索: {error}");
             return Ok(());
         }
-        let fingerprint = Self::fts_fingerprint(metadata);
+        let fingerprint = self.fts_fingerprint(metadata)?;
         match crate::services::db::db_fts_is_current(&self.data_dir, &fingerprint) {
             Ok(true) => Ok(()),
             Ok(false) => self.rebuild_derived_indexes(metadata),
@@ -2043,6 +2124,13 @@ impl NoteStore {
         if !crate::services::db::is_initialized(&self.data_dir) {
             return;
         }
+        let fingerprint = match self.fts_fingerprint(metadata) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                eprintln!("[花笺] 无法计算 FTS 指纹，将在下次访问时重建: {error}");
+                return;
+            }
+        };
         let result = (|| -> Result<(), AppError> {
             for id in deletes {
                 crate::services::db::db_fts_delete(&self.data_dir, id)?;
@@ -2055,10 +2143,7 @@ impl NoteStore {
                     &note.content,
                 )?;
             }
-            crate::services::db::db_set_fts_fingerprint(
-                &self.data_dir,
-                &Self::fts_fingerprint(metadata),
-            )
+            crate::services::db::db_set_fts_fingerprint(&self.data_dir, &fingerprint)
         })();
         if let Err(error) = result {
             eprintln!("[花笺] FTS 增量更新失败，将在下次访问时自动重建: {error}");
@@ -2117,7 +2202,7 @@ impl NoteStore {
             {
                 Some(existing) => {
                     let existing_path =
-                        self.note_path_in_category(&existing.file_name, &existing.category);
+                        self.note_path_in_category(&existing.file_name, &existing.category)?;
                     if !existing_path.is_file() {
                         let tags = existing.tags.clone();
                         let pinned = existing.pinned;
@@ -2683,6 +2768,54 @@ mod tests {
         store.delete_note(&created.id).expect("delete note");
         assert!(store.read_note(&created.id).is_err());
         assert!(store.list_notes().expect("list after delete").is_empty());
+    }
+
+    #[test]
+    fn rejects_unsafe_note_paths_and_recovers_unsafe_metadata() {
+        let store = test_store("unsafe-paths");
+        assert!(store
+            .create_note(SaveNoteRequest {
+                title: "越界分类".into(),
+                content: "不应写入分类目录外".into(),
+                category: "../outside".into(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .is_err());
+        assert!(store.create_category(".").is_err());
+
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "安全笔记".into(),
+                content: "正文".into(),
+                category: String::new(),
+                tags: vec!["保留".into()],
+                pinned: true,
+            })
+            .expect("create note");
+        let metadata_path = store.metadata_path();
+        let metadata = fs::read_to_string(&metadata_path).expect("read metadata");
+        fs::write(
+            &metadata_path,
+            metadata.replace(&note.file_name, "../escape.md"),
+        )
+        .expect("write unsafe metadata");
+
+        let recovered = store.list_notes().expect("recover unsafe metadata");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, note.id);
+        assert!(
+            store.data_dir().join("metadata.corrupt-").exists()
+                || fs::read_dir(store.data_dir())
+                    .expect("read data directory")
+                    .filter_map(|entry| entry.ok())
+                    .any(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with("metadata.corrupt-")
+                    })
+        );
     }
 
     #[test]
@@ -3589,6 +3722,38 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(ids.contains(&first.id.as_str()));
         assert!(ids.contains(&second.id.as_str()));
+    }
+
+    #[test]
+    fn rebuilds_fts_when_markdown_changes_outside_the_app() {
+        let store = test_store("fts-external-edit");
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "外部编辑".into(),
+                content: "外部旧内容".into(),
+                category: String::new(),
+                tags: Vec::new(),
+                pinned: false,
+            })
+            .expect("create note");
+
+        fs::write(
+            store
+                .note_path_in_category(&note.file_name, &note.category)
+                .expect("note path"),
+            "外部新内容",
+        )
+        .expect("edit markdown externally");
+
+        let new_results = store
+            .search_content("外部新内容")
+            .expect("search new content");
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].note_id, note.id);
+        assert!(store
+            .search_content("外部旧内容")
+            .expect("search old content")
+            .is_empty());
     }
 
     #[test]

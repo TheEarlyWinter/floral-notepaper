@@ -503,6 +503,9 @@ export function MainWindow({
   const lastExternalSaveRef = useRef<number>(0);
   const imageBaseDir = useImageBaseDir();
   const saveStateRef = useRef(saveState);
+  // 每次用户编辑都会递增；保存完成时用它判断保存期间是否又产生了新修改，
+  // 避免标签/置顶等不在正文里的修改被旧保存结果误标为“已保存”。
+  const editRevisionRef = useRef(0);
   const isMacOS = useMemo(() => {
     return (
       typeof navigator !== "undefined" &&
@@ -754,6 +757,7 @@ export function MainWindow({
   const applyNote = useCallback(
     (note: Note) => {
       loadEpoch.bump();
+      editRevisionRef.current += 1;
       selectedIdRef.current = note.id;
       titleValueRef.current = note.title;
       contentValueRef.current = note.content;
@@ -805,6 +809,7 @@ export function MainWindow({
 
   const clearCurrentNote = useCallback(() => {
     loadEpoch.bump();
+    editRevisionRef.current += 1;
     selectedIdRef.current = null;
     titleValueRef.current = "";
     contentValueRef.current = "";
@@ -845,6 +850,7 @@ export function MainWindow({
         });
 
         if (!loadEpoch.isCurrent(epoch)) return;
+        editRevisionRef.current += 1;
         selectedIdRef.current = filePath;
         titleValueRef.current = displayTitle;
         contentValueRef.current = fileContent;
@@ -1218,10 +1224,12 @@ export function MainWindow({
       try {
         const mtime = await getFileModifiedTime(selectedExternalFile.filePath);
         if (selectedIdRef.current !== selectedExternalFile.id) return;
+        if (saveStateRef.current !== "saved") return;
         if (mtime !== externalFileMtimeRef.current) {
           externalFileMtimeRef.current = mtime;
           const fileContent = await readExternalFile(selectedExternalFile.filePath);
           if (selectedIdRef.current !== selectedExternalFile.id) return;
+          editRevisionRef.current += 1;
           contentValueRef.current = fileContent;
           saveStateRef.current = "saved";
           setContent(fileContent);
@@ -1304,9 +1312,15 @@ export function MainWindow({
       const contentSnapshot = contentValueRef.current;
       const tagsSnapshot = tagsValueRef.current;
       const pinnedSnapshot = pinnedValueRef.current;
+      const editRevisionSnapshot = editRevisionRef.current;
       const stillCurrent = () => selectedIdRef.current === id;
       const settleSaveState = (state: SaveState) => {
         if (!stillCurrent()) return;
+        if (state !== "saving" && editRevisionRef.current !== editRevisionSnapshot) {
+          saveStateRef.current = "dirty";
+          setSaveState("dirty");
+          return;
+        }
         saveStateRef.current = state;
         setSaveState(state);
       };
@@ -1322,7 +1336,7 @@ export function MainWindow({
           if (stillCurrent()) {
             externalFileMtimeRef.current = mtime;
           }
-          settleSaveState(contentValueRef.current === contentSnapshot ? "saved" : "dirty");
+          settleSaveState("saved");
         } else {
           const category = notesRef.current.find((note) => note.id === id)?.category ?? "";
           const note = await updateNote(id, {
@@ -1332,10 +1346,10 @@ export function MainWindow({
             tags: tagsSnapshot,
             pinned: pinnedSnapshot,
           });
-          replaceNoteMetadata(note);
-          const contentChanged =
-            contentValueRef.current !== contentSnapshot || titleValueRef.current !== titleSnapshot;
-          settleSaveState(contentChanged ? "dirty" : "saved");
+          if (!stillCurrent() || editRevisionRef.current === editRevisionSnapshot) {
+            replaceNoteMetadata(note);
+          }
+          settleSaveState("saved");
         }
         return true;
       } catch (error) {
@@ -1349,7 +1363,21 @@ export function MainWindow({
 
   const saveCurrentNote = useCallback(
     (force = false): Promise<boolean> => {
-      const run = saveQueueRef.current.then(() => performSave(force));
+      const requestedId = selectedIdRef.current;
+      const run = saveQueueRef.current.then(async () => {
+        let saved = await performSave(force);
+        // 用户可能在前一次异步写入期间继续编辑。切换笔记、打开每日便笺等
+        // 需要等到同一篇笔记的最新 revision 也真正落盘，不能只等待旧请求。
+        while (
+          saved &&
+          selectedIdRef.current === requestedId &&
+          requestedId !== null &&
+          saveStateRef.current === "dirty"
+        ) {
+          saved = await performSave(true);
+        }
+        return saved;
+      });
       saveQueueRef.current = run.catch(() => undefined);
       return run;
     },
@@ -1593,20 +1621,28 @@ export function MainWindow({
 
   const handleToggleTodo = useCallback(
     async (note: Note, item: TodoItem, completed: boolean) => {
-      const nextContent = toggleTodoInContent(note.content, item.line, completed);
-      if (nextContent === note.content) return;
+      // 待办面板读取的是独立快照；当前笔记可能还有编辑器中的未保存修改。
+      // 先等待当前保存队列，再重新读取权威正文，避免用旧快照覆盖用户输入。
+      if (selectedIdRef.current === note.id) {
+        const saved = await saveCurrentNote();
+        if (!saved) return;
+      }
 
-      const updated = await updateNote(note.id, {
-        title: note.title,
+      const latest = await getNote(note.id);
+      const nextContent = toggleTodoInContent(latest.content, item.line, completed);
+      if (nextContent === latest.content) return;
+
+      const updated = await updateNote(latest.id, {
+        title: latest.title,
         content: nextContent,
-        category: note.category,
-        tags: note.tags,
-        pinned: note.pinned,
+        category: latest.category,
+        tags: latest.tags,
+        pinned: latest.pinned,
       });
       replaceNoteMetadata(updated);
       if (selectedIdRef.current === note.id) applyNote(updated);
     },
-    [applyNote, replaceNoteMetadata],
+    [applyNote, getNote, replaceNoteMetadata, saveCurrentNote],
   );
 
   const handleSaveAsTemplate = useCallback(() => {
@@ -1641,6 +1677,8 @@ export function MainWindow({
 
   const handleOpenDailyNote = useCallback(async () => {
     try {
+      const saved = await saveCurrentNote();
+      if (!saved) return;
       const note = await openDailyNote();
       replaceNoteMetadata(note);
       applyNote(note);
@@ -1648,17 +1686,19 @@ export function MainWindow({
     } catch (error) {
       showToast(getErrorMessage(error));
     }
-  }, [applyNote, replaceNoteMetadata]);
+  }, [applyNote, replaceNoteMetadata, saveCurrentNote]);
 
   const handleRestoreNoteVersion = useCallback(
     async (versionId: string) => {
       if (!selectedId || isExternal) return;
+      const saved = await saveCurrentNote();
+      if (!saved) return;
       const note = await restoreNoteVersion(selectedId, versionId);
       replaceNoteMetadata(note);
       applyNote(note);
       showToast("已恢复历史版本");
     },
-    [applyNote, isExternal, replaceNoteMetadata, selectedId],
+    [applyNote, isExternal, replaceNoteMetadata, saveCurrentNote, selectedId],
   );
 
   const handleImportNote = async () => {
@@ -1767,6 +1807,7 @@ export function MainWindow({
         getFileModifiedTime(file.filePath),
       ]);
       if (!loadEpoch.isCurrent(epoch)) return;
+      editRevisionRef.current += 1;
       selectedIdRef.current = id;
       titleValueRef.current = file.title;
       contentValueRef.current = fileContent;
@@ -1803,6 +1844,7 @@ export function MainWindow({
         if (!saved) return;
       }
     }
+    navHistory.remove(id);
     setExternalFiles((current) => current.filter((f) => f.id !== id));
     if (selectedId === id) {
       clearCurrentNote();
@@ -1815,6 +1857,7 @@ export function MainWindow({
     setDeleteConfirm(false);
     try {
       await deleteNote(noteId);
+      navHistory.remove(noteId);
       const remaining = await refreshNotes();
       if (noteId === selectedId && remaining[0]) {
         await loadNote(remaining[0].id);
@@ -1973,6 +2016,7 @@ export function MainWindow({
 
   const markDirty = () => {
     if (!selectedId) return;
+    editRevisionRef.current += 1;
     saveStateRef.current = "dirty";
     setSaveState("dirty");
   };
@@ -4564,14 +4608,24 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
 }
 
 /** 将 Markdown 内容包装为完整 HTML 页面 */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function wrapHtml(title: string, markdown: string): string {
-  const escaped = markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const escapedTitle = escapeHtml(title);
+  const escaped = escapeHtml(markdown);
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title}</title>
+<title>${escapedTitle}</title>
 <style>
   body { max-width: 800px; margin: 40px auto; padding: 0 20px; font-family: -apple-system, BlinkMacSystemFont, "HarmonyOS Sans SC", "PingFang SC", sans-serif; font-size: 16px; line-height: 1.8; color: #2a2a26; background: #f6f3ec; }
   pre { background: #f0ebe0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
