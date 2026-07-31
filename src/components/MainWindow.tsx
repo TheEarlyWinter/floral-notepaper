@@ -763,6 +763,22 @@ export function MainWindow({
   const applyNote = useCallback(
     (note: Note) => {
       loadEpoch.bump();
+      const isSameNote =
+        selectedIdRef.current === note.id &&
+        titleValueRef.current === note.title &&
+        contentValueRef.current === note.content;
+      if (isSameNote) {
+        // 内容未变化的回环（如保存完成后的 notes-changed 事件）：
+        // 不重置编辑器，保留光标位置与 undo 历史栈，只同步元数据
+        const nextTags = note.tags || [];
+        const nextPinned = note.pinned || false;
+        tagsValueRef.current = nextTags;
+        pinnedValueRef.current = nextPinned;
+        setNoteTags(nextTags);
+        setIsPinned(nextPinned);
+        setExternalImageBaseDir(null);
+        return;
+      }
       editRevisionRef.current += 1;
       selectedIdRef.current = note.id;
       titleValueRef.current = note.title;
@@ -1771,6 +1787,14 @@ export function MainWindow({
           win.print();
           setTimeout(() => URL.revokeObjectURL(url), 1000);
         };
+      } else {
+        // 弹窗被拦截：释放临时 URL，提示用户放行弹窗
+        URL.revokeObjectURL(url);
+        showToast(
+          t("main.export.pdfBlocked", {
+            defaultValue: "导出窗口被拦截，请允许弹出窗口后重试",
+          }),
+        );
       }
     } catch (error) {
       showToast(getErrorMessage(error));
@@ -1938,6 +1962,17 @@ export function MainWindow({
     if (action === "move") {
       setNoteMenuMode("move");
       return;
+    }
+
+    if (action === "delete") {
+      // 删除前确认：误点右键菜单直接删笔记不可恢复
+      const confirmed = window.confirm(
+        t("main.noteMenu.confirmDelete", {
+          noteTitle: note.title.trim() || "无标题笔记",
+          defaultValue: "确定删除「{{noteTitle}}」吗？",
+        }),
+      );
+      if (!confirmed) return;
     }
 
     setNoteMenuClosing(true);
@@ -2224,7 +2259,12 @@ export function MainWindow({
 
       const measure = async () => {
         if (!contentRef.current || !previewScrollRef.current) return;
-        const offsets = await measureBlockOffsets(content, contentRef.current, controller.signal);
+        // 用与预览一致的延迟内容测量，避免快速输入时测量与 DOM 错位
+        const offsets = await measureBlockOffsets(
+          deferredContent,
+          contentRef.current,
+          controller.signal,
+        );
         if (controller.signal.aborted) return;
         blockOffsets.current = offsets;
         if (!controller.signal.aborted && previewScrollRef.current) {
@@ -2264,7 +2304,7 @@ export function MainWindow({
     };
   }, [
     cancelScrollMeasurement,
-    content,
+    deferredContent,
     scrollSyncEnabled,
     scheduleScrollMeasurement,
     selectedId,
@@ -4687,7 +4727,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           onKeyDown={(e) => {
             if (e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s")) {
               e.preventDefault();
-              e.stopPropagation();
+              // 不 stopPropagation：Ctrl+S 加标签的同时，事件继续冒泡触发全局保存
               addTag();
             }
             if (e.key === "Backspace" && !input && tags.length > 0)

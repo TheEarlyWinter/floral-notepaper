@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { createNote, createReminder, getNote, searchNotes } from "../features/notes/api";
+import { createNote, createReminder, getErrorMessage, getNote, searchNotes } from "../features/notes/api";
+import { showToast } from "./Toast";
 import {
   calculateDashboardStats,
   findDuplicatePairs,
@@ -86,13 +87,17 @@ export function NotesWorkspacePanel({
   useEffect(() => {
     let active = true;
     setLoading(true);
-    void Promise.all(notes.map((note) => getNote(note.id).catch(() => null))).then((items) => {
-      if (!active) return;
-      setLoadedNotes(items.filter((item): item is Note => item !== null));
-      setLoading(false);
-    });
+    // 防抖：连续保存（每次 notes 变化）时不反复全量重拉正文
+    const timer = window.setTimeout(() => {
+      void Promise.all(notes.map((note) => getNote(note.id).catch(() => null))).then((items) => {
+        if (!active) return;
+        setLoadedNotes(items.filter((item): item is Note => item !== null));
+        setLoading(false);
+      });
+    }, 300);
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
   }, [notes]);
 
@@ -177,7 +182,7 @@ export function NotesWorkspacePanel({
                         {categories.filter((category) => category !== INBOX_CATEGORY).map((category) => <option key={category} value={category}>{category}</option>)}
                       </select>
                     </label>
-                    <button type="button" onClick={() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0); void createReminder(metadata.id, `整理收件箱：${getDisplayTitle(metadata)}`, tomorrow.toISOString()); }} className="h-7 px-2 rounded-lg text-[10px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist cursor-pointer">明天看</button>
+                    <button type="button" onClick={() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0); void createReminder(metadata.id, `整理收件箱：${getDisplayTitle(metadata)}`, tomorrow.toISOString()).catch((error) => { showToast(getErrorMessage(error)); }); }} className="h-7 px-2 rounded-lg text-[10px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist cursor-pointer">明天看</button>
                     <button type="button" onClick={() => onOpenNote(metadata.id)} className="h-7 px-2 rounded-lg text-[10px] text-bamboo hover:bg-bamboo-mist cursor-pointer">编辑</button>
                   </div>
                   {duplicates.length > 0 ? (

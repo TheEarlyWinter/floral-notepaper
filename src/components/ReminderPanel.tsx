@@ -34,8 +34,10 @@ export function ReminderPanel({ noteId, noteTitle, onClose }: ReminderPanelProps
   }, [load]);
 
   useEffect(() => {
+    // 只在切换笔记时重置提醒内容；主窗口编辑标题不应打断正在输入的提醒
     setMessage(noteTitle || "笔记提醒");
-  }, [noteTitle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId]);
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault();

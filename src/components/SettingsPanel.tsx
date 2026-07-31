@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
+import { getErrorMessage } from "../features/notes/api";
+import { showToast } from "./Toast";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
   AppConfig,
@@ -464,15 +466,19 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             <button
               type="button"
               onClick={() => {
-                void chooseBackgroundImage().then(async (path) => {
-                  if (!path) return;
-                  const originalName = path.split(/[/\\]/).pop() ?? "";
-                  const saved = await invoke<string>("copy_background_image", {
-                    sourcePath: path,
+                void chooseBackgroundImage()
+                  .then(async (path) => {
+                    if (!path) return;
+                    const originalName = path.split(/[/\\]/).pop() ?? "";
+                    const saved = await invoke<string>("copy_background_image", {
+                      sourcePath: path,
+                    });
+                    localStorage.setItem("backgroundImageName", originalName);
+                    setConfigValue("backgroundImagePath", saved);
+                  })
+                  .catch((error) => {
+                    showToast(getErrorMessage(error));
                   });
-                  localStorage.setItem("backgroundImageName", originalName);
-                  setConfigValue("backgroundImagePath", saved);
-                });
               }}
               className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
             >

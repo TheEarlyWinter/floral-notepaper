@@ -53,15 +53,19 @@ export function KnowledgeGraphPanel({ notes, onOpenNote, onClose }: KnowledgeGra
     setLoading(true);
     setError(null);
 
-    void Promise.all(notes.map((n) => getNote(n.id).catch(() => null))).then((items) => {
-      if (!active) return;
-      const valid = items.filter((n): n is Note => n !== null);
-      setLoadedNotes(valid);
-      setLoading(false);
-    });
+    // 防抖：连续保存（每次 notes 变化）时不反复全量重拉正文
+    const timer = window.setTimeout(() => {
+      void Promise.all(notes.map((n) => getNote(n.id).catch(() => null))).then((items) => {
+        if (!active) return;
+        const valid = items.filter((n): n is Note => n !== null);
+        setLoadedNotes(valid);
+        setLoading(false);
+      });
+    }, 300);
 
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
   }, [notes]);
 

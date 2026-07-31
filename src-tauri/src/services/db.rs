@@ -57,7 +57,7 @@ pub fn init_db(data_dir: &Path) -> Result<(), AppError> {
     )
     .map_err(|e| db_error(format!("无法打开数据库: {e}")))?;
 
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
         .map_err(|e| db_error(format!("WAL 模式设置失败: {e}")))?;
     migrate(&conn)?;
     map.insert(key, conn);

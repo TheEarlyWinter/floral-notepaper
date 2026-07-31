@@ -858,7 +858,12 @@ impl NoteStore {
         self.migrate_data_dir_if_relocated(&mut config)?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
-        write_json_atomic(&path, &config)?;
+        // 只有内容实际变化才写盘：避免每次读取都 fsync 重写 config
+        let mut serialized = serde_json::to_vec_pretty(&config)?;
+        serialized.push(b'\n');
+        if fs::read(&path).unwrap_or_default() != serialized {
+            write_json_atomic(&path, &config)?;
+        }
         fs::create_dir_all(self.data_dir.join("notes"))?;
         if self.migrate_macos_shortcut_default(&mut config)? {
             write_json_atomic(&path, &config)?;
@@ -1184,7 +1189,9 @@ impl NoteStore {
     }
 
     fn note_version_path(&self, note_id: &str, version_id: &str) -> Result<PathBuf, AppError> {
-        if chrono::NaiveDateTime::parse_from_str(version_id, "%Y%m%dT%H%M%S%.fZ").is_err() {
+        // 版本 ID 格式：`%Y%m%dT%H%M%S%.6fZ` 或带 `-{随机段}` 后缀（防同微秒覆盖）
+        let base = version_id.split('-').next().unwrap_or(version_id);
+        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err() {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
         Ok(self
@@ -1221,8 +1228,12 @@ impl NoteStore {
             return Ok(());
         }
 
-        // 存储新版本（纯时间戳格式，与 list_note_versions / restore_note_version 兼容）
-        let version_id = Utc::now().format("%Y%m%dT%H%M%S%.6fZ").to_string();
+        // 存储新版本（时间戳 + 随机后缀，避免同微秒两次保存覆盖同一文件）
+        let version_id = format!(
+            "{}-{}",
+            Utc::now().format("%Y%m%dT%H%M%S%.6fZ"),
+            &Uuid::new_v4().to_string()[..8]
+        );
         fs::write(dir.join(format!("{version_id}.md")), content)?;
 
         // 重新读取条目列表（包含新写入的版本），清理超出上限的旧版本
@@ -1318,8 +1329,10 @@ impl NoteStore {
             let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                 continue;
             };
-            let Ok(created_at) = chrono::NaiveDateTime::parse_from_str(stem, "%Y%m%dT%H%M%S%.fZ")
-            else {
+            let Ok(created_at) = chrono::NaiveDateTime::parse_from_str(
+                stem.split('-').next().unwrap_or(stem),
+                "%Y%m%dT%H%M%S%.fZ",
+            ) else {
                 continue;
             };
             let content = fs::read_to_string(&path)?;
@@ -1404,7 +1417,13 @@ impl NoteStore {
         if !is_markdown_path(path) {
             return Err(AppError::unsupported_file());
         }
-
+        // 与外部文件读取保持一致的大小上限，防止超大文件拖垮编辑器
+        if fs::metadata(path)?.len() > 25 * 1024 * 1024 {
+            return Err(AppError::new(
+                "importTooLarge",
+                "导入的 Markdown 文件不能超过 25 MB",
+            ));
+        }
         let content = fs::read_to_string(path)?;
         let title = imported_markdown_title(path, &content);
         self.create_note(SaveNoteRequest {
@@ -1444,6 +1463,9 @@ impl NoteStore {
     ) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
         self.ensure_storage()?;
         let metadata = self.load_metadata()?;
+        // 搜索前确保索引新鲜：检测外部编辑器对 .md 的修改（指纹比对），
+        // 需要时重建。搜索是低频操作，这里全库指纹的代价可接受
+        self.ensure_fts_current(&metadata)?;
         if crate::services::db::is_initialized(&self.data_dir) {
             match self.search_fts(query) {
                 Ok(results) if !results.is_empty() => return Ok(results),
@@ -1942,7 +1964,8 @@ impl NoteStore {
             }
             mark_data_dir_reconciled(&self.data_dir);
         }
-        self.ensure_fts_current(&metadata)?;
+        // 注意：不在每次 IPC 都调 ensure_fts_current（全库读 .md 算指纹代价高）；
+        // 索引新鲜度由 mutation 路径增量更新 + 搜索前 ensure 保证
         Ok(())
     }
 
@@ -2215,18 +2238,34 @@ impl NoteStore {
         fs::create_dir_all(&notes_dir)?;
         let mut notes = Vec::new();
 
-        self.scan_dir_for_notes(&notes_dir, "", &mut notes)?;
+        // 递归扫描：与 notes_dir_has_md_files 的递归判断保持一致，
+        // 手动放进深层子目录的 .md 也能被识别
+        self.scan_dir_for_notes_recursive(&notes_dir, "", &mut notes)?;
 
-        for entry in fs::read_dir(&notes_dir)? {
+        Ok(MetadataFile { notes })
+    }
+
+    fn scan_dir_for_notes_recursive(
+        &self,
+        dir: &Path,
+        category: &str,
+        notes: &mut Vec<NoteMetadata>,
+    ) -> Result<(), AppError> {
+        self.scan_dir_for_notes(dir, category, notes)?;
+        for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
-                let category = entry.file_name().to_string_lossy().to_string();
-                self.scan_dir_for_notes(&path, &category, &mut notes)?;
+                // 深层子目录沿用最近一层分类名（第一层用目录名）
+                let child_category = if category.is_empty() {
+                    entry.file_name().to_string_lossy().to_string()
+                } else {
+                    category.to_string()
+                };
+                self.scan_dir_for_notes_recursive(&path, &child_category, notes)?;
             }
         }
-
-        Ok(MetadataFile { notes })
+        Ok(())
     }
 
     /// 将磁盘上可恢复、但 metadata.json 尚未登记的笔记纳入清单。
@@ -2557,13 +2596,18 @@ fn image_payload_matches_extension(data: &[u8], extension: &str) -> bool {
         "gif" => data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a"),
         "webp" => data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP",
         "bmp" => data.starts_with(b"BM"),
-        // SVG 是文本格式。它会作为 img 资源加载，仍限制为 SVG 根节点而非任意文本。
+        // SVG 是文本格式。它会作为 img 资源加载，仍限制为 SVG 根节点而非任意文本；
+        // 同时拒绝内嵌 script（防止 render_html 开启时被当作 HTML 内联渲染的 XSS 面）
         "svg" => std::str::from_utf8(data)
             .ok()
             .map(|text| {
                 let trimmed = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
-                trimmed.starts_with("<svg")
-                    || (trimmed.starts_with("<?xml") && trimmed.contains("<svg"))
+                let has_script = text
+                    .to_ascii_lowercase()
+                    .contains("<script");
+                (trimmed.starts_with("<svg")
+                    || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")))
+                    && !has_script
             })
             .unwrap_or(false),
         _ => false,

@@ -2231,15 +2231,63 @@ fn install_global_shortcut_bindings(
 ) -> Result<(), Box<dyn Error>> {
     let bindings = shortcut_bindings_from_config(config)?;
 
-    if replace_existing {
-        app.global_shortcut().unregister_all()?;
+    // 已注册的旧绑定（用于替换时精确卸载，避免 unregister_all 把新键也卸掉）
+    let previous = app
+        .try_state::<RuntimeState>()
+        .and_then(|state| state.shortcut_bindings.lock().ok().map(|guard| guard.clone()));
+    let previous_strings = previous
+        .as_ref()
+        .map(|old| {
+            [&old.open_notepad, &old.toggle_visibility]
+                .into_iter()
+                .flatten()
+                .map(|shortcut| shortcut.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let new_shortcuts = [&bindings.open_notepad, &bindings.toggle_visibility]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+
+    // 先注册新绑定（与旧绑定相同的跳过，避免重复注册报错）；
+    // 全部成功后再卸载旧绑定。若新键被其他应用占用导致注册失败，
+    // 回滚本次注册并保留旧快捷键，不会让本会话快捷键全部失效。
+    let mut registered: Vec<Shortcut> = Vec::new();
+    let register_result = (|| -> Result<(), Box<dyn Error>> {
+        for shortcut in &new_shortcuts {
+            if previous_strings.contains(&shortcut.to_string()) {
+                continue;
+            }
+            app.global_shortcut().register(*shortcut)?;
+            registered.push(*shortcut);
+        }
+        Ok(())
+    })();
+    if let Err(error) = register_result {
+        for shortcut in &registered {
+            let _ = app.global_shortcut().unregister(*shortcut);
+        }
+        return Err(error);
     }
 
-    if let Some(shortcut) = &bindings.open_notepad {
-        app.global_shortcut().register(*shortcut)?;
-    }
-    if let Some(shortcut) = &bindings.toggle_visibility {
-        app.global_shortcut().register(*shortcut)?;
+    if replace_existing {
+        let new_strings = new_shortcuts
+            .iter()
+            .map(|shortcut| shortcut.to_string())
+            .collect::<Vec<_>>();
+        if let Some(previous) = previous.as_ref() {
+            for shortcut in [&previous.open_notepad, &previous.toggle_visibility]
+                .into_iter()
+                .flatten()
+            {
+                if !new_strings.contains(&shortcut.to_string()) {
+                    let _ = app.global_shortcut().unregister(*shortcut);
+                }
+            }
+        }
     }
 
     if let Some(state) = app.try_state::<RuntimeState>() {

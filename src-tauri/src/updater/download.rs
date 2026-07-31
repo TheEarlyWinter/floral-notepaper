@@ -766,6 +766,14 @@ fn cleanup_partial_downloads_in_dir(path: &Path) -> Result<(), AppError> {
         let entry_path = entry.path();
         if entry.file_type()?.is_dir() {
             cleanup_partial_downloads_in_dir(&entry_path)?;
+            // 版本目录内清理干净后顺手删除空目录，避免残留
+            let is_empty = entry_path
+                .read_dir()
+                .map(|mut items| items.next().is_none())
+                .unwrap_or(false);
+            if is_empty {
+                let _ = fs::remove_dir(&entry_path);
+            }
             continue;
         }
 

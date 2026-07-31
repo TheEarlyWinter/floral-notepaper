@@ -28,9 +28,12 @@ export function BacklinksPanel({ noteId, notes, onOpenNote, onClose }: Backlinks
   }, [notes]);
 
   useEffect(() => {
-    void load();
+    // 防抖：连续保存（每次 notes 变化）时不反复全量重拉正文
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 300);
+    return () => window.clearTimeout(timer);
   }, [load]);
-
   const backlinks = useMemo(() => findBacklinks(noteId, loadedNotes), [loadedNotes, noteId]);
 
   return (

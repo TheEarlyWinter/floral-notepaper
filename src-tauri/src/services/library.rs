@@ -246,12 +246,17 @@ pub fn move_note_attachments(
     let _lock = lock_attachments()?;
     let source = attachments_dir(data_dir, source_id)?;
     let target = attachments_dir(data_dir, target_id)?;
+    // 记录已移动的文件（目标 → 源），JSON 保存失败时回滚
+    let mut moved_files: Vec<(PathBuf, PathBuf)> = Vec::new();
     if source.exists() {
         fs::create_dir_all(&target)?;
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
             if entry.path().is_file() {
-                fs::rename(entry.path(), target.join(entry.file_name()))?;
+                let from = entry.path();
+                let to = target.join(entry.file_name());
+                fs::rename(&from, &to)?;
+                moved_files.push((to, from));
             }
         }
         let _ = fs::remove_dir(&source);
@@ -262,7 +267,14 @@ pub fn move_note_attachments(
             attachment.note_id = target_id.to_string();
         }
     }
-    save_attachments(data_dir, &file)
+    if let Err(error) = save_attachments(data_dir, &file) {
+        // 回滚：附件清单保存失败时把已移动的文件移回源目录，避免成孤儿
+        for (to, from) in moved_files {
+            let _ = fs::rename(&to, &from);
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn add_dir_to_zip<W: Write + Seek>(
@@ -320,7 +332,12 @@ fn create_backup(data_dir: &Path, destination: &Path) -> Result<(), AppError> {
 }
 
 fn backup_name(prefix: &str) -> String {
-    format!("{prefix}-{}.zip", Utc::now().format("%Y%m%d-%H%M%S"))
+    // 带随机后缀：同一秒内手动 + 自动备份不会互相覆盖
+    format!(
+        "{prefix}-{}-{}.zip",
+        Utc::now().format("%Y%m%d-%H%M%S"),
+        &Uuid::new_v4().to_string()[..8]
+    )
 }
 
 pub fn create_manual_backup(data_dir: &Path, destination: &Path) -> Result<(), AppError> {
@@ -410,6 +427,19 @@ fn safe_archive_path(name: &str) -> Result<PathBuf, AppError> {
         })
     {
         return Err(err("backupUnsafe", "备份文件包含不安全路径"));
+    }
+    // Windows 保留设备名（CON/NUL/PRN/AUX/COM1-9/LPT1-9）：
+    // 解压到这些名字会让恢复直接失败，属于可拒绝的 DoS
+    let base = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.starts_with("COM")
+            && base.len() > 3
+            && base[3..].parse::<u8>().is_ok())
+        || (base.starts_with("LPT")
+            && base.len() > 3
+            && base[3..].parse::<u8>().is_ok());
+    if reserved {
+        return Err(err("backupUnsafe", "备份文件包含 Windows 保留名称"));
     }
     Ok(path.to_path_buf())
 }

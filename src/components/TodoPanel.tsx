@@ -31,7 +31,11 @@ export function TodoPanel({ notes, onOpenNote, onToggleTodo, onClose }: TodoPane
   }, [notes]);
 
   useEffect(() => {
-    void reload();
+    // 防抖：连续保存（每次 notes 变化）时不反复全量重拉正文
+    const timer = window.setTimeout(() => {
+      void reload();
+    }, 300);
+    return () => window.clearTimeout(timer);
   }, [reload]);
 
   const todos = useMemo(() => loadedNotes.flatMap((note) => extractTodos(note)), [loadedNotes]);

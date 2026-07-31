@@ -357,10 +357,10 @@ impl UpdateCheckService {
                 Ok(ProviderCheck::NotAvailable) => {
                     debug_log!("提供者 {source:?} 返回无更新");
                     saw_not_available = true;
-                    // Mirror 酱返回无更新说明当前已是最新版，无需再查 GitHub。
+                    // 不提前终止：Mirror 酱可能缓存滞后或数据不完整，
+                    // 继续检查后续提供者，避免漏掉 GitHub 上的新版本
                     if matches!(source, DownloadSourceUsed::MirrorChyan) {
-                        debug_log!("Mirror 酱已确认无更新，跳过后续提供者");
-                        break;
+                        debug_log!("Mirror 酱返回无更新，继续检查后续提供者");
                     }
                 }
                 Err(error) => {
@@ -963,13 +963,24 @@ fn load_manifest_candidate(
         context.platform.install_kind.clone(),
     )?;
     let candidate_version = manifest.normalized_version()?;
+    // 支持显式降级：allow_downgrade 时候选版本低于当前版本也算可用
+    let allow_downgrade = manifest.allow_downgrade
+        && candidate_version != context.current_version
+        && (candidate_version.pre.is_empty() || context.allow_prerelease);
     if !version::is_newer_version(
         &context.current_version,
         &candidate_version,
         context.allow_prerelease,
-    ) {
+    ) && !allow_downgrade
+    {
         return Ok(ProviderCheck::NotAvailable);
     }
+    // 低于最低支持版本时强制更新
+    let forced_by_minimum = manifest
+        .normalized_minimum_supported_version()
+        .ok()
+        .flatten()
+        .is_some_and(|minimum| context.current_version < minimum);
 
     let mirror_chyan_asset_url = asset.mirror_chyan_url.clone();
     let github_asset_url = (!asset.github_url.trim().is_empty()).then(|| asset.github_url.clone());
@@ -988,7 +999,7 @@ fn load_manifest_candidate(
         version: manifest.version.clone(),
         normalized_version: candidate_version,
         release_notes: manifest.release_notes.clone(),
-        mandatory: manifest.mandatory,
+        mandatory: manifest.mandatory || forced_by_minimum,
         asset_name: asset.name.clone(),
         asset_sha256: Some(asset.sha256),
         asset_size: asset.size,
