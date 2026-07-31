@@ -134,6 +134,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
+      - name: Pin npm for lockfile compatibility
+        run: npm install --global npm@11.6.2
+
       - name: Install dependencies
         run: npm ci
 
