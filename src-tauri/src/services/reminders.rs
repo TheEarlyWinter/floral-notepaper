@@ -84,7 +84,9 @@ pub fn take_due(data_dir: &Path, now: DateTime<Utc>) -> Result<Vec<Reminder>, Ap
     let _guard = lock()?;
     let file = load(data_dir)?;
     // 只取出到期提醒，不在此处标记已通知：通知真正送达（emit 成功）后
-    // 才由 mark_notified 确认，避免"先标记后通知"导致提醒永久丢失
+    // 才由 mark_notified 确认，避免"先标记后通知"导致提醒永久丢失。
+    // 语义为"至少一次"投递：mark_notified 失败时下轮轮询会重复投递，
+    // 对提醒场景可接受（重复提醒优于静默丢失）；单调度线程下不会并发取到
     Ok(file
         .reminders
         .into_iter()

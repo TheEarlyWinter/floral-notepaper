@@ -247,6 +247,60 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_uppercase_sha256_on_parse() {
+        let invalid = r#"{
+          "schemaVersion": 1,
+          "appId": "com.floral-notepaper.app",
+          "productName": "花笺",
+          "channel": "stable",
+          "version": "1.0.5",
+          "tag": "v1.0.5",
+          "publishedAt": "2026-05-26T12:00:00Z",
+          "assets": [
+            {
+              "os": "windows",
+              "arch": "x86_64",
+              "kind": "nsis",
+              "name": "asset.exe",
+              "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "size": 1,
+              "githubUrl": "https://github.com/Achilng/floral-notepaper/releases/download/v1.0.5/asset.exe"
+            }
+          ]
+        }"#;
+
+        let manifest = parse_manifest(invalid.as_bytes()).expect("uppercase sha256 must parse");
+        assert_eq!(manifest.assets[0].sha256, "a".repeat(64));
+    }
+
+    #[test]
+    fn rejects_asset_name_with_path_traversal() {
+        let invalid = r#"{
+          "schemaVersion": 1,
+          "appId": "com.floral-notepaper.app",
+          "productName": "花笺",
+          "channel": "stable",
+          "version": "1.0.5",
+          "tag": "v1.0.5",
+          "publishedAt": "2026-05-26T12:00:00Z",
+          "assets": [
+            {
+              "os": "windows",
+              "arch": "x86_64",
+              "kind": "nsis",
+              "name": "..\\startup.exe",
+              "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+              "size": 1,
+              "githubUrl": "https://github.com/Achilng/floral-notepaper/releases/download/v1.0.5/asset.exe"
+            }
+          ]
+        }"#;
+
+        let error = parse_manifest(invalid.as_bytes()).expect_err("path traversal must fail");
+        assert_eq!(error.code, "updateManifestInvalid");
+    }
+
+    #[test]
     fn rejects_unsupported_schema() {
         let invalid = r#"{
           "schemaVersion": 2,

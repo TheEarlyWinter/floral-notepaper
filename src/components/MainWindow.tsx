@@ -1407,7 +1407,9 @@ export function MainWindow({
           await new Promise((resolve) => setTimeout(resolve, 300));
           saved = await performSave(true);
         }
-        return saved;
+        // 达到上限仍 dirty（输入速度超过保存速度）：不报告成功，
+        // 调用方（关闭/切换/新建）应保留当前上下文，避免最新修改丢失
+        return saved && saveStateRef.current !== "dirty";
       });
       saveQueueRef.current = run.catch(() => undefined);
       return run;
@@ -1518,7 +1520,9 @@ export function MainWindow({
   ]);
 
   const handleNewNote = async (category?: string) => {
-    await saveCurrentNote();
+    // 保存失败不离开当前编辑上下文，避免旧内容被新笔记覆盖
+    const saved = await saveCurrentNote();
+    if (!saved) return;
     try {
       const targetCategory = category ?? activeCategory;
       const template = templates.find((item) => item.id === selectedTemplateId);
@@ -1813,8 +1817,10 @@ export function MainWindow({
   const handleSelectNote = async (id: string) => {
     if (id === selectedId) return;
     setDeleteConfirm(false);
-    // 排队保存：等待可能在途的自动保存，并把尚未落盘的修改一并存掉
-    await saveCurrentNote();
+    // 排队保存：等待可能在途的自动保存，并把尚未落盘的修改一并存掉；
+    // 保存失败则不切换，避免旧编辑内容被新笔记覆盖
+    const saved = await saveCurrentNote();
+    if (!saved) return;
 
     setIsLoading(true);
     try {
@@ -1852,7 +1858,9 @@ export function MainWindow({
   const handleSelectExternalFile = async (id: string) => {
     if (id === selectedId) return;
     setDeleteConfirm(false);
-    await saveCurrentNote();
+    // 保存失败不切换外部文件，避免旧编辑内容被新文件覆盖
+    const saved = await saveCurrentNote();
+    if (!saved) return;
 
     const file = externalFiles.find((f) => f.id === id);
     if (!file) return;
@@ -2001,7 +2009,9 @@ export function MainWindow({
 
   const handleMergeNotes = async (targetId: string, sourceId: string) => {
     try {
-      await saveCurrentNote(true);
+      // 强制保存当前编辑并确认落盘，再基于权威数据合并
+      const saved = await saveCurrentNote(true);
+      if (!saved) return;
       const merged = await mergeNotes({ targetId, sourceId });
       await refreshNotes();
       if (selectedIdRef.current === targetId || selectedIdRef.current === sourceId) {

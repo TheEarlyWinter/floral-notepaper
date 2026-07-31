@@ -450,6 +450,30 @@ fn safe_archive_path(name: &str) -> Result<PathBuf, AppError> {
     Ok(path.to_path_buf())
 }
 
+/// 恢复失败时回滚：移除已放置的新数据，把旧数据从 stash 挪回原位。
+/// 返回回滚过程中的错误列表（为空表示回滚完整）。
+fn rollback_restore(
+    data_dir: &Path,
+    stash: &Path,
+    stashed: &[&str],
+    restored: &[&str],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for item in restored {
+        let target = data_dir.join(item);
+        if let Err(error) = fs::remove_dir_all(&target) {
+            let _ = fs::remove_file(&target);
+            errors.push(format!("移除新数据失败 {item}: {error}"));
+        }
+    }
+    for item in stashed {
+        if let Err(error) = fs::rename(stash.join(item), data_dir.join(item)) {
+            errors.push(format!("恢复旧数据失败 {item}: {error}"));
+        }
+    }
+    errors
+}
+
 pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
     let rollback = backup_dir(data_dir).join(backup_name("before-restore"));
     create_backup(data_dir, &rollback)?;
@@ -506,12 +530,16 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
         let target = data_dir.join(name);
         if target.exists() {
             if let Err(error) = fs::rename(&target, stash.join(name)) {
-                // 回滚：把已挪进 stash 的旧数据挪回原位
-                for item in &stashed {
-                    let _ = fs::rename(stash.join(item), data_dir.join(item));
+                // 回滚：把已挪进 stash 的旧数据挪回原位；回滚失败则保留 stash 供手工恢复
+                let rollback_errors = rollback_restore(&data_dir, &stash, &stashed, &[]);
+                if rollback_errors.is_empty() {
+                    let _ = fs::remove_dir_all(&stash);
                 }
-                let _ = fs::remove_dir_all(&stash);
-                return Err(err("restoreFailed", format!("暂存旧数据失败: {error}")));
+                let mut message = format!("暂存旧数据失败: {error}");
+                if !rollback_errors.is_empty() {
+                    message.push_str(&format!("；回滚不完整: {}", rollback_errors.join("；")));
+                }
+                return Err(err("restoreFailed", message));
             }
             stashed.push(name);
         }
@@ -522,19 +550,17 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
         let source = staging.join(name);
         if source.exists() {
             if let Err(error) = fs::rename(&source, data_dir.join(name)) {
-                // 回滚：移除已放置的新数据，再把旧数据从 stash 挪回
-                for item in &restored {
-                    let _ = fs::remove_dir_all(data_dir.join(item));
-                    let _ = fs::remove_file(data_dir.join(item));
+                // 回滚：移除已放置的新数据，再把旧数据从 stash 挪回；
+                // 回滚失败则保留 stash 供手工恢复
+                let rollback_errors = rollback_restore(&data_dir, &stash, &stashed, &restored);
+                if rollback_errors.is_empty() {
+                    let _ = fs::remove_dir_all(&stash);
                 }
-                for item in BACKUP_ITEMS {
-                    let stashed = stash.join(item);
-                    if stashed.exists() {
-                        let _ = fs::rename(&stashed, data_dir.join(item));
-                    }
+                let mut message = format!("恢复数据失败: {error}");
+                if !rollback_errors.is_empty() {
+                    message.push_str(&format!("；回滚不完整: {}", rollback_errors.join("；")));
                 }
-                let _ = fs::remove_dir_all(&stash);
-                return Err(err("restoreFailed", format!("恢复数据失败: {error}")));
+                return Err(err("restoreFailed", message));
             }
             restored.push(name);
         }

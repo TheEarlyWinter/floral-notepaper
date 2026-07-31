@@ -2479,6 +2479,11 @@ fn apply_autostart(_app: &AppHandle, _enabled: bool) -> Result<(), Box<dyn Error
 #[cfg(desktop)]
 pub fn start_shortcut_recording(app: &AppHandle) -> Result<(), Box<dyn Error>> {
     app.global_shortcut().unregister_all()?;
+    // 同步清空运行时绑定：否则录制结束后 install(false) 会因"与旧绑定相同"
+    // 跳过注册，而被卸载的快捷键将无法恢复
+    if let Some(state) = app.try_state::<RuntimeState>() {
+        state.set_shortcut_bindings(ShortcutBindings::default());
+    }
 
     #[cfg(target_os = "windows")]
     keyboard_hook::start(app.clone());
