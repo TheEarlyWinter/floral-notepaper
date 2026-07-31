@@ -75,6 +75,7 @@
       "delete": "刪除分類",
       "emptyFolder": "空資料夾",
       "new": "新增分類",
+      "newNoteIn": "在「{{category}}」中新增筆記",
       "placeholder": "輸入分類名稱…",
       "rename": "重新命名",
       "uncategorized": "未分類"
@@ -265,6 +266,7 @@
     },
     "tileCtrlClose": "Ctrl+右鍵快速關閉磁貼",
     "tileRenderMarkdown": "磁貼渲染 Markdown",
+    "tileDesktopOnly": "磁貼僅在桌面顯示",
     "tileDoubleClickToEdit": "雙擊磁貼進入編輯",
     "tileSaveReturnsToPin": "儲存後回到磁貼",
     "renderHtmlMarkdown": "允許 HTML 標籤渲染",

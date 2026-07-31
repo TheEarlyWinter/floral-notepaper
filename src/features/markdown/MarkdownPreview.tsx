@@ -70,6 +70,8 @@ interface MarkdownPreviewProps {
   fontSize?: number;
   renderHtml?: boolean;
   imageBaseDir?: string;
+  /** Parent directory of an explicitly opened external Markdown file. */
+  externalImageBaseDir?: string;
   onOpenWikiLink?: (target: string) => void;
 }
 
@@ -279,6 +281,7 @@ export function MarkdownPreview({
   fontSize = 14,
   renderHtml = false,
   imageBaseDir,
+  externalImageBaseDir,
   onOpenWikiLink,
 }: MarkdownPreviewProps) {
   const { t } = useTranslation();
@@ -319,7 +322,12 @@ export function MarkdownPreview({
         );
       },
       img: ({ src, alt, ...props }) => {
-        const resolvedSrc = resolveMarkdownImageSrc(src, imageBaseDir, convertFileSrc);
+        const resolvedSrc = resolveMarkdownImageSrc(
+          src,
+          imageBaseDir,
+          convertFileSrc,
+          externalImageBaseDir,
+        );
         return (
           <img
             src={resolvedSrc}
@@ -331,7 +339,7 @@ export function MarkdownPreview({
         );
       },
     }),
-    [imageBaseDir, onOpenWikiLink],
+    [externalImageBaseDir, imageBaseDir, onOpenWikiLink],
   );
   return (
     <div

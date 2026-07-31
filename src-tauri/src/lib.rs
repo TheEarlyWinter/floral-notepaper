@@ -6,6 +6,7 @@ pub mod reminder_scheduler;
 pub mod services;
 pub mod updater;
 
+use encoding_rs::{Encoding, GBK, UTF_16BE, UTF_16LE};
 use locales::Locale;
 use services::{
     library::{Attachment, BackupInfo, SearchResult},
@@ -65,6 +66,39 @@ fn validate_external_text_path(raw_path: &str, allow_new_file: bool) -> Result<P
         Err(error) => return Err(io_error(error.to_string())),
     }
     Ok(path)
+}
+
+fn decode_external_text_with_encoding(
+    bytes: &[u8],
+    encoding: &'static Encoding,
+) -> Result<String, AppError> {
+    let (decoded, _, had_errors) = encoding.decode(bytes);
+    if had_errors {
+        return Err(io_error(
+            "外部文本文件编码不受支持，请另存为 UTF-8、UTF-16 或 GBK 后再打开",
+        ));
+    }
+    Ok(decoded.into_owned())
+}
+
+/// External TXT files on Windows are commonly GBK or UTF-16, while Rust's
+/// `read_to_string` accepts UTF-8 only. Prefer an explicit BOM; otherwise keep
+/// valid UTF-8 verbatim and use GBK only as the legacy fallback.
+fn decode_external_text_bytes(bytes: Vec<u8>) -> Result<String, AppError> {
+    if bytes.starts_with(&[0xff, 0xfe]) {
+        return decode_external_text_with_encoding(&bytes[2..], UTF_16LE);
+    }
+    if bytes.starts_with(&[0xfe, 0xff]) {
+        return decode_external_text_with_encoding(&bytes[2..], UTF_16BE);
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(text
+            .strip_prefix('\u{feff}')
+            .unwrap_or(text.as_str())
+            .to_string()),
+        Err(error) => decode_external_text_with_encoding(&error.into_bytes(), GBK),
+    }
 }
 
 fn validate_image_source_path(raw_path: &str) -> Result<PathBuf, AppError> {
@@ -263,7 +297,24 @@ fn backups_restore(app: AppHandle, path: String) -> Result<(), AppError> {
 #[tauri::command]
 fn read_external_file(path: String) -> Result<String, AppError> {
     let path = validate_external_text_path(&path, false)?;
-    fs::read_to_string(path).map_err(|error| io_error(error.to_string()))
+    let bytes = fs::read(path).map_err(|error| io_error(error.to_string()))?;
+    decode_external_text_bytes(bytes)
+}
+
+/// Give Markdown opened by the user access to image assets located below that
+/// file's own directory. The canonical path avoids granting access through a
+/// symlinked alias, and the frontend only resolves relative image references.
+#[tauri::command]
+fn external_file_image_base_dir(app: AppHandle, path: String) -> Result<String, AppError> {
+    let file = validate_external_text_path(&path, false)?;
+    let canonical_file = fs::canonicalize(&file).map_err(|error| io_error(error.to_string()))?;
+    let parent = canonical_file
+        .parent()
+        .ok_or_else(|| io_error("外部文件没有有效父目录"))?;
+    app.asset_protocol_scope()
+        .allow_directory(parent, true)
+        .map_err(|error| io_error(error.to_string()))?;
+    Ok(parent.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -679,6 +730,7 @@ pub fn run() {
             backups_restore,
             notes_move_category,
             read_external_file,
+            external_file_image_base_dir,
             save_external_file,
             get_file_modified_time,
             categories_list,
@@ -731,4 +783,51 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_external_text_bytes;
+
+    #[test]
+    fn decodes_utf8_and_removes_its_bom() {
+        assert_eq!(
+            decode_external_text_bytes(vec![0xef, 0xbb, 0xbf, b'h', b'i']).expect("decode UTF-8"),
+            "hi"
+        );
+    }
+
+    #[test]
+    fn decodes_utf16_text_with_bom() {
+        let mut bytes = vec![0xff, 0xfe];
+        for unit in "你好".encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+
+        assert_eq!(
+            decode_external_text_bytes(bytes).expect("decode UTF-16LE"),
+            "你好"
+        );
+    }
+
+    #[test]
+    fn decodes_utf16be_text_with_bom() {
+        let mut bytes = vec![0xfe, 0xff];
+        for unit in "你好".encode_utf16() {
+            bytes.extend(unit.to_be_bytes());
+        }
+
+        assert_eq!(
+            decode_external_text_bytes(bytes).expect("decode UTF-16BE"),
+            "你好"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_gbk_for_legacy_windows_txt() {
+        assert_eq!(
+            decode_external_text_bytes(vec![0xc4, 0xe3, 0xba, 0xc3]).expect("decode GBK"),
+            "你好"
+        );
+    }
 }

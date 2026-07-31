@@ -1109,6 +1109,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1256,12 +1265,13 @@ dependencies = [
 
 [[package]]
 name = "floral-notepaper"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "blake3",
  "block2",
  "chrono",
  "dirs 6.0.0",
+ "encoding_rs",
  "keyring",
  "libc",
  "objc2",

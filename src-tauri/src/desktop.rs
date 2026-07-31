@@ -401,7 +401,7 @@ mod keyboard_hook {
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    App, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
     WebviewWindowBuilder, Window, WindowEvent, Wry,
 };
 use uuid::Uuid;
@@ -536,6 +536,7 @@ struct WindowOpenOptions {
     specs: WindowSizeSpec,
     decorations: bool,
     always_on_top: bool,
+    always_on_bottom: bool,
     shadow: bool,
     skip_taskbar: bool,
     bounds: Option<WindowBounds>,
@@ -1411,6 +1412,7 @@ pub fn show_main_window(app: &AppHandle) -> Result<(), AppError> {
             // with native traffic lights; decorations: false would conflict.
             decorations: !cfg!(target_os = "macos"),
             always_on_top: false,
+            always_on_bottom: false,
             shadow: true,
             skip_taskbar: false,
             bounds: None,
@@ -1453,6 +1455,7 @@ fn open_notepad_window_now(
             specs,
             decorations: false,
             always_on_top: true,
+            always_on_bottom: false,
             shadow: false,
             skip_taskbar: true,
             bounds,
@@ -1639,6 +1642,20 @@ fn notepad_window_specs() -> WindowSizeSpec {
     }
 }
 
+fn tile_window_specs(app: &AppHandle) -> WindowSizeSpec {
+    let mut specs = saved_surface_specs(app);
+    // 磁贴只承载展示内容，可比编辑小窗更紧凑；切回编辑态时前端会恢复 220 × 220。
+    specs.min_width = 140.0;
+    specs.min_height = 96.0;
+    specs
+}
+
+fn tile_desktop_only_enabled() -> bool {
+    load_config()
+        .map(|config| config.tile_desktop_only)
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "windows")]
 #[allow(clippy::upper_case_acronyms)]
 fn cursor_centered_bounds(specs: &WindowSizeSpec) -> Option<WindowBounds> {
@@ -1776,7 +1793,8 @@ fn open_tile_window_now(
     let label = tile_window_label(note_id);
     let url = format!("index.html?view=tile&noteId={note_id}");
 
-    let specs = saved_surface_specs(app);
+    let specs = tile_window_specs(app);
+    let desktop_only = tile_desktop_only_enabled();
 
     open_or_focus_window(
         app,
@@ -1786,7 +1804,8 @@ fn open_tile_window_now(
             title: locales::tile_window_title(locale).to_string(),
             specs,
             decorations: false,
-            always_on_top: true,
+            always_on_top: !desktop_only,
+            always_on_bottom: desktop_only,
             shadow: false,
             skip_taskbar: true,
             bounds,
@@ -1820,6 +1839,11 @@ fn open_or_focus_window(
 
     if let Some(window) = app.get_webview_window(label) {
         window.set_title(&opts.title)?;
+        window.set_min_size(Some(LogicalSize::new(
+            opts.specs.min_width,
+            opts.specs.min_height,
+        )))?;
+        apply_window_z_order(&window, opts.always_on_top, opts.always_on_bottom)?;
         apply_window_bounds(&window, opts.bounds)?;
         window.set_shadow(opts.shadow)?;
         window.unminimize()?;
@@ -1854,11 +1878,32 @@ fn open_or_focus_window(
         builder
     };
 
+    let builder = if opts.always_on_bottom {
+        builder.always_on_bottom(true)
+    } else {
+        builder
+    };
+
     let window = builder.build()?;
 
     apply_window_bounds(&window, opts.bounds)?;
 
     Ok(label.to_string())
+}
+
+fn apply_window_z_order(
+    window: &tauri::WebviewWindow,
+    always_on_top: bool,
+    always_on_bottom: bool,
+) -> Result<(), AppError> {
+    if always_on_bottom {
+        window.set_always_on_top(false)?;
+        window.set_always_on_bottom(true)?;
+    } else {
+        window.set_always_on_bottom(false)?;
+        window.set_always_on_top(always_on_top)?;
+    }
+    Ok(())
 }
 
 fn apply_window_bounds(
@@ -2593,6 +2638,7 @@ mod tests {
             tile_double_click_to_edit: false,
             tile_save_returns_to_pin: false,
             tile_render_markdown: false,
+            tile_desktop_only: false,
             render_html_markdown: false,
             split_scroll_sync: true,
             open_at_cursor: true,
@@ -2694,6 +2740,7 @@ mod tests {
             tile_double_click_to_edit: false,
             tile_save_returns_to_pin: false,
             tile_render_markdown: false,
+            tile_desktop_only: false,
             render_html_markdown: false,
             split_scroll_sync: true,
             open_at_cursor: true,
@@ -2747,6 +2794,7 @@ mod tests {
             tile_double_click_to_edit: true,
             tile_save_returns_to_pin: true,
             tile_render_markdown: false,
+            tile_desktop_only: true,
             render_html_markdown: false,
             split_scroll_sync: true,
             open_at_cursor: true,

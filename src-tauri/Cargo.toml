@@ -1,6 +1,6 @@
 [package]
 name = "floral-notepaper"
-version = "1.1.8"
+version = "1.1.9"
 description = "A lightweight cross-platform desktop note app"
 authors = ["Achilng"]
 edition = "2021"
@@ -42,6 +42,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 blake3 = "1"
 dirs = "6"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+encoding_rs = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

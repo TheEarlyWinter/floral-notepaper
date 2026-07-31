@@ -168,7 +168,10 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
                 value={config.accentColor || "#3a7a52"}
                 onChange={(event) => {
                   setConfigValue("accentColor", event.target.value);
-                  applyAccentColor(event.target.value, (config.presetTheme || "default") as PresetTheme);
+                  applyAccentColor(
+                    event.target.value,
+                    (config.presetTheme || "default") as PresetTheme,
+                  );
                 }}
                 className="w-10 h-8 rounded-lg border border-paper-deep/40 bg-paper-warm/70 cursor-pointer"
               />
@@ -286,6 +289,11 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             label={t("settings.tileRenderMarkdown", { defaultValue: "磁贴渲染 Markdown" })}
             checked={config.tileRenderMarkdown}
             onChange={(checked) => setConfigValue("tileRenderMarkdown", checked)}
+          />
+          <ToggleRow
+            label={t("settings.tileDesktopOnly", { defaultValue: "磁贴仅在桌面显示" })}
+            checked={config.tileDesktopOnly ?? false}
+            onChange={(checked) => setConfigValue("tileDesktopOnly", checked)}
           />
           <ToggleRow
             label={t("settings.tileDoubleClickToEdit", { defaultValue: "双击磁贴进入编辑" })}

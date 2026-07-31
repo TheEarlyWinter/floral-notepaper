@@ -145,6 +145,11 @@ export function readExternalFile(path: string): Promise<string> {
   return invoke("read_external_file", { path });
 }
 
+/** Allow relative image assets next to a file the user explicitly opened. */
+export function prepareExternalFileImages(path: string): Promise<string> {
+  return invoke("external_file_image_base_dir", { path });
+}
+
 export function saveExternalFile(path: string, content: string): Promise<void> {
   return invoke("save_external_file", { path, content });
 }

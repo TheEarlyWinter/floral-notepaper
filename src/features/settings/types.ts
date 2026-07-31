@@ -42,6 +42,8 @@ export interface AppConfig {
   tileDoubleClickToEdit: boolean;
   tileSaveReturnsToPin: boolean;
   tileRenderMarkdown: boolean;
+  /** Keep pinned tiles below normal windows so they are visible on the desktop only. */
+  tileDesktopOnly: boolean;
   renderHtmlMarkdown: boolean;
   splitScrollSync: boolean;
   surfaceWidth?: number;

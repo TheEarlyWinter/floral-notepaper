@@ -16,8 +16,11 @@ import {
   animateCurrentWindowBounds,
   closeCurrentWindow,
   getCurrentWindowBounds,
+  getCurrentWindowScaleFactor,
   recycleCurrentNotepad,
+  setCurrentWindowAlwaysOnBottom,
   setCurrentWindowAlwaysOnTop,
+  setCurrentWindowMinimumSize,
   showCurrentWindow,
   startCurrentWindowDrag,
   startCurrentWindowDragWithOffset,
@@ -42,7 +45,9 @@ import {
 } from "../features/windows/surfaceActions";
 import {
   NOTE_SURFACE_MODE_EVENT,
+  SURFACE_WINDOW_MIN_SIZES,
   getSurfaceTargetBounds,
+  getSurfaceWindowLayer,
   surfaceModeFromEvent,
 } from "../features/windows/surfaceMode";
 import type { NoteSurfaceMode } from "../features/windows/surfaceMode";
@@ -99,6 +104,20 @@ function isTileControlDoubleClickTarget(target: EventTarget | null): boolean {
 
 const TILE_DRAG_START_THRESHOLD_PX = 5;
 
+async function applySurfaceWindowLayer(
+  surfaceMode: NoteSurfaceMode,
+  tileDesktopOnly: boolean,
+): Promise<void> {
+  if (getSurfaceWindowLayer(surfaceMode, tileDesktopOnly) === "desktop") {
+    await setCurrentWindowAlwaysOnTop(false);
+    await setCurrentWindowAlwaysOnBottom(true);
+    return;
+  }
+
+  await setCurrentWindowAlwaysOnBottom(false);
+  await setCurrentWindowAlwaysOnTop(true);
+}
+
 function SurfaceResizeHandles() {
   return (
     <>
@@ -138,6 +157,7 @@ export function NotePad({
   const [tileColorMode, setTileColorMode] = useState<TileColorMode>("system");
   const [surfaceFontSize, setSurfaceFontSize] = useState(14);
   const [tileRenderMarkdown, setTileRenderMarkdown] = useState(false);
+  const [tileDesktopOnly, setTileDesktopOnly] = useState<boolean | null>(null);
   const [tileDoubleClickToEdit, setTileDoubleClickToEdit] = useState(false);
   const [tileSaveReturnsToPin, setTileSaveReturnsToPin] = useState(false);
   const [tileColor, setTileColor] = useState(() =>
@@ -157,6 +177,7 @@ export function NotePad({
   tileColorModeRef.current = tileColorMode;
   const tileColorRawRef = useRef(tileColorRaw);
   tileColorRawRef.current = tileColorRaw;
+  const tileDesktopOnlyRef = useRef(false);
   const isStandby = useRef(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("standby") === "1",
@@ -212,6 +233,9 @@ export function NotePad({
           setNoteSurfaceAutoSave(loadedConfig.noteSurfaceAutoSave);
           setSurfaceFontSize(loadedConfig.surfaceFontSize ?? 14);
           setTileRenderMarkdown(loadedConfig.tileRenderMarkdown ?? false);
+          const desktopOnly = loadedConfig.tileDesktopOnly ?? false;
+          tileDesktopOnlyRef.current = desktopOnly;
+          setTileDesktopOnly(desktopOnly);
           setTileDoubleClickToEdit(loadedConfig.tileDoubleClickToEdit ?? false);
           setTileSaveReturnsToPin(loadedConfig.tileSaveReturnsToPin ?? false);
           setTileColorRaw(normalizeTileColor(loadedConfig.tileColor));
@@ -268,6 +292,7 @@ export function NotePad({
       tileColorMode?: TileColorMode;
       surfaceFontSize?: number;
       tileRenderMarkdown?: boolean;
+      tileDesktopOnly?: boolean;
       tileDoubleClickToEdit?: boolean;
       tileSaveReturnsToPin?: boolean;
     }>("config-changed", (event) => {
@@ -279,6 +304,10 @@ export function NotePad({
       if (event.payload.surfaceFontSize != null) setSurfaceFontSize(event.payload.surfaceFontSize);
       if (event.payload.tileRenderMarkdown != null)
         setTileRenderMarkdown(event.payload.tileRenderMarkdown);
+      if (event.payload.tileDesktopOnly != null) {
+        tileDesktopOnlyRef.current = event.payload.tileDesktopOnly;
+        setTileDesktopOnly(event.payload.tileDesktopOnly);
+      }
       if (event.payload.tileDoubleClickToEdit != null)
         setTileDoubleClickToEdit(event.payload.tileDoubleClickToEdit);
       if (event.payload.tileSaveReturnsToPin != null)
@@ -439,13 +468,14 @@ export function NotePad({
       }
 
       try {
-        const currentBounds = await getCurrentWindowBounds();
-        const targetBounds = getSurfaceTargetBounds(nextMode, currentBounds);
+        await setCurrentWindowMinimumSize(SURFACE_WINDOW_MIN_SIZES[nextMode]);
+        const [currentBounds, scaleFactor] = await Promise.all([
+          getCurrentWindowBounds(),
+          getCurrentWindowScaleFactor(),
+        ]);
+        const targetBounds = getSurfaceTargetBounds(nextMode, currentBounds, scaleFactor);
 
-        if (nextMode === "tile") {
-          await setCurrentWindowAlwaysOnTop(true);
-        }
-
+        await applySurfaceWindowLayer(nextMode, tileDesktopOnlyRef.current);
         await animateCurrentWindowBounds(targetBounds);
       } catch (error) {
         showToast(getErrorMessage(error));
@@ -468,9 +498,10 @@ export function NotePad({
   }, [switchSurfaceMode]);
 
   useEffect(() => {
-    if (surfaceMode !== "tile") return;
-    void setCurrentWindowAlwaysOnTop(true).catch(() => undefined);
-  }, [surfaceMode]);
+    // 未读取配置前不改动后端创建窗口时已设好的层级，避免桌面模式闪到顶层。
+    if (tileDesktopOnly === null) return;
+    void applySurfaceWindowLayer(surfaceMode, tileDesktopOnly).catch(() => undefined);
+  }, [surfaceMode, tileDesktopOnly]);
 
   const handleSave = useCallback(
     async ({ isAutoSave = false }: { isAutoSave?: boolean } = {}) => {

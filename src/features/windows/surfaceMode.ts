@@ -12,15 +12,39 @@ export const SURFACE_WINDOW_SIZES: Record<
   tile: { width: 260, height: 260 },
 };
 
+/** Logical-pixel minimums. Tiles can stay compact; the editor always has room for controls. */
+export const SURFACE_WINDOW_MIN_SIZES: Record<
+  NoteSurfaceMode,
+  Pick<WindowBounds, "width" | "height">
+> = {
+  pad: { width: 220, height: 220 },
+  tile: { width: 140, height: 96 },
+};
+
+export type SurfaceWindowLayer = "alwaysOnTop" | "desktop";
+
+export function getSurfaceWindowLayer(
+  mode: NoteSurfaceMode,
+  tileDesktopOnly: boolean,
+): SurfaceWindowLayer {
+  return mode === "tile" && tileDesktopOnly ? "desktop" : "alwaysOnTop";
+}
+
 export function isNoteSurfaceMode(value: unknown): value is NoteSurfaceMode {
   return value === "pad" || value === "tile";
 }
 
 export function getSurfaceTargetBounds(
-  _mode: NoteSurfaceMode,
+  mode: NoteSurfaceMode,
   current: WindowBounds,
+  scaleFactor = 1,
 ): WindowBounds {
-  return current;
+  const minimum = SURFACE_WINDOW_MIN_SIZES[mode];
+  return {
+    ...current,
+    width: Math.max(current.width, Math.ceil(minimum.width * scaleFactor)),
+    height: Math.max(current.height, Math.ceil(minimum.height * scaleFactor)),
+  };
 }
 
 export function requestSurfaceMode(mode: NoteSurfaceMode): void {

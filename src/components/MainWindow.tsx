@@ -61,6 +61,7 @@ import {
   createCategory,
   deleteCategory,
   openDailyNote,
+  prepareExternalFileImages,
   restoreNoteVersion,
   deleteNote,
   getErrorMessage,
@@ -201,14 +202,14 @@ type FormatAction =
   | "inlineMath"
   | "blockMath";
 
-function applyFormat(
+export function applyFormat(
   textarea: HTMLTextAreaElement,
   action: FormatAction,
   translate: TFunction,
   setContent: (v: string) => void,
   markDirty: () => void,
 ) {
-  const { selectionStart: start, selectionEnd: end, value } = textarea;
+  const { selectionStart: start, selectionEnd: end, value, scrollTop, scrollLeft } = textarea;
   const selected = value.slice(start, end);
   const before = value.slice(0, start);
   const after = value.slice(end);
@@ -365,6 +366,10 @@ function applyFormat(
   markDirty();
   requestAnimationFrame(() => {
     textarea.setSelectionRange(cursorStart, cursorEnd);
+    // React's controlled-value reconciliation or selection restoration can scroll a
+    // textarea back to the beginning. Put the viewport back after both operations.
+    textarea.scrollTop = scrollTop;
+    textarea.scrollLeft = scrollLeft;
   });
 }
 
@@ -414,6 +419,7 @@ export function MainWindow({
   const { t } = useTranslation();
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
   const [externalFiles, setExternalFiles] = useState<ExternalFile[]>([]);
+  const [externalImageBaseDir, setExternalImageBaseDir] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
@@ -773,6 +779,7 @@ export function MainWindow({
       pinnedValueRef.current = nextPinned;
       setNoteTags(nextTags);
       setIsPinned(nextPinned);
+      setExternalImageBaseDir(null);
     },
     [loadEpoch],
   );
@@ -821,6 +828,7 @@ export function MainWindow({
     setContent("");
     setNoteTags([]);
     setIsPinned(false);
+    setExternalImageBaseDir(null);
     setSaveState("idle");
   }, [loadEpoch]);
 
@@ -828,9 +836,10 @@ export function MainWindow({
     async (filePath: string) => {
       const epoch = loadEpoch.bump();
       try {
-        const [fileContent, mtime] = await Promise.all([
+        const [fileContent, mtime, externalImageDir] = await Promise.all([
           readExternalFile(filePath),
           getFileModifiedTime(filePath),
+          prepareExternalFileImages(filePath).catch(() => null),
         ]);
         const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
         const displayTitle = fileName.replace(/\.(md|markdown|txt)$/i, "");
@@ -860,6 +869,7 @@ export function MainWindow({
         setContent(fileContent);
         setNoteTags([]);
         setIsPinned(false);
+        setExternalImageBaseDir(externalImageDir);
         tagsValueRef.current = [];
         pinnedValueRef.current = false;
         setSaveState("saved");
@@ -1478,17 +1488,26 @@ export function MainWindow({
     settingsConfig?.externalFileAutoSave,
   ]);
 
-  const handleNewNote = async () => {
+  const handleNewNote = async (category?: string) => {
     await saveCurrentNote();
     try {
+      const targetCategory = category ?? activeCategory;
       const template = templates.find((item) => item.id === selectedTemplateId);
       const note = await createNote({
         title: "",
         content: template ? renderTemplateContent(template.content) : "",
-        category: activeCategory,
+        category: targetCategory,
       });
       replaceNoteMetadata(note);
       applyNote(note);
+      setActiveCategory(targetCategory);
+      if (targetCategory) {
+        setCollapsedCategories((current) => {
+          const next = new Set(current);
+          next.delete(targetCategory);
+          return next;
+        });
+      }
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -1802,9 +1821,10 @@ export function MainWindow({
     setIsLoading(true);
     const epoch = loadEpoch.bump();
     try {
-      const [fileContent, mtime] = await Promise.all([
+      const [fileContent, mtime, externalImageDir] = await Promise.all([
         readExternalFile(file.filePath),
         getFileModifiedTime(file.filePath),
+        prepareExternalFileImages(file.filePath).catch(() => null),
       ]);
       if (!loadEpoch.isCurrent(epoch)) return;
       editRevisionRef.current += 1;
@@ -1817,6 +1837,7 @@ export function MainWindow({
       setContent(fileContent);
       setNoteTags([]);
       setIsPinned(false);
+      setExternalImageBaseDir(externalImageDir);
       tagsValueRef.current = [];
       pinnedValueRef.current = false;
       setSaveState("saved");
@@ -2725,7 +2746,7 @@ export function MainWindow({
                   <span>笔记仪表盘</span>
                 </button>
                 <button
-                  onClick={handleNewNote}
+                  onClick={() => void handleNewNote()}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-bamboo hover:bg-bamboo-mist/60 transition-all cursor-pointer group"
                 >
                   <svg
@@ -3101,7 +3122,36 @@ export function MainWindow({
                               {group.category}
                             </span>
                           )}
-                          <span className="text-[9px] text-bamboo/40 font-mono ml-auto shrink-0">
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleNewNote(group.category);
+                            }}
+                            className="ml-auto w-5 h-5 flex items-center justify-center rounded text-bamboo/45 hover:text-bamboo hover:bg-bamboo/10 transition-colors cursor-pointer"
+                            title={t("main.category.newNoteIn", {
+                              category: group.category,
+                              defaultValue: `在「${group.category}」中新建笔记`,
+                            })}
+                            aria-label={t("main.category.newNoteIn", {
+                              category: group.category,
+                              defaultValue: `在「${group.category}」中新建笔记`,
+                            })}
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                            >
+                              <path d="M12 5v14M5 12h14" />
+                            </svg>
+                          </button>
+                          <span className="text-[9px] text-bamboo/40 font-mono shrink-0">
                             {group.notes.length}
                           </span>
                         </div>
@@ -3988,7 +4038,10 @@ export function MainWindow({
                           content={deferredContent}
                           fontSize={settingsConfig?.fontSize ?? 14}
                           renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
-                          imageBaseDir={imageBaseDir ?? undefined}
+                          imageBaseDir={isExternal ? undefined : (imageBaseDir ?? undefined)}
+                          externalImageBaseDir={
+                            isExternal ? (externalImageBaseDir ?? undefined) : undefined
+                          }
                           onOpenWikiLink={handleOpenWikiLink}
                         />
                       </div>

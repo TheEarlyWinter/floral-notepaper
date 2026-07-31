@@ -6,6 +6,10 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `asset://${path}`,
+}));
+
 describe("MarkdownPreview", () => {
   test("marks rendered Markdown content as selectable", () => {
     const markup = renderToStaticMarkup(<MarkdownPreview content="# 花笺\n\n正文" />);
@@ -34,5 +38,16 @@ describe("MarkdownPreview", () => {
     expect(markup).toContain("markdown-code-scroll");
     expect(preCloseIndex).toBeGreaterThan(-1);
     expect(buttonIndex).toBeGreaterThan(preCloseIndex);
+  });
+
+  test("renders a relative external Markdown image through the approved asset base", () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPreview
+        content="![流程图](./assets/flow.png)"
+        externalImageBaseDir="C:/Users/Alice/Documents/project"
+      />,
+    );
+
+    expect(markup).toContain("asset://C:/Users/Alice/Documents/project/assets/flow.png");
   });
 });

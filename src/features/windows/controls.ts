@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
+import { LogicalSize, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { WindowBounds } from "./api";
 
@@ -39,6 +39,21 @@ export function isCurrentWindowMaximized(): Promise<boolean> {
 
 export function setCurrentWindowAlwaysOnTop(enabled: boolean): Promise<void> {
   return getCurrentWindow().setAlwaysOnTop(enabled);
+}
+
+export function setCurrentWindowAlwaysOnBottom(enabled: boolean): Promise<void> {
+  return getCurrentWindow().setAlwaysOnBottom(enabled);
+}
+
+export function setCurrentWindowMinimumSize(size: {
+  width: number;
+  height: number;
+}): Promise<void> {
+  return getCurrentWindow().setMinSize(new LogicalSize(size.width, size.height));
+}
+
+export function getCurrentWindowScaleFactor(): Promise<number> {
+  return getCurrentWindow().scaleFactor();
 }
 
 export function startCurrentWindowDrag(): Promise<void> {

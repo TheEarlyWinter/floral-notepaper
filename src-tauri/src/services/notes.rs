@@ -90,6 +90,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub tile_render_markdown: bool,
     #[serde(default)]
+    pub tile_desktop_only: bool,
+    #[serde(default)]
     pub render_html_markdown: bool,
     #[serde(default = "default_split_scroll_sync")]
     pub split_scroll_sync: bool,
@@ -1743,6 +1745,7 @@ impl NoteStore {
             tile_double_click_to_edit: false,
             tile_save_returns_to_pin: false,
             tile_render_markdown: false,
+            tile_desktop_only: false,
             render_html_markdown: false,
             split_scroll_sync: true,
             surface_width: None,
@@ -3047,6 +3050,7 @@ mod tests {
         assert_eq!(default_config.tile_color_mode, "system");
         assert!(!default_config.tile_double_click_to_edit);
         assert!(!default_config.tile_save_returns_to_pin);
+        assert!(!default_config.tile_desktop_only);
         assert_eq!(default_config.theme, "system");
         assert_eq!(default_config.preset_theme, "default");
         assert_eq!(default_config.code_theme, "light");
@@ -3089,6 +3093,7 @@ mod tests {
             tile_double_click_to_edit: true,
             tile_save_returns_to_pin: true,
             tile_render_markdown: false,
+            tile_desktop_only: true,
             render_html_markdown: false,
             split_scroll_sync: true,
             surface_width: None,
