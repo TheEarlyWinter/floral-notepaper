@@ -1,0 +1,320 @@
+name: 发行版（无签名）
+
+# 无代码签名配置时的发布流水线。
+# 推 v* tag 触发：校验版本 → Windows 构建（NSIS 安装版 + 便携版）→ 创建草稿 Release 并上传资产。
+# 当仓库配置了 SIGNPATH_* 变量时，本 workflow 自动跳过，由 release.yml（签名版）接管。
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-nosign-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN: "1.96.1"
+
+jobs:
+  validate-release:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    if: ${{ vars.SIGNPATH_ORGANIZATION_ID == '' }}
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate source, versions, and release note
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_version="$(jq -r '.version' package.json)"
+          tauri_version="$(jq -r '.version' src-tauri/tauri.conf.json)"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            echo "Unsupported release source: $GITHUB_REF_TYPE $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use the stable SemVer form vMAJOR.MINOR.PATCH: $tag" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          release_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+
+          for entry in \
+            "package.json:$package_version" \
+            "src-tauri/tauri.conf.json:$tauri_version" \
+            "src-tauri/Cargo.toml:$cargo_version"; do
+            file="${entry%%:*}"
+            expected="${entry#*:}"
+            if [[ "$expected" != "$version" ]]; then
+              echo "Version mismatch: $file declares $expected, expected $version from tag $tag." >&2
+              exit 1
+            fi
+          done
+
+          release_note_file="Docs/release-note/${version}.md"
+          if [[ ! -f "$release_note_file" ]]; then
+            echo "Release note file not found: $release_note_file" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "$release_commit" refs/remotes/origin/main; then
+            echo "Release tag $tag must point to a commit contained in main." >&2
+            exit 1
+          fi
+
+          remote_tag_commit="$(
+            git ls-remote origin \
+              "refs/tags/${tag}" \
+              "refs/tags/${tag}^{}" |
+              awk '
+                $2 ~ /\^\{\}$/ { peeled = $1 }
+                $2 !~ /\^\{\}$/ { direct = $1 }
+                END {
+                  if (peeled != "") print peeled
+                  else print direct
+                }
+              '
+          )"
+          if [[ -z "$remote_tag_commit" ]]; then
+            echo "Release tag no longer exists on origin: $tag" >&2
+            exit 1
+          fi
+          if [[ "$remote_tag_commit" != "$release_commit" ]]; then
+            echo "Release tag $tag moved: expected $release_commit, got $remote_tag_commit." >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$release_commit" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    name: Build Windows release assets
+    needs: validate-release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build NSIS installer and portable executable
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run tauri -- build --bundles nsis --no-sign
+
+      - name: Collect release assets
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $releaseDir = 'release-assets'
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+
+          $portableSource = 'src-tauri/target/release/floral-notepaper.exe'
+          if (-not (Test-Path -LiteralPath $portableSource -PathType Leaf)) {
+            throw "Windows portable executable was not found at $portableSource."
+          }
+          Copy-Item -LiteralPath $portableSource -Destination (Join-Path $releaseDir "floral-notepaper_$($env:RELEASE_VERSION).exe") -Force
+
+          $nsisCandidates = Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis' -Filter '*setup.exe' -File
+          if ($nsisCandidates.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($nsisCandidates.Count)."
+          }
+          Copy-Item -LiteralPath $nsisCandidates[0].FullName -Destination (Join-Path $releaseDir "floral-notepaper_$($env:RELEASE_VERSION)_x64-setup.exe") -Force
+
+          foreach ($file in (Get-ChildItem -Path $releaseDir -File)) {
+            $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
+            $escapedVersion = [Regex]::Escape($env:RELEASE_VERSION)
+            $expectedVersionPattern = "^$escapedVersion(?:\.0)?(?:[+ -]|$)"
+            foreach ($entry in @{
+                FileVersion = $versionInfo.FileVersion
+                ProductVersion = $versionInfo.ProductVersion
+              }.GetEnumerator()) {
+              if ([string]::IsNullOrWhiteSpace($entry.Value) -or $entry.Value -notmatch $expectedVersionPattern) {
+                throw "Unexpected PE $($entry.Key) for $($file.Name): expected $env:RELEASE_VERSION, got $($entry.Value)."
+              }
+            }
+          }
+
+          Get-ChildItem -Path $releaseDir -File | ForEach-Object {
+            Write-Host "ASSET: $($_.Name) ($($_.Length) bytes)"
+          }
+
+      - name: Upload release assets
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-release-assets
+          path: release-assets
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+  publish-draft-release:
+    name: Publish assets to draft release
+    needs:
+      - validate-release
+      - build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Download Windows release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-release-assets
+          path: release-assets
+
+      - name: Validate release assets and generate checksums
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.validate-release.outputs.commit }}
+          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          required_assets=(
+            "floral-notepaper_${RELEASE_VERSION}.exe"
+            "floral-notepaper_${RELEASE_VERSION}_x64-setup.exe"
+          )
+          for asset in "${required_assets[@]}"; do
+            if [[ ! -f "release-assets/$asset" ]]; then
+              echo "Required release asset is missing: $asset" >&2
+              exit 1
+            fi
+          done
+
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "commit=$RELEASE_COMMIT"
+            echo "workflow_run_id=$WORKFLOW_RUN_ID"
+            echo "workflow_run_attempt=$WORKFLOW_RUN_ATTEMPT"
+            echo "signing=none"
+          } > release-assets/BUILD-INFO.txt
+
+          find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  release-assets/#  #' \
+            > release-assets/SHA256SUMS.txt
+
+      - name: Create or update draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ needs.validate-release.outputs.commit }}
+          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate-release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "$RELEASE_COMMIT" refs/remotes/origin/main; then
+            echo "Release commit $RELEASE_COMMIT is no longer contained in main." >&2
+            exit 1
+          fi
+
+          remote_tag_commit="$(
+            git ls-remote origin \
+              "refs/tags/${RELEASE_TAG}" \
+              "refs/tags/${RELEASE_TAG}^{}" |
+              awk '
+                $2 ~ /\^\{\}$/ { peeled = $1 }
+                $2 !~ /\^\{\}$/ { direct = $1 }
+                END {
+                  if (peeled != "") print peeled
+                  else print direct
+                }
+              '
+          )"
+          if [[ -z "$remote_tag_commit" || "$remote_tag_commit" != "$RELEASE_COMMIT" ]]; then
+            echo "Release tag $RELEASE_TAG was deleted or moved before publishing." >&2
+            echo "Expected $RELEASE_COMMIT, got ${remote_tag_commit:-<missing>}." >&2
+            exit 1
+          fi
+
+          release_note_file="Docs/release-note/${RELEASE_VERSION}.md"
+          if [[ ! -f "$release_note_file" ]]; then
+            echo "Release note file not found: $release_note_file" >&2
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "Release $RELEASE_TAG is already published and will not be overwritten." >&2
+              exit 1
+            fi
+
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "$RELEASE_TAG" \
+              --notes-file "$release_note_file"
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "$RELEASE_TAG" \
+              --notes-file "$release_note_file" \
+              --verify-tag
+          fi
+
+          gh release upload "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

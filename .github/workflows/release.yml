@@ -19,6 +19,8 @@ jobs:
   validate-release:
     name: Validate release source
     runs-on: ubuntu-latest
+    # 未配置 SIGNPATH 签名变量时，本 workflow 整体跳过，由 release-nosign.yml 接管发布。
+    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
     permissions:
       contents: read
     outputs:
