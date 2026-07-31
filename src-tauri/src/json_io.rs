@@ -32,7 +32,8 @@ fn temporary_json_path(path: &Path) -> PathBuf {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("state.json");
-    path.with_file_name(format!("{file_name}.tmp"))
+    // 临时文件带 pid：CLI 与 GUI 双进程同时写同一 JSON 时不会互踩
+    path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()))
 }
 
 #[cfg(not(target_os = "windows"))]

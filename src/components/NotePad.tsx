@@ -431,7 +431,7 @@ export function NotePad({
     [content, editingNoteId, title],
   );
 
-  const imageBaseDir = useImageBaseDir();
+  const { dir: imageBaseDir } = useImageBaseDir();
 
   const ensureNoteSaved = useCallback(async (): Promise<string | null> => {
     if (editingNoteId) return editingNoteId;
@@ -623,8 +623,18 @@ export function NotePad({
     }
   };
 
-  const handleClose = useCallback(() => {
+  const handleClose = useCallback(async () => {
     setIsExiting(true);
+    // 关闭/回收前先落盘未保存草稿：防抖窗口内的输入不能静默丢弃
+    if (statusRef.current === "dirty" || statusRef.current === "saveFailed") {
+      try {
+        await saveNote();
+      } catch (error) {
+        setIsExiting(false);
+        showToast(getErrorMessage(error));
+        return;
+      }
+    }
     if (surfaceMode === "tile") {
       void closeCurrentWindow().catch((error) => {
         setIsExiting(false);
@@ -651,7 +661,7 @@ export function NotePad({
         setIsExiting(false);
         showToast(getErrorMessage(error));
       });
-  }, [surfaceMode]);
+  }, [surfaceMode, saveNote]);
 
   const copyTileContent = useCallback(async () => {
     try {

@@ -33,7 +33,18 @@ fn load(data_dir: &Path) -> Result<ReminderFile, AppError> {
     if !file_path.exists() {
         return Ok(ReminderFile::default());
     }
-    Ok(serde_json::from_str(&fs::read_to_string(file_path)?)?)
+    match serde_json::from_str(&fs::read_to_string(&file_path)?) {
+        Ok(file) => Ok(file),
+        Err(_) => {
+            // 损坏自愈：保留坏文件副本并重置为空，避免提醒功能永久不可用
+            let backup_path = file_path.with_file_name(format!(
+                "reminders.json.corrupt-{}",
+                Utc::now().format("%Y%m%d%H%M%S")
+            ));
+            let _ = fs::rename(&file_path, &backup_path);
+            Ok(ReminderFile::default())
+        }
+    }
 }
 
 fn save(data_dir: &Path, file: &ReminderFile) -> Result<(), AppError> {
@@ -71,15 +82,30 @@ pub fn delete(data_dir: &Path, id: &str) -> Result<(), AppError> {
 
 pub fn take_due(data_dir: &Path, now: DateTime<Utc>) -> Result<Vec<Reminder>, AppError> {
     let _guard = lock()?;
+    let file = load(data_dir)?;
+    // 只取出到期提醒，不在此处标记已通知：通知真正送达（emit 成功）后
+    // 才由 mark_notified 确认，避免"先标记后通知"导致提醒永久丢失
+    Ok(file
+        .reminders
+        .into_iter()
+        .filter(|reminder| !reminder.notified && reminder.remind_at <= now)
+        .collect())
+}
+
+pub fn mark_notified(data_dir: &Path, id: &str) -> Result<(), AppError> {
+    let _guard = lock()?;
     let mut file = load(data_dir)?;
-    let due = file.reminders.iter_mut().filter_map(|reminder| {
-        if !reminder.notified && reminder.remind_at <= now {
+    let mut changed = false;
+    for reminder in &mut file.reminders {
+        if reminder.id == id && !reminder.notified {
             reminder.notified = true;
-            Some(reminder.clone())
-        } else { None }
-    }).collect::<Vec<_>>();
-    if !due.is_empty() { save(data_dir, &file)?; }
-    Ok(due)
+            changed = true;
+        }
+    }
+    if changed {
+        save(data_dir, &file)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -105,11 +131,17 @@ mod tests {
         )
         .expect("create reminder");
 
+        // 通知送达前仍会返回到期提醒（不标记）
         let due = take_due(&data_dir, now).expect("take due reminder");
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].id, created.id);
-        assert!(due[0].notified);
-        assert!(take_due(&data_dir, now).expect("take due again").is_empty());
+        assert!(!due[0].notified);
+        let due_again = take_due(&data_dir, now).expect("take due again");
+        assert_eq!(due_again.len(), 1);
+
+        // 确认已通知后不再返回
+        mark_notified(&data_dir, &created.id).expect("mark notified");
+        assert!(take_due(&data_dir, now).expect("take due after notified").is_empty());
         assert!(list(&data_dir).expect("list reminders")[0].notified);
 
         let _ = fs::remove_dir_all(data_dir);

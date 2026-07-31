@@ -26,6 +26,22 @@ function normalizeHeadingText(raw: string): string {
   return raw.replace(/[ \t]+#+[ \t]*$/, "").trim();
 }
 
+/**
+ * 剥离行内标记后再 slug：rehype-slug 对渲染后的文本节点生成 id，
+ * 大纲如果对原始 Markdown（如 `**重点**`）做 slug，生成的 id 与预览
+ * DOM 不一致，点击大纲将无法定位。
+ */
+function stripInlineMarkdown(text: string): string {
+  return text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__)([^*_]*)\1/g, "$2")
+    .replace(/~~([^~]*)~~/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]*)\*(?=$|[^*])/g, "$1$2")
+    .replace(/(^|[^_])_([^_\n]*)_(?=$|[^_])/g, "$1$2")
+    .trim();
+}
+
 export function extractOutlineHeadings(content: string): OutlineHeading[] {
   const headings: OutlineHeading[] = [];
   const slugger = new GithubSlugger();
@@ -54,7 +70,7 @@ export function extractOutlineHeadings(content: string): OutlineHeading[] {
     headings.push({
       level: match[1].length,
       text,
-      id: slugger.slug(text) || `heading-${headings.length + 1}`,
+      id: slugger.slug(stripInlineMarkdown(text)) || `heading-${headings.length + 1}`,
       line: index + 1,
     });
   });

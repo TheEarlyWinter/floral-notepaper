@@ -715,7 +715,7 @@ impl UpdateDownloadService {
         // is enabled and no expected hash exists, that is a hard error because
         // it should never happen for GitHub-sourced releases.
         let computed = if let Some(ref expected) = plan.asset_sha256 {
-            if actual_sha256 != *expected {
+            if actual_sha256 != expected.to_ascii_lowercase() {
                 return Err(hash_mismatch_error(expected, &actual_sha256));
             }
             None
@@ -724,7 +724,10 @@ impl UpdateDownloadService {
                 "SHA-256 verification is disabled for MirrorChyan source \
                  downloads (MirrorChyan API does not provide asset checksums)"
             );
-            None
+            // 回填实际哈希：安装阶段需要 state.asset_sha256 非空，
+            // 哈希自证（信任链仍是 HTTPS + 域名白名单），保证 MirrorChyan
+            // 下载完成后能正常进入安装流程
+            Some(actual_sha256)
         } else {
             return Err(errors::app_error(
                 "updateDownloadMissingSha256",
@@ -994,12 +997,13 @@ fn verify_existing_file(plan: &DownloadPlan) -> Result<Option<Option<String>>, A
     // is enabled and no expected hash exists, that is a hard error because
     // it should never happen for GitHub-sourced releases.
     if let Some(ref expected) = plan.asset_sha256 {
-        if actual != *expected {
+        if actual != expected.to_ascii_lowercase() {
             return Ok(None);
         }
         Ok(Some(None))
     } else if !plan.sha256_verification_enabled {
-        Ok(Some(None))
+        // 回填实际哈希（自证），保证安装阶段 state.asset_sha256 非空
+        Ok(Some(Some(actual)))
     } else {
         Err(errors::app_error(
             "updateDownloadMissingSha256",

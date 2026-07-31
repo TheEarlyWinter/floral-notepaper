@@ -43,6 +43,7 @@ blake3 = "1"
 dirs = "6"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 encoding_rs = "0.8"
+fs4 = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

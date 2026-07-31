@@ -124,8 +124,12 @@ impl UpdateManifest {
 }
 
 pub fn parse_manifest(manifest_bytes: &[u8]) -> Result<UpdateManifest, AppError> {
-    let manifest: UpdateManifest =
+    let mut manifest: UpdateManifest =
         serde_json::from_slice(manifest_bytes).map_err(errors::invalid_manifest)?;
+    // 统一 sha256 为小写：发布清单中的大写十六进制哈希不应导致校验误判
+    for asset in &mut manifest.assets {
+        asset.sha256 = asset.sha256.to_ascii_lowercase();
+    }
     manifest.validate()?;
     Ok(manifest)
 }
@@ -161,6 +165,24 @@ pub fn select_asset(
 fn validate_asset(asset: &UpdateManifestAsset) -> Result<(), AppError> {
     if asset.name.trim().is_empty() {
         return Err(errors::invalid_manifest("asset.name 不能为空"));
+    }
+    // 拒绝路径穿越：asset.name 必须是单一文件名，不能含路径分隔符、
+    // 绝对路径、`.` / `..` 或 Windows 盘符前缀
+    let name = asset.name.trim();
+    let name_is_plain = name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains(':')
+        && std::path::Path::new(name)
+            .file_name()
+            .and_then(|value| value.to_str())
+            == Some(name);
+    if !name_is_plain {
+        return Err(errors::invalid_manifest(format!(
+            "asset.name 不能包含路径：{}",
+            asset.name
+        )));
     }
 
     if asset.size == 0 {

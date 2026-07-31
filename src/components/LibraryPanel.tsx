@@ -19,6 +19,8 @@ interface LibraryPanelProps {
   noteTitle: string;
   onClose: () => void;
   onRestored: () => void;
+  /** 恢复前回调：返回 false 时中断恢复（用于先保存当前编辑内容） */
+  onBeforeRestore?: () => Promise<boolean | void>;
 }
 
 function readableSize(bytes: number) {
@@ -27,7 +29,7 @@ function readableSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function LibraryPanel({ noteId, noteTitle, onClose, onRestored }: LibraryPanelProps) {
+export function LibraryPanel({ noteId, noteTitle, onClose, onRestored, onBeforeRestore }: LibraryPanelProps) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [busy, setBusy] = useState(false);
@@ -70,6 +72,15 @@ export function LibraryPanel({ noteId, noteTitle, onClose, onRestored }: Library
     const path = await open({ multiple: false, directory: false, filters: [{ name: "ZIP 备份", extensions: ["zip"] }] });
     if (typeof path !== "string") return;
     if (!window.confirm("恢复会替换当前笔记库。花笺会先自动备份当前内容，确定继续吗？")) return;
+    if (onBeforeRestore) {
+      try {
+        const proceed = await onBeforeRestore();
+        if (proceed === false) return;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return;
+      }
+    }
     setBusy(true);
     try { await restoreBackup(path); await load(); onRestored(); showToast("备份已恢复，并已重新建立搜索索引"); }
     catch (error) { showToast(getErrorMessage(error)); }

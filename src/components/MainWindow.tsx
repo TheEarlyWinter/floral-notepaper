@@ -507,7 +507,7 @@ export function MainWindow({
   const prevSelectedIdRef = useRef(selectedId);
   const externalFileMtimeRef = useRef<number>(0);
   const lastExternalSaveRef = useRef<number>(0);
-  const imageBaseDir = useImageBaseDir();
+  const { dir: imageBaseDir, refresh: refreshImageBaseDir } = useImageBaseDir();
   const saveStateRef = useRef(saveState);
   // 每次用户编辑都会递增；保存完成时用它判断保存期间是否又产生了新修改，
   // 避免标签/置顶等不在正文里的修改被旧保存结果误标为“已保存”。
@@ -1445,7 +1445,11 @@ export function MainWindow({
       const shortcut = (settingsConfig?.closeTabShortcut || "Ctrl+W").trim();
       if (shortcut && matchShortcut(event, shortcut)) {
         event.preventDefault();
-        clearCurrentNote();
+        void (async () => {
+          // 关闭标签前先落盘：防抖窗口内的输入不能静默丢弃，保存失败则保留编辑器
+          const saved = await saveCurrentNote();
+          if (saved) clearCurrentNote();
+        })();
       }
       if (event.altKey && event.key === "ArrowLeft") {
         event.preventDefault();
@@ -1548,6 +1552,8 @@ export function MainWindow({
       const savedConfig = await migrateDataDir(dir);
       setSettingsConfig(savedConfig);
       setSavedDataDir(savedConfig.dataDir);
+      // 数据目录已变：刷新图片基准目录，否则已有笔记图片仍指向旧路径
+      refreshImageBaseDir();
       const loadedNotes = await refreshNotes();
       if (loadedNotes[0]) {
         await loadNote(loadedNotes[0].id);
@@ -2399,6 +2405,33 @@ export function MainWindow({
   const handleClose = () => {
     void closeCurrentWindow();
   };
+  // 任意关闭途径（标题栏按钮 / 系统关闭 / Alt+F4）都会触发 onCloseRequested：
+  // dirty 时先拦截并保存，保存成功再真正关闭；保存失败则留在窗口让用户处理。
+  const pendingCloseRef = useRef(false);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (pendingCloseRef.current) return;
+        if (saveStateRef.current !== "dirty") return;
+        event.preventDefault();
+        const saved = await saveCurrentNote();
+        if (saved) {
+          pendingCloseRef.current = true;
+          try {
+            await closeCurrentWindow();
+          } finally {
+            pendingCloseRef.current = false;
+          }
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, [saveCurrentNote]);
   const aboutButtonLabel = t("settings.update.title", { defaultValue: "更新" });
   const aboutButtonExpanded = aboutUpdateReminder.showText;
   const aboutButtonTitle = aboutUpdateReminder.hasPendingUpdate
@@ -4246,6 +4279,15 @@ export function MainWindow({
                   noteId={selectedId && !isExternal ? selectedId : null}
                   noteTitle={title}
                   onClose={() => setLibraryOpen(false)}
+                  onBeforeRestore={async () => {
+                    // 恢复会替换整个数据目录：先把当前编辑落盘，内容进入恢复前自动备份，
+                    // 即使恢复失败也能从保护备份找回，不会丢未保存的修改
+                    const saved = await saveCurrentNote();
+                    if (!saved) {
+                      showToast("当前笔记保存失败，已取消恢复");
+                    }
+                    return saved;
+                  }}
                   onRestored={() => {
                     setLibraryOpen(false);
                     void refreshNotes();

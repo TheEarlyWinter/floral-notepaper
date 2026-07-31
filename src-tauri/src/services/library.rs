@@ -10,9 +10,20 @@ use std::{
     fs,
     io::{Seek, Write},
     path::{Component, Path, PathBuf},
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+
+/// 附件清单（attachments.json）的进程内写锁：GUI 单实例下覆盖多窗口并发。
+static ATTACHMENT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn lock_attachments() -> Result<MutexGuard<'static, ()>, AppError> {
+    ATTACHMENT_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| err("attachmentLock", "附件存储锁已中毒，请重启应用后重试"))
+}
 
 const BACKUP_KEEP: usize = 30;
 const BACKUP_ITEMS: [&str; 7] = [
@@ -151,6 +162,7 @@ pub fn add_attachment(
     note_id: &str,
     source: &Path,
 ) -> Result<Attachment, AppError> {
+    let _lock = lock_attachments()?;
     if !source.is_file() {
         return Err(err("attachmentSource", "附件源文件不存在"));
     }
@@ -199,6 +211,7 @@ pub fn delete_attachment(
     note_id: &str,
     attachment_id: &str,
 ) -> Result<(), AppError> {
+    let _lock = lock_attachments()?;
     let mut file = load_attachments(data_dir)?;
     let index = file
         .attachments
@@ -214,6 +227,7 @@ pub fn delete_attachment(
 }
 
 pub fn delete_note_attachments(data_dir: &Path, note_id: &str) -> Result<(), AppError> {
+    let _lock = lock_attachments()?;
     let mut file = load_attachments(data_dir)?;
     file.attachments.retain(|item| item.note_id != note_id);
     save_attachments(data_dir, &file)?;
@@ -229,6 +243,7 @@ pub fn move_note_attachments(
     source_id: &str,
     target_id: &str,
 ) -> Result<(), AppError> {
+    let _lock = lock_attachments()?;
     let source = attachments_dir(data_dir, source_id)?;
     let target = attachments_dir(data_dir, target_id)?;
     if source.exists() {
@@ -445,17 +460,43 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
         return Err(error);
     }
 
+    // 替换数据目录内容：先把现有数据整体挪进 stash（不删除、可回滚），
+    // 再把 staging 内容放入目标位置，全部成功后才清理 stash。
+    // 相比逐项 remove_dir_all + rename，中途失败不会留下"半恢复"状态。
+    let stash = data_dir.join(format!(".restore-old-{}", Uuid::new_v4()));
+    fs::create_dir_all(&stash)?;
     for name in BACKUP_ITEMS {
         let target = data_dir.join(name);
         if target.exists() {
-            let _ = fs::remove_dir_all(&target);
-            let _ = fs::remove_file(&target);
-        }
-        let source = staging.join(name);
-        if source.exists() {
-            fs::rename(source, target)?;
+            fs::rename(&target, stash.join(name)).map_err(|error| {
+                err("restoreFailed", format!("暂存旧数据失败: {error}"))
+            })?;
         }
     }
+
+    let mut restored: Vec<&str> = Vec::new();
+    for name in BACKUP_ITEMS {
+        let source = staging.join(name);
+        if source.exists() {
+            if let Err(error) = fs::rename(&source, data_dir.join(name)) {
+                // 回滚：移除已放置的新数据，再把旧数据从 stash 挪回
+                for item in &restored {
+                    let _ = fs::remove_dir_all(data_dir.join(item));
+                    let _ = fs::remove_file(data_dir.join(item));
+                }
+                for item in BACKUP_ITEMS {
+                    let stashed = stash.join(item);
+                    if stashed.exists() {
+                        let _ = fs::rename(&stashed, data_dir.join(item));
+                    }
+                }
+                let _ = fs::remove_dir_all(&stash);
+                return Err(err("restoreFailed", format!("恢复数据失败: {error}")));
+            }
+            restored.push(name);
+        }
+    }
+    let _ = fs::remove_dir_all(&stash);
     let _ = fs::remove_dir_all(staging);
     Ok(())
 }

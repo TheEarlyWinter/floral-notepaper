@@ -7,6 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
 };
+use fs4::fs_std::FileExt;
 use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
@@ -26,6 +27,12 @@ const CORRUPT_METADATA_BACKUP_KEEP: usize = 5;
 // default_store() 会为每个命令创建一个新的 NoteStore；这把进程内锁覆盖完整
 // 读-改-写区间，避免多个窗口用旧 metadata.json 覆盖彼此的更新。
 static METADATA_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// 元数据写锁的持有凭证：进程内互斥 + 跨进程文件锁，析构时自动释放。
+struct MetadataLockGuard {
+    _process: MutexGuard<'static, ()>,
+    _file: fs::File,
+}
 // 每次应用进程首次接触一个数据目录时，扫描一次未登记 Markdown。
 // 这能恢复“文件已写入、metadata 尚未来得及提交”时留下的孤儿笔记，
 // 又避免每一条 IPC 请求都递归扫描整个笔记库。
@@ -979,12 +986,15 @@ impl NoteStore {
             fs::create_dir_all(parent)?;
         }
         let old_path = self.note_path_in_category(&old_file_name, &old_category)?;
-        if old_path.exists() {
-            let old_content = fs::read_to_string(&old_path)?;
-            if old_content != request.content {
-                self.save_note_version(id, &old_content)?;
+        let old_content = if old_path.exists() {
+            let content = fs::read_to_string(&old_path)?;
+            if content != request.content {
+                self.save_note_version(id, &content)?;
             }
-        }
+            Some(content)
+        } else {
+            None
+        };
         fs::write(&new_path, &request.content)?;
 
         note.title = request.title;
@@ -1009,7 +1019,16 @@ impl NoteStore {
             pinned: note.pinned,
         };
 
-        self.save_metadata(&metadata_file)?;
+        self.save_metadata(&metadata_file).map_err(|error| {
+            // 元数据提交失败时回滚刚写入的正文，避免"新正文配旧标题"的
+            // 不一致状态；旧文件位置未变则把旧内容写回去
+            if new_path != old_path {
+                let _ = fs::remove_file(&new_path);
+            } else if let Some(content) = old_content.as_ref() {
+                let _ = fs::write(&old_path, content);
+            }
+            error
+        })?;
         // 元数据提交成功后才清理旧文件；清理失败只会留下冗余副本，不能让一次
         // 编辑因为回收站不可用而丢掉原笔记。
         if (old_file_name != new_file_name || old_category != new_category)
@@ -1262,7 +1281,8 @@ impl NoteStore {
     pub fn open_daily_note(&self) -> Result<Note, AppError> {
         let _lock = self.lock_metadata_mutation()?;
         self.ensure_storage()?;
-        let date = Utc::now().format("%Y-%m-%d").to_string();
+        // 使用本地时区：东八区凌晨 0~8 点不应打开"昨天"的便笺
+        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
         let metadata = self.load_metadata()?;
         if let Some(existing) = metadata
             .notes
@@ -1705,11 +1725,29 @@ impl NoteStore {
         Ok(result)
     }
 
-    fn lock_metadata_mutation(&self) -> Result<MutexGuard<'static, ()>, AppError> {
-        METADATA_MUTATION_LOCK
+    fn lock_metadata_mutation(&self) -> Result<MetadataLockGuard, AppError> {
+        let process = METADATA_MUTATION_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .map_err(|_| AppError::new("metadataLock", "笔记存储锁已中毒，请重启应用后重试"))
+            .map_err(|_| AppError::new("metadataLock", "笔记存储锁已中毒，请重启应用后重试"))?;
+        // 跨进程互斥：CLI 与 GUI 同时写同一数据目录时，文件锁保证
+        // 读-改-写区间串行，避免后写者覆盖先写者导致整批条目丢失
+        let lock_path = self.data_dir.join("metadata.json.lock");
+        fs::create_dir_all(&self.data_dir)?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|error| {
+                AppError::new("metadataLock", format!("无法打开存储锁文件: {error}"))
+            })?;
+        file.lock_exclusive().map_err(|error| {
+            AppError::new("metadataLock", format!("获取存储锁失败: {error}"))
+        })?;
+        Ok(MetadataLockGuard {
+            _process: process,
+            _file: file,
+        })
     }
 
     fn default_config(&self) -> AppConfig {
@@ -2198,11 +2236,18 @@ impl NoteStore {
         let scanned = self.rebuild_metadata()?;
         let mut changed = false;
         for scanned_note in scanned.notes {
-            match metadata
-                .notes
-                .iter_mut()
-                .find(|note| note.id == scanned_note.id)
-            {
+            // 兼容旧版 ID 前缀（v1.0.x 的 id-N 格式）：新逻辑下非 UUID 前缀的
+            // 文件使用完整文件名作 ID，这里允许按旧前缀回退匹配 metadata
+            let legacy_id = scanned_note
+                .file_name
+                .split_once('_')
+                .map(|(id, _)| id.to_string());
+            match metadata.notes.iter_mut().find(|note| {
+                note.id == scanned_note.id
+                    || (legacy_id.is_some()
+                        && note.id == legacy_id.as_deref().unwrap_or("")
+                        && note.file_name == scanned_note.file_name)
+            }) {
                 Some(existing) => {
                     let existing_path =
                         self.note_path_in_category(&existing.file_name, &existing.category)?;
@@ -2243,6 +2288,15 @@ impl NoteStore {
             let Some(id) = id_from_file_name(&file_name) else {
                 continue;
             };
+            // 同名文件（如 `abc.md` 与 `abc_xxx.md`）可能产生相同 ID：
+            // 扫描时跳过重复，避免读错内容、改错文件、误删笔记
+            if notes.iter().any(|note| note.id == id) {
+                eprintln!(
+                    "[花笺] 跳过与已有笔记 ID 冲突的文件: {}",
+                    path.display()
+                );
+                continue;
+            }
             let content = fs::read_to_string(&path).unwrap_or_default();
             let title = infer_title(&file_name, &content);
             let modified = entry
@@ -2530,10 +2584,26 @@ fn preview(content: &str) -> String {
         .collect()
 }
 
+fn is_uuid_like(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('-').collect();
+    parts.len() == 5
+        && parts[0].len() == 8
+        && parts[1].len() == 4
+        && parts[2].len() == 4
+        && parts[3].len() == 4
+        && parts[4].len() == 12
+        && parts
+            .iter()
+            .all(|part| part.chars().all(|ch| ch.is_ascii_hexdigit()))
+}
+
 fn id_from_file_name(file_name: &str) -> Option<String> {
     let stem = file_name.strip_suffix(".md")?;
     Some(
         stem.split_once('_')
+            // 只有 UUID 前缀才是笔记 ID；`abc.md` 与 `abc_xxx.md` 这类
+            // 非标准命名不会碰撞出相同 ID（修复同名文件串号问题）
+            .filter(|(id, _)| is_uuid_like(id))
             .map(|(id, _)| id.to_string())
             .unwrap_or_else(|| stem.to_string()),
     )

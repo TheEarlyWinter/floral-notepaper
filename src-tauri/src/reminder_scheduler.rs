@@ -12,15 +12,18 @@ pub fn start(app: AppHandle) {
         loop {
             let result = (|| {
                 let store = default_store()?;
-                reminders::take_due(store.data_dir(), Utc::now())
+                let due = reminders::take_due(store.data_dir(), Utc::now())?;
+                Ok::<_, crate::services::notes::AppError>((store.data_dir().to_path_buf(), due))
             })();
 
             match result {
-                Ok(reminders) => {
+                Ok((data_dir, reminders)) => {
                     for reminder in reminders {
                         let _ = desktop::show_main_window(&app);
-                        if let Err(error) = app.emit("reminder://due", &reminder) {
-                            eprintln!("failed to emit reminder: {error}");
+                        // 通知成功送达后再标记已通知：emit 失败时保持未通知，
+                        // 下轮轮询重试，避免提醒在用户看到之前就被丢弃
+                        if app.emit("reminder://due", &reminder).is_ok() {
+                            let _ = reminders::mark_notified(&data_dir, &reminder.id);
                         }
                     }
                 }
