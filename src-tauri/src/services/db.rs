@@ -390,7 +390,13 @@ pub fn db_notes_get_all(data_dir: &Path) -> Result<Vec<NoteMetadata>, AppError> 
                 })
             })
             .map_err(|e| db_error(format!("读取笔记元数据失败: {e}")))?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| match r {
+                Ok(note) => Some(note),
+                Err(error) => {
+                    eprintln!("[花笺] 警告: 跳过 SQLite 元数据镜像中的坏行: {error}");
+                    None
+                }
+            })
             .collect();
         Ok(notes)
     })

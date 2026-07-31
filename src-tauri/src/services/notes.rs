@@ -2085,9 +2085,11 @@ impl NoteStore {
     }
 
     fn back_up_corrupt_metadata(&self, path: &Path) {
+        // 随机后缀：同一秒内两次损坏不会 rename 失败导致取证副本丢失
         let corrupt_name = format!(
-            "metadata.corrupt-{}.json",
-            Utc::now().format("%Y%m%d%H%M%S")
+            "metadata.corrupt-{}-{}.json",
+            Utc::now().format("%Y%m%d%H%M%S"),
+            &Uuid::new_v4().to_string()[..8]
         );
         if let Err(error) = fs::rename(path, self.data_dir.join(corrupt_name)) {
             eprintln!(
