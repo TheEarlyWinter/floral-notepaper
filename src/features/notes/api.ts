@@ -121,6 +121,11 @@ export function deleteReminder(id: string): Promise<void> {
   return invoke("reminders_delete", { id });
 }
 
+/** 确认提醒已送达（前端展示并打开笔记后调用），之后调度器不再重投。 */
+export function ackReminder(id: string): Promise<void> {
+  return invoke("reminders_ack", { id });
+}
+
 export function moveNoteCategory(id: string, category: string): Promise<NoteMetadata> {
   return invoke("notes_move_category", { id, category });
 }

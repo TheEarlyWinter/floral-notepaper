@@ -210,6 +210,14 @@ fn reminders_delete(id: String) -> Result<(), AppError> {
     reminders::delete(store.data_dir(), &id)
 }
 
+/// 前端确认提醒已送达后调用：只有这里才把提醒标记为已通知，
+/// 未确认的提醒会由调度器持续重投，避免“先标记后送达”导致提醒丢失。
+#[tauri::command]
+fn reminders_ack(id: String) -> Result<(), AppError> {
+    let store = default_store()?;
+    reminders::mark_notified(store.data_dir(), &id)
+}
+
 #[tauri::command]
 fn notes_import_markdown(
     app: AppHandle,
@@ -711,6 +719,7 @@ pub fn run() {
             reminders_list,
             reminders_create,
             reminders_delete,
+            reminders_ack,
             notes_import_markdown,
             notes_export_markdown,
             notes_search,

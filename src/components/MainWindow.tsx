@@ -75,6 +75,8 @@ import {
   renameCategory,
   saveExternalFile,
   updateNote,
+  listReminders,
+  ackReminder,
 } from "../features/notes/api";
 import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
 import { INBOX_CATEGORY } from "../features/notes/insights";
@@ -1856,15 +1858,45 @@ export function MainWindow({
   };
 
   useEffect(() => {
-    const unlisten = listen<Reminder>("reminder://due", (event) => {
-      const reminder = event.payload;
+    // 送达确认制：收到事件 → 展示并打开笔记 → ack 后才算送达。
+    // ack 失败或窗口/页面未就绪时错过的事件，由调度器下轮重投 +
+    // 下方补偿拉取兜底，提醒不会被静默丢弃。
+    const ackedIds = new Set<string>();
+    const handleDue = async (reminder: Reminder) => {
+      if (ackedIds.has(reminder.id)) return;
+      ackedIds.add(reminder.id);
       showToast(`提醒：${reminder.message}`, "warning");
-      if (reminder.noteId) void handleSelectNote(reminder.noteId);
+      if (reminder.noteId) {
+        await handleSelectNoteRef.current(reminder.noteId);
+      }
+      try {
+        await ackReminder(reminder.id);
+      } catch {
+        // ack 失败保持未确认，调度器下轮会重新投递
+        ackedIds.delete(reminder.id);
+      }
+    };
+    const unlisten = listen<Reminder>("reminder://due", (event) => {
+      void handleDue(event.payload);
     });
+    // 补偿拉取：页面挂载后补齐窗口/页面未就绪时错过的事件
+    void (async () => {
+      try {
+        const now = Date.now();
+        const due = (await listReminders()).filter(
+          (reminder) => !reminder.notified && new Date(reminder.remindAt).getTime() <= now,
+        );
+        for (const reminder of due) {
+          await handleDue(reminder);
+        }
+      } catch {
+        // 拉取失败静默：调度器仍会持续投递，不阻塞启动
+      }
+    })();
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [handleSelectNote]);
+  }, []);
 
   const handleSelectExternalFile = async (id: string) => {
     if (id === selectedId) return;
@@ -3393,12 +3425,12 @@ export function MainWindow({
           <div className="flex-1 flex flex-col min-w-0">
             <div
               className={`flex items-center h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20 transition-all duration-200 ${
-                settingsOpen || focusMode ? "justify-end px-2" : "justify-between px-4"
+                settingsOpen || aboutOpen || focusMode ? "justify-end px-2" : "justify-between px-4"
               }`}
             >
               <div
                 className={`flex items-center gap-1 overflow-hidden transition-[max-width,opacity] duration-200 ${
-                  settingsOpen || focusMode
+                  settingsOpen || aboutOpen || focusMode
                     ? "max-w-0 opacity-0 pointer-events-none"
                     : "max-w-[900px] opacity-100"
                 }`}
@@ -3925,7 +3957,7 @@ export function MainWindow({
                 )}
               </div>
 
-              {!settingsOpen && !focusMode && (
+              {!settingsOpen && !aboutOpen && !focusMode && (
                 <SlidingButtonGroup
                   options={viewModeOptions}
                   value={viewMode}
@@ -3933,8 +3965,10 @@ export function MainWindow({
                   buttonClassName="px-3 py-1"
                 />
               )}
-              {settingsOpen && (
-                <span className="px-2 text-[11px] text-ink-ghost font-body">设置已打开</span>
+              {(settingsOpen || aboutOpen) && (
+                <span className="px-2 text-[11px] text-ink-ghost font-body">
+                  {settingsOpen ? "设置已打开" : "关于已打开"}
+                </span>
               )}
               {focusMode && (
                 <button
@@ -4038,7 +4072,7 @@ export function MainWindow({
                       }}
                     >
                       <div
-                        className={`flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0 ${focusMode ? "hidden" : ""}`}
+                        className={`flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0 ${focusMode || settingsOpen || aboutOpen ? "hidden" : ""}`}
                       >
                         {toolbarButtons.map((button) => (
                           <button

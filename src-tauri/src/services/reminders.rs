@@ -89,10 +89,10 @@ pub fn delete(data_dir: &Path, id: &str) -> Result<(), AppError> {
 pub fn take_due(data_dir: &Path, now: DateTime<Utc>) -> Result<Vec<Reminder>, AppError> {
     let _guard = lock()?;
     let file = load(data_dir)?;
-    // 只取出到期提醒，不在此处标记已通知：通知真正送达（emit 成功）后
-    // 才由 mark_notified 确认，避免"先标记后通知"导致提醒永久丢失。
-    // 语义为"至少一次"投递：mark_notified 失败时下轮轮询会重复投递，
-    // 对提醒场景可接受（重复提醒优于静默丢失）；单调度线程下不会并发取到
+    // 只取出到期且未确认送达的提醒，不在此处标记：送达以“前端 ack”为
+    // 唯一确认（reminders_ack → mark_notified），未确认的提醒由调度器
+    // 每轮轮询重复投递。语义为“至少一次”投递：重复提醒优于静默丢失；
+    // 单调度线程下不会并发取到同一提醒。
     Ok(file
         .reminders
         .into_iter()

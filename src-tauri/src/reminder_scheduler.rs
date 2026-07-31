@@ -17,15 +17,14 @@ pub fn start(app: AppHandle) {
             })();
 
             match result {
-                Ok((data_dir, reminders)) => {
+                Ok((_data_dir, reminders)) => {
                     for reminder in reminders {
-                        // 窗口唤起 + 事件送达都成功后才标记已通知：任一环节失败
-                        // 都保持未通知，下轮轮询重试，避免提醒被静默丢弃
-                        let delivered = desktop::show_main_window(&app).is_ok()
-                            && app.emit("reminder://due", &reminder).is_ok();
-                        if delivered {
-                            let _ = reminders::mark_notified(&data_dir, &reminder.id);
-                        }
+                        // 送达确认制：窗口唤起与事件发送都不在此处标记已通知，
+                        // 是否真正送达以“前端 ack”为唯一确认。未 ack 的提醒下轮
+                        // 轮询重新投递（含窗口/页面未就绪时丢失的事件），避免
+                        // 提醒在用户看到之前就被静默丢弃。
+                        let _ = desktop::show_main_window(&app);
+                        let _ = app.emit("reminder://due", &reminder);
                     }
                 }
                 Err(error) => eprintln!("failed to poll reminders: {error}"),
