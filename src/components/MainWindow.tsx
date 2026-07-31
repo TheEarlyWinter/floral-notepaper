@@ -1394,12 +1394,17 @@ export function MainWindow({
         let saved = await performSave(force);
         // 用户可能在前一次异步写入期间继续编辑。切换笔记、打开每日便笺等
         // 需要等到同一篇笔记的最新 revision 也真正落盘，不能只等待旧请求。
+        // 加最小间隔与次数上限：持续输入时不会高频自旋写盘
+        let attempts = 0;
         while (
           saved &&
+          attempts < 10 &&
           selectedIdRef.current === requestedId &&
           requestedId !== null &&
           saveStateRef.current === "dirty"
         ) {
+          attempts += 1;
+          await new Promise((resolve) => setTimeout(resolve, 300));
           saved = await performSave(true);
         }
         return saved;
@@ -1416,11 +1421,12 @@ export function MainWindow({
         const windowLabel = windowLabelRef.current;
         // 无未保存修改时直接上报就绪：避免排进 saveQueueRef，被正在执行的
         // 防抖自动保存拖住、不必要地延迟安装准备响应
-        if (saveStateRef.current !== "dirty") {
+        if (saveStateRef.current !== "dirty" && saveStateRef.current !== "error") {
           await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
           return;
         }
-        const saved = await saveCurrentNote();
+        // dirty 或上次保存失败：强制保存后再上报，避免未落盘内容在安装时丢失
+        const saved = await saveCurrentNote(true);
         await reportInstallPreparation(
           event.payload.requestId,
           windowLabel,
@@ -1462,8 +1468,11 @@ export function MainWindow({
       if (shortcut && matchShortcut(event, shortcut)) {
         event.preventDefault();
         void (async () => {
-          // 关闭标签前先落盘：防抖窗口内的输入不能静默丢弃，保存失败则保留编辑器
-          const saved = await saveCurrentNote();
+          // 关闭标签前先落盘：防抖窗口内的输入不能静默丢弃，保存失败则保留编辑器。
+          // dirty 与 error（上次保存失败）都需要强制重试保存
+          const needsSave =
+            saveStateRef.current === "dirty" || saveStateRef.current === "error";
+          const saved = needsSave ? await saveCurrentNote(true) : true;
           if (saved) clearCurrentNote();
         })();
       }
@@ -2284,7 +2293,7 @@ export function MainWindow({
         runAfterLayout();
       }
     },
-    [cancelScrollMeasurement, content, scrollSyncEnabled, viewMode],
+    [cancelScrollMeasurement, deferredContent, scrollSyncEnabled, viewMode],
   );
 
   // 切换笔记时通过 rAF 测量（不阻塞首帧渲染），编辑时 debounce 避免频繁重排
@@ -2446,16 +2455,17 @@ export function MainWindow({
     void closeCurrentWindow();
   };
   // 任意关闭途径（标题栏按钮 / 系统关闭 / Alt+F4）都会触发 onCloseRequested：
-  // dirty 时先拦截并保存，保存成功再真正关闭；保存失败则留在窗口让用户处理。
+  // 未落盘（dirty / 保存失败 error / 保存中 saving）时先拦截并保存，
+  // 保存成功再真正关闭；保存失败则留在窗口让用户处理。
   const pendingCloseRef = useRef(false);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
         if (pendingCloseRef.current) return;
-        if (saveStateRef.current !== "dirty") return;
+        if (saveStateRef.current === "saved" || saveStateRef.current === "idle") return;
         event.preventDefault();
-        const saved = await saveCurrentNote();
+        const saved = await saveCurrentNote(true);
         if (saved) {
           pendingCloseRef.current = true;
           try {
@@ -4321,8 +4331,12 @@ export function MainWindow({
                   onClose={() => setLibraryOpen(false)}
                   onBeforeRestore={async () => {
                     // 恢复会替换整个数据目录：先把当前编辑落盘，内容进入恢复前自动备份，
-                    // 即使恢复失败也能从保护备份找回，不会丢未保存的修改
-                    const saved = await saveCurrentNote();
+                    // 即使恢复失败也能从保护备份找回，不会丢未保存的修改。
+                    // dirty 与 error 状态都需要强制重试保存
+                    const needsSave =
+                      saveStateRef.current === "dirty" ||
+                      saveStateRef.current === "error";
+                    const saved = needsSave ? await saveCurrentNote(true) : true;
                     if (!saved) {
                       showToast("当前笔记保存失败，已取消恢复");
                     }

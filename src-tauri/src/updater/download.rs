@@ -926,7 +926,9 @@ fn build_http_client() -> Result<Client, AppError> {
     Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(120))
-        .redirect(Policy::limited(10))
+        // 关闭自动重定向：由 fetch_response 手动逐跳校验（每跳都过
+        // validate_download_url），避免中间跳转绕过域名/协议白名单
+        .redirect(Policy::none())
         .build()
         .map_err(|error| {
             errors::app_error(

@@ -392,7 +392,7 @@ export function NotePad({
     const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
       const respond = async () => {
         const windowLabel = windowLabelRef.current || "notepad";
-        if (statusRef.current !== "dirty") {
+        if (statusRef.current !== "dirty" && statusRef.current !== "saveFailed") {
           await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
           return;
         }

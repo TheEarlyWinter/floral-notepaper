@@ -255,7 +255,13 @@ pub fn move_note_attachments(
             if entry.path().is_file() {
                 let from = entry.path();
                 let to = target.join(entry.file_name());
-                fs::rename(&from, &to)?;
+                if let Err(error) = fs::rename(&from, &to) {
+                    // 回滚：把本次已移动的文件移回源目录
+                    for (moved_to, moved_from) in &moved_files {
+                        let _ = fs::rename(moved_to, moved_from);
+                    }
+                    return Err(err("moveAttachmentFailed", format!("移动附件失败: {error}")));
+                }
                 moved_files.push((to, from));
             }
         }
@@ -495,12 +501,19 @@ pub fn restore_backup(data_dir: &Path, backup: &Path) -> Result<(), AppError> {
     // 相比逐项 remove_dir_all + rename，中途失败不会留下"半恢复"状态。
     let stash = data_dir.join(format!(".restore-old-{}", Uuid::new_v4()));
     fs::create_dir_all(&stash)?;
+    let mut stashed: Vec<&str> = Vec::new();
     for name in BACKUP_ITEMS {
         let target = data_dir.join(name);
         if target.exists() {
-            fs::rename(&target, stash.join(name)).map_err(|error| {
-                err("restoreFailed", format!("暂存旧数据失败: {error}"))
-            })?;
+            if let Err(error) = fs::rename(&target, stash.join(name)) {
+                // 回滚：把已挪进 stash 的旧数据挪回原位
+                for item in &stashed {
+                    let _ = fs::rename(stash.join(item), data_dir.join(item));
+                }
+                let _ = fs::remove_dir_all(&stash);
+                return Err(err("restoreFailed", format!("暂存旧数据失败: {error}")));
+            }
+            stashed.push(name);
         }
     }
 
