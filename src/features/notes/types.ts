@@ -71,5 +71,7 @@ export interface IndexedSearchResult {
   snippet: string;
   /** UTF-16 offset in the note body; -1 means the hit only matched the title. */
   matchStart: number;
+  /** UTF-16 length of the matched term; -1 when there is no selectable body position. */
+  matchLength: number;
   score: number;
 }

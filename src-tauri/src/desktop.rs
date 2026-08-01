@@ -1127,6 +1127,9 @@ pub fn take_startup_file() -> Option<String> {
 }
 
 pub fn setup_desktop(app: &mut App) -> Result<(), Box<dyn Error>> {
+    // 主窗口“前端就绪”宽限期的起点：webview 加载完成前，前端 onCloseRequested
+    // 尚未注册，关闭请求由 Rust 侧兜底处理（见 handle_window_event）。
+    APP_STARTED_AT.get_or_init(std::time::Instant::now);
     app.manage(RuntimeState::default());
     app.manage(NotepadPool::default());
     app.on_menu_event(|app, event| {
@@ -1157,6 +1160,11 @@ pub fn setup_desktop(app: &mut App) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// 主窗口“前端就绪”宽限期：此期间内的关闭请求由 Rust 侧兜底（隐藏到托盘），
+/// 避免 webview 尚未加载完成时关闭直接退出应用而不是按配置隐藏。
+const MAIN_WINDOW_READY_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+static APP_STARTED_AT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 pub fn handle_window_event(window: &Window, event: &WindowEvent) {
     if matches!(event, WindowEvent::Destroyed) {
@@ -1199,8 +1207,21 @@ pub fn handle_window_event(window: &Window, event: &WindowEvent) {
         // Let the frontend onCloseRequested handler save dirty content before it
         // either hides the window or closes the app. A native hide here would
         // bypass that handler and discard the debounce window's latest edits.
-        MainWindowCloseAction::HideToTray | MainWindowCloseAction::ExitApp => {
+        MainWindowCloseAction::ExitApp => {
             let _ = api;
+        }
+        MainWindowCloseAction::HideToTray => {
+            // 启动初期 webview 可能尚未加载完成，前端 onCloseRequested 未注册；
+            // 此时放行会让窗口直接关闭（并触发应用退出），而不是按配置隐藏到
+            // 托盘。宽限期内由 Rust 侧直接隐藏，行为与配置一致；超过宽限期
+            // 前端已就绪，放行交给 JS 保存后隐藏。
+            let started = APP_STARTED_AT.get().copied().unwrap_or_else(std::time::Instant::now);
+            if started.elapsed() < MAIN_WINDOW_READY_GRACE {
+                api.prevent_close();
+                if let Err(error) = window.hide() {
+                    eprintln!("failed to hide main window to tray: {error}");
+                }
+            }
         }
     }
 }

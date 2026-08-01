@@ -68,7 +68,11 @@ fn end_install_prepare(state: &UpdaterState, request_id: &str) {
 /// frontend debounce queues and can discard edits in a visible note surface.
 pub(crate) async fn request_app_quit(app: tauri::AppHandle) {
     let Some(state) = app.try_state::<UpdaterState>() else {
-        app.exit(0);
+        // 防御性兜底：不直接退出，避免绕过保存屏障丢弃未落盘内容。
+        let _ = app.emit(
+            APP_QUIT_SAVE_FAILED_EVENT,
+            "退出协调器未就绪，无法安全退出，请稍后重试",
+        );
         return;
     };
 

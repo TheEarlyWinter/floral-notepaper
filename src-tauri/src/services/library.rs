@@ -74,6 +74,9 @@ pub struct SearchResult {
     /// UTF-16 code-unit offset in the note body. A title-only hit uses -1 so
     /// the frontend never mistakes a title offset for a body selection.
     pub match_start: isize,
+    /// UTF-16 code-unit length of the matched term in the body. -1 when there
+    /// is no selectable body position (title-only hit or fuzzy FTS match).
+    pub match_length: isize,
     pub score: u32,
 }
 
@@ -634,18 +637,20 @@ pub fn search(
             }
             let title_pos = search_match_position(&note.title, &normalized);
             let content_pos = search_match_position(&note.content, &normalized);
-            let (source, pos, match_start, score) = if let Some(position) = content_pos {
-                (
-                    &note.content,
-                    position,
-                    utf16_offset_at_byte_for_search(&note.content, position),
-                    10 + title_pos.map(|_| 8).unwrap_or(0),
-                )
-            } else if let Some(position) = title_pos {
-                (&note.title, position, -1, 18)
-            } else {
-                return None;
-            };
+            let (source, pos, match_start, match_length, score) =
+                if let Some((position, matched_term)) = content_pos {
+                    (
+                        &note.content,
+                        position,
+                        utf16_offset_at_byte_for_search(&note.content, position),
+                        matched_term.encode_utf16().count() as isize,
+                        10 + title_pos.map(|_| 8).unwrap_or(0),
+                    )
+                } else if let Some((position, _)) = title_pos {
+                    (&note.title, position, -1, -1, 18)
+                } else {
+                    return None;
+                };
 
             let snippet = safe_snippet(source, pos, query);
             let title = if note.title.trim().is_empty() {
@@ -659,6 +664,7 @@ pub fn search(
                 category: note.category.clone(),
                 snippet,
                 match_start,
+                match_length,
                 score,
             })
         })
@@ -686,13 +692,19 @@ pub(crate) fn case_insensitive_find(source: &str, normalized_query: &str) -> Opt
 
 /// Find a stable position for a search query. FTS accepts whitespace-separated
 /// terms independently, so use the first matching term when the full query is
-/// not a literal substring and still provide a useful jump target.
-pub(crate) fn search_match_position(source: &str, normalized_query: &str) -> Option<usize> {
-    case_insensitive_find(source, normalized_query).or_else(|| {
-        normalized_query
-            .split_whitespace()
-            .find_map(|term| case_insensitive_find(source, term))
-    })
+/// not a literal substring and still provide a useful jump target. Returns the
+/// byte offset and the matched term (for the frontend selection length).
+pub(crate) fn search_match_position<'s, 'q>(
+    source: &'s str,
+    normalized_query: &'q str,
+) -> Option<(usize, &'q str)> {
+    case_insensitive_find(source, normalized_query).map(|offset| (offset, normalized_query)).or_else(
+        || {
+            normalized_query.split_whitespace().find_map(|term| {
+                case_insensitive_find(source, term).map(|offset| (offset, term))
+            })
+        },
+    )
 }
 
 fn matches_all_search_terms(title: &str, content: &str, normalized_query: &str) -> bool {
@@ -887,9 +899,11 @@ mod tests {
             body[0].match_start,
             "前缀😀中文".encode_utf16().count() as isize
         );
+        assert_eq!(body[0].match_length, "目标".encode_utf16().count() as isize);
 
         let title = search(&dir, "标题", &notes).expect("title search");
         assert_eq!(title[0].match_start, -1);
+        assert_eq!(title[0].match_length, -1);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -908,11 +922,14 @@ mod tests {
             results[0].match_start,
             "先出现".encode_utf16().count() as isize
         );
+        // 全文命中时长度 = 第一个命中词（齿轮）的 UTF-16 长度
+        assert_eq!(results[0].match_length, "齿轮".encode_utf16().count() as isize);
 
         let split_terms = vec![sample_note("split", "齿轮标题", "正文讨论强度")];
         let split_results = search(&dir, "齿轮 强度", &split_terms).expect("split search");
         assert_eq!(split_results.len(), 1);
         assert_eq!(split_results[0].match_start, "正文讨论".encode_utf16().count() as isize);
+        assert_eq!(split_results[0].match_length, "强度".encode_utf16().count() as isize);
         let _ = fs::remove_dir_all(dir);
     }
 }

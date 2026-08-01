@@ -2124,13 +2124,16 @@ export function MainWindow({
     }
   };
 
-  const handleOpenWorkspaceNote = async (noteId: string, hitOffset?: number) => {
+  const handleOpenWorkspaceNote = async (noteId: string, hitOffset?: number, hitLength?: number) => {
     const opened = await handleSelectNote(noteId);
     if (!opened || hitOffset == null || hitOffset < 0) return;
     window.requestAnimationFrame(() => {
       const textarea = contentRef.current;
       if (!textarea) return;
-      const end = Math.min(textarea.value.length, hitOffset + Math.max(1, searchText.length));
+      // 优先用后端返回的真实命中词长度；搜索框文字已变化时回退到当前查询长度
+      const matchedLength =
+        hitLength != null && hitLength > 0 ? hitLength : Math.max(1, searchText.length);
+      const end = Math.min(textarea.value.length, hitOffset + matchedLength);
       textarea.focus();
       textarea.setSelectionRange(hitOffset, end);
       const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 22;
@@ -4519,7 +4522,7 @@ export function MainWindow({
                   query={workspaceMode === "search" ? searchText : undefined}
                   onOpenNote={(noteId, hit) => {
                     if (workspaceMode !== "search") setWorkspaceMode(null);
-                    void handleOpenWorkspaceNote(noteId, hit?.matchStart);
+                    void handleOpenWorkspaceNote(noteId, hit?.matchStart, hit?.matchLength);
                   }}
                   onMoveNote={(noteId, category) => void handleMoveNote(noteId, category)}
                   onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
