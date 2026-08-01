@@ -55,7 +55,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
   }, [tipSegments, checkTipOverflow]);
 
   return (
-    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
+    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 flex flex-col">
       <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/25">
         <h2 className="text-[13px] font-display font-medium text-ink-soft">
           {t("about.title", { defaultValue: "关于" })}
@@ -80,7 +80,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5">
         <section className="space-y-1.5">
           <h3 className="text-[20px] font-serif font-medium text-ink-soft">
             {t("about.productName", { defaultValue: "花笺" })}

@@ -4431,7 +4431,7 @@ export function MainWindow({
             <div className="absolute inset-0 z-20" onClick={handleCloseSettings} />
           )}
           <div
-            className={`relative shrink-0 overflow-hidden h-full transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            className={`relative shrink-0 overflow-clip h-full transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
               sidePanelExpanded || mountedSidePanel ? "border-l border-paper-deep/20" : "border-l-0"
             } ${
               settingsOverlay

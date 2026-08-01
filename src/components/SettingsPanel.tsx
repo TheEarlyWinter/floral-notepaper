@@ -107,7 +107,7 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
   );
 
   return (
-    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
+    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 flex flex-col">
       <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/25">
         <h2 className="text-[13px] font-display font-medium text-ink-soft">
           {t("settings.title", { defaultValue: "应用设置" })}
@@ -132,7 +132,7 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5">
         <section className="space-y-2">
           <label className="block text-[11px] font-body text-ink-faint">
             {t("settings.theme.label", { defaultValue: "主题" })}
