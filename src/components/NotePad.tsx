@@ -174,6 +174,13 @@ export function NotePad({
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
   titleValueRef.current = title;
+  const editingNoteIdRef = useRef(editingNoteId);
+  editingNoteIdRef.current = editingNoteId;
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  // 串行保存队列：自动保存与关闭/退出保存并发时，后发请求排队等待前一个
+  // 完成，避免旧快照后写覆盖新快照（与主窗口 saveQueueRef 同一设计）。
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const tileColorModeRef = useRef(tileColorMode);
   tileColorModeRef.current = tileColorMode;
   const tileColorRawRef = useRef(tileColorRaw);
@@ -364,27 +371,39 @@ export function NotePad({
   }, [refreshNotes]);
 
   const saveNote = useCallback(async () => {
-    const existingCategory = notes.find((n) => n.id === editingNoteId)?.category ?? "收件箱";
-    const request = { title, content, category: existingCategory };
-    const note = editingNoteId
-      ? await updateNote(editingNoteId, request)
-      : await createNote(request);
+    const run = async () => {
+      const currentNoteId = editingNoteIdRef.current;
+      const existingCategory =
+        notesRef.current.find((n) => n.id === currentNoteId)?.category ?? "收件箱";
+      // 任务真正执行时读取最新内容，避免排队期间旧闭包覆盖新输入
+      const savedContent = contentValueRef.current;
+      const savedTitle = titleValueRef.current;
+      const request = { title: savedTitle, content: savedContent, category: existingCategory };
+      const note = currentNoteId
+        ? await updateNote(currentNoteId, request)
+        : await createNote(request);
 
-    setEditingNoteId(note.id);
-    setNotes((current) => {
-      const metadata = metadataFromNote(note);
-      const exists = current.some((item) => item.id === note.id);
-      const next = exists
-        ? current.map((item) => (item.id === note.id ? metadata : item))
-        : [metadata, ...current];
-      return [...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    });
-    const contentChanged = contentValueRef.current !== content || titleValueRef.current !== title;
-    const nextStatus: NotePadStatus = contentChanged ? "dirty" : "saved";
-    statusRef.current = nextStatus;
-    setStatus(nextStatus);
-    return note;
-  }, [content, editingNoteId, notes, title]);
+      setEditingNoteId(note.id);
+      setNotes((current) => {
+        const metadata = metadataFromNote(note);
+        const exists = current.some((item) => item.id === note.id);
+        const next = exists
+          ? current.map((item) => (item.id === note.id ? metadata : item))
+          : [metadata, ...current];
+        return [...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      });
+      // 保存期间是否有新输入（任务执行时的快照 vs 当前最新值）
+      const contentChanged =
+        contentValueRef.current !== savedContent || titleValueRef.current !== savedTitle;
+      const nextStatus: NotePadStatus = contentChanged ? "dirty" : "saved";
+      statusRef.current = nextStatus;
+      setStatus(nextStatus);
+      return note;
+    };
+    const enqueued = saveQueueRef.current.then(run, run);
+    saveQueueRef.current = enqueued.catch(() => undefined);
+    return enqueued;
+  }, []);
 
   // 通过 ref 持有最新的 saveNote，让下方的 Tauri 监听只注册一次，
   // 避免每次输入（content 变化）都注销再重注册事件监听

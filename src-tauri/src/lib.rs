@@ -155,6 +155,16 @@ fn notes_update(app: AppHandle, id: String, request: SaveNoteRequest) -> Result<
     Ok(note)
 }
 
+/// 主窗口 JS 侧完成保存后的收尾：销毁主窗口（不触发 CloseRequested，避免
+/// Tauri 对同一次 close 请求的重入保护吞掉二次 close），随后 Destroyed 回调
+/// 里的退出协调会等待其余窗口（便签池）落盘再整体退出。
+#[tauri::command]
+fn window_main_close_finished(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.destroy();
+    }
+}
+
 #[tauri::command]
 fn notes_delete(app: AppHandle, id: String) -> Result<(), AppError> {
     let store = default_store()?;
@@ -775,7 +785,8 @@ pub fn run() {
             updater::commands::update_install,
             updater::commands::update_install_prepare_report,
             updater::commands::update_cancel,
-            take_startup_file
+            take_startup_file,
+            window_main_close_finished
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

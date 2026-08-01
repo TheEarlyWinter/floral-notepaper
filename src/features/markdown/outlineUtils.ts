@@ -45,6 +45,8 @@ function stripInlineMarkdown(text: string): string {
     // Obsidian 式高亮 ==文字==，与预览端一致地剥掉标记只留文本
     .replace(/==([^=]+)==/g, "$1")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    // 引用式链接 [text][ref]：预览端只渲染 text，slug 也应只保留 text
+    .replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1")
     .replace(/(\*\*|__)([^*_]*)\1/g, "$2")
     .replace(/~~([^~]*)~~/g, "$1")
     .replace(/`([^`]*)`/g, "$1")

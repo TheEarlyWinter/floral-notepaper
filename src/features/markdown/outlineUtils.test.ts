@@ -36,4 +36,10 @@ describe("extractOutlineHeadings", () => {
 
     expect(headings.map((heading) => heading.id)).toEqual(["高亮-文字", "公式-emc2"]);
   });
+
+  test("strips reference-style links so slugs match the rendered preview", () => {
+    const headings = extractOutlineHeadings("# 引用式[链接][ref1] 标题");
+
+    expect(headings[0].id).toBe("引用式链接-标题");
+  });
 });

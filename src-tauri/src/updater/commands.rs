@@ -41,6 +41,28 @@ pub enum InstallPrepareReportStatus {
     Failed,
 }
 
+/// 保存协调会话的互斥标记：托盘退出与更新安装共用同一个 prepare session，
+/// 连点退出或退出与安装并发时，后发方会覆盖前者的 request_id，导致前者
+/// 误报“保存失败”。用原子标记保证同一时刻只有一个协调会话在途。
+static INSTALL_PREPARE_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 尝试取得保存协调会话的唯一使用权；已有会话在途时返回 None（调用方应忽略
+/// 本次请求或提示稍后重试）。
+fn try_begin_install_prepare(app: &tauri::AppHandle, state: &UpdaterState) -> Option<String> {
+    if INSTALL_PREPARE_IN_FLIGHT
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return None;
+    }
+    Some(begin_install_prepare(app, state))
+}
+
+fn end_install_prepare(state: &UpdaterState, request_id: &str) {
+    state.clear_install_prepare(request_id);
+    INSTALL_PREPARE_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Coordinate a user-requested quit through the same per-window save barrier
 /// used before installing an update. Calling `AppHandle::exit` directly skips
 /// frontend debounce queues and can discard edits in a visible note surface.
@@ -50,9 +72,12 @@ pub(crate) async fn request_app_quit(app: tauri::AppHandle) {
         return;
     };
 
-    let request_id = begin_install_prepare(&app, &state);
+    let Some(request_id) = try_begin_install_prepare(&app, &state) else {
+        // 已有保存协调在途（连点托盘退出，或退出与更新安装并发）：忽略本次请求。
+        return;
+    };
     let result = wait_for_install_prepare(&app, &state, &request_id).await;
-    state.clear_install_prepare(&request_id);
+    end_install_prepare(&state, &request_id);
 
     match result {
         Ok(()) => {
@@ -215,9 +240,28 @@ pub async fn update_install(
     state: State<'_, UpdaterState>,
 ) -> Result<UpdateInstallResult, AppError> {
     let task = state.begin_task(UpdateTaskKind::Install)?;
-    let request_id = begin_install_prepare(&app, &state);
+    let Some(request_id) = try_begin_install_prepare(&app, &state) else {
+        let busy = errors::with_detail(
+            errors::app_error(
+                "updateInstallSaveBusy",
+                "已有保存协调（退出或安装）正在进行，请稍后重试",
+            ),
+            "requestId",
+            "busy",
+        );
+        let error_payload = load_saved_error_payload(
+            state.paths(),
+            &busy,
+            "retryInstall",
+            state.current_version(),
+        );
+        if let Err(emit_error) = app.emit("update://error", &error_payload) {
+            eprintln!("failed to emit update://error: {emit_error}");
+        }
+        return Err(busy);
+    };
     if let Err(error) = wait_for_install_prepare(&app, &state, &request_id).await {
-        state.clear_install_prepare(&request_id);
+        end_install_prepare(&state, &request_id);
         let error_payload = load_saved_error_payload(
             state.paths(),
             &error,
@@ -229,7 +273,7 @@ pub async fn update_install(
         }
         return Err(error);
     }
-    state.clear_install_prepare(&request_id);
+    end_install_prepare(&state, &request_id);
     let paths = state.paths().clone();
     let result_paths = paths.clone();
     let current_version = state.current_version().to_string();
@@ -520,7 +564,15 @@ fn install_prepare_timeout_for_pending_count(pending_count: usize) -> Duration {
 
 fn sync_install_prepare_windows(app: &tauri::AppHandle, state: &UpdaterState, request_id: &str) {
     let windows = app.webview_windows();
-    let added_labels = state.sync_install_prepare_labels(request_id, windows.keys().cloned());
+    // 只等待“有未保存内容风险”的窗口：可见的笔记面（主窗口、激活的便签/磁贴）。
+    // 休眠的便签池窗口没有内容且 WebView2 可能被挂起（低内存档位），不会响应
+    // prepare 事件；让它们参与屏障会让托盘退出 / 主窗口关闭后的退出无限等待。
+    let relevant = windows
+        .iter()
+        .filter(|(_, window)| window.is_visible().unwrap_or(false))
+        .map(|(label, _)| label.clone())
+        .collect::<Vec<_>>();
+    let added_labels = state.sync_install_prepare_labels(request_id, relevant);
     if added_labels.is_empty() {
         return;
     }

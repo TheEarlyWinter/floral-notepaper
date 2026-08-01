@@ -12,6 +12,7 @@ import type { MouseEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
@@ -1624,8 +1625,8 @@ export function MainWindow({
         if (editedDuringMigration) {
           // 后端已经切到新目录，必须把迁移期间的新输入写入新目录；此时重载会
           // 覆盖编辑器内的最新内容，所以只刷新侧栏元数据。
-          const latestSaved = await saveCurrentNote(true);
-          if (!latestSaved) return;
+          await saveCurrentNote(true);
+          // 保存失败也刷新侧栏，让列表与后端新目录一致，避免点旧列表报错。
           await refreshNotes();
           return;
         }
@@ -2593,7 +2594,10 @@ export function MainWindow({
 
           pendingCloseRef.current = true;
           try {
-            await closeCurrentWindow();
+            // 不能在这里再次调用 window.close()：Tauri 对同一次关闭请求的重入
+            // 保护会吞掉它，窗口将永远关不掉。改为通知 Rust 销毁主窗口，
+            // 由 Destroyed 回调里的保存屏障收尾并退出。
+            await invoke("window_main_close_finished");
           } finally {
             pendingCloseRef.current = false;
           }

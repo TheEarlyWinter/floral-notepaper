@@ -1165,6 +1165,16 @@ pub fn handle_window_event(window: &Window, event: &WindowEvent) {
                 .app_handle()
                 .emit("tile-window-closed", note_id.to_string());
         }
+        // 主窗口真正销毁（关闭即退出模式下系统关闭 / Alt+F4 走完保存流程后）。
+        // 不能在这里直接 exit(0)：便签池的隐藏窗口可能持有未保存草稿，直接退出
+        // 会绕过它们的 onCloseRequested 保存。复用 request_app_quit 的按窗口
+        // 保存屏障，全部窗口落盘后再退出；保存失败则留在托盘/便签让用户处理。
+        if window.label() == MAIN_WINDOW_LABEL {
+            let app = window.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                crate::updater::commands::request_app_quit(app).await;
+            });
+        }
         return;
     }
 

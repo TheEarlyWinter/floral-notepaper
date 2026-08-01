@@ -175,7 +175,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
             <button
               type="button"
               onClick={() =>
-                void openUrl("https://github.com/Achilng/floral-notepaper/blob/main/LICENSE")
+                void openUrl("https://github.com/TheEarlyWinter/floral-notepaper/blob/main/LICENSE")
               }
               className="w-full h-8 px-1 flex items-center justify-between text-[11px] text-ink-faint hover:text-bamboo cursor-pointer transition-colors"
             >
