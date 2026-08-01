@@ -141,6 +141,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub remember_window_size: bool,
     #[serde(default)]
+    pub sidebar_item_order: Vec<String>,
+    #[serde(default)]
+    pub sidebar_category_order: Vec<String>,
+    #[serde(default)]
     pub show_outline: bool,
     #[serde(default)]
     pub code_line_numbers: bool,
@@ -1875,6 +1879,8 @@ impl NoteStore {
             sidebar_position: default_sidebar_position(),
             window_opacity: default_window_opacity(),
             remember_window_size: false,
+            sidebar_item_order: Vec::new(),
+            sidebar_category_order: Vec::new(),
             show_outline: false,
             code_line_numbers: false,
             link_preview: default_link_preview(),
@@ -3297,6 +3303,8 @@ mod tests {
             sidebar_position: "right".into(),
             window_opacity: 0.85,
             remember_window_size: true,
+            sidebar_item_order: vec!["inbox".into(), "daily".into()],
+            sidebar_category_order: vec!["学习".into(), "生活".into()],
             show_outline: true,
             code_line_numbers: true,
             link_preview: false,

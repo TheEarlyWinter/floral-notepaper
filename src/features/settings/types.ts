@@ -70,6 +70,10 @@ export interface AppConfig {
   sidebarPosition: SidebarPosition;
   windowOpacity: number;
   rememberWindowSize: boolean;
+  /** Ordered fixed actions displayed at the top of the sidebar. */
+  sidebarItemOrder?: string[];
+  /** Ordered category names displayed below the fixed sidebar actions. */
+  sidebarCategoryOrder?: string[];
   // ── Markdown 渲染 ──
   showOutline: boolean;
   codeLineNumbers: boolean;

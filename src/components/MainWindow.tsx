@@ -35,6 +35,12 @@ import {
 } from "../features/settings/api";
 import type { AppConfig, NoteTemplate, ViewMode } from "../features/settings/types";
 import { normalizeTileColor } from "../features/settings/tileColor";
+import {
+  DEFAULT_SIDEBAR_ACTION_ORDER,
+  moveOrderItem,
+  normalizeOrder,
+  type SidebarActionId,
+} from "../features/settings/sidebarOrder";
 import { getUpdateStatus, reportInstallPreparation } from "../features/update/api";
 import {
   ABOUT_UPDATE_LABEL_DURATION_MS,
@@ -475,6 +481,8 @@ export function MainWindow({
   const [deleteExiting, setDeleteExiting] = useState(false);
   const [pinnedTileIds, setPinnedTileIds] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<string[]>([]);
+  const [draggingSidebarAction, setDraggingSidebarAction] = useState<SidebarActionId | null>(null);
+  const [draggingSidebarCategory, setDraggingSidebarCategory] = useState<string | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [activeCategory, setActiveCategory] = useState<string>("");
   const [showCategoryInput, setShowCategoryInput] = useState(false);
@@ -744,14 +752,26 @@ export function MainWindow({
     }
   }, [searchText, workspaceMode]);
 
-  const categoryGroups = useMemo(
-    () =>
-      groupNotesByCategory(
-        filteredNotes.filter((note) => note.category !== INBOX_CATEGORY),
-        categories.filter((category) => category !== INBOX_CATEGORY),
-      ),
-    [filteredNotes, categories],
+  const sidebarActionOrder = useMemo(
+    () => normalizeOrder(settingsConfig?.sidebarItemOrder, DEFAULT_SIDEBAR_ACTION_ORDER),
+    [settingsConfig?.sidebarItemOrder],
   );
+  const sidebarCategoryOrder = useMemo(
+    () => normalizeOrder(settingsConfig?.sidebarCategoryOrder, categories.filter((category) => category !== INBOX_CATEGORY)),
+    [categories, settingsConfig?.sidebarCategoryOrder],
+  );
+  const categoryGroups = useMemo(() => {
+    const groups = groupNotesByCategory(
+      filteredNotes.filter((note) => note.category !== INBOX_CATEGORY),
+      categories.filter((category) => category !== INBOX_CATEGORY),
+    );
+    const positions = new Map(sidebarCategoryOrder.map((category, index) => [category, index]));
+    return [...groups].sort((left, right) => {
+      if (!left.category) return -1;
+      if (!right.category) return 1;
+      return (positions.get(left.category) ?? Number.MAX_SAFE_INTEGER) - (positions.get(right.category) ?? Number.MAX_SAFE_INTEGER);
+    });
+  }, [filteredNotes, categories, sidebarCategoryOrder]);
   const inboxCount = useMemo(
     () => notes.filter((note) => note.category === INBOX_CATEGORY).length,
     [notes],
@@ -1695,6 +1715,20 @@ export function MainWindow({
     },
     [persistSettings],
   );
+
+  const reorderSidebarAction = useCallback((target: SidebarActionId) => {
+    if (!draggingSidebarAction || !settingsConfig) return;
+    const nextOrder = moveOrderItem(sidebarActionOrder, draggingSidebarAction, target);
+    setDraggingSidebarAction(null);
+    handleSettingsChange({ ...settingsConfig, sidebarItemOrder: nextOrder });
+  }, [draggingSidebarAction, handleSettingsChange, settingsConfig, sidebarActionOrder]);
+
+  const reorderSidebarCategory = useCallback((target: string) => {
+    if (!draggingSidebarCategory || !settingsConfig) return;
+    const nextOrder = moveOrderItem(sidebarCategoryOrder, draggingSidebarCategory, target);
+    setDraggingSidebarCategory(null);
+    handleSettingsChange({ ...settingsConfig, sidebarCategoryOrder: nextOrder });
+  }, [draggingSidebarCategory, handleSettingsChange, settingsConfig, sidebarCategoryOrder]);
 
   const handleCloseSettings = useCallback(() => {
     setSettingsOpen(false);
@@ -2870,7 +2904,7 @@ export function MainWindow({
                 />
               </div>
 
-              <div className="px-3 pb-2 shrink-0 space-y-1">
+              <div className="px-3 pb-2 shrink-0 flex flex-col gap-1">
                 <select
                   value={selectedTemplateId}
                   onChange={(event) => setSelectedTemplateId(event.target.value)}
@@ -2885,6 +2919,12 @@ export function MainWindow({
                   ))}
                 </select>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("daily") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "daily"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("daily"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("daily"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={() => void handleOpenDailyNote()}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
@@ -2904,6 +2944,12 @@ export function MainWindow({
                   <span>每日便笺</span>
                 </button>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("inbox") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "inbox"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("inbox"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("inbox"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={() => openWorkspace("inbox")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
@@ -2928,6 +2974,12 @@ export function MainWindow({
                   ) : null}
                 </button>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("journal") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "journal"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("journal"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("journal"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={() => openWorkspace("journal")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
@@ -2947,6 +2999,12 @@ export function MainWindow({
                   <span>日记流</span>
                 </button>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("dashboard") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "dashboard"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("dashboard"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("dashboard"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={() => openWorkspace("dashboard")}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
                 >
@@ -2968,6 +3026,12 @@ export function MainWindow({
                   <span>笔记仪表盘</span>
                 </button>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("new-note") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "new-note"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("new-note"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("new-note"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={() => void handleNewNote()}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-bamboo hover:bg-bamboo-mist/60 transition-all cursor-pointer group"
                 >
@@ -2986,6 +3050,12 @@ export function MainWindow({
                   <span>{t("main.sidebar.newNote", { defaultValue: "新建笔记" })}</span>
                 </button>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("todos") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "todos"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("todos"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("todos"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={handleToggleTodos}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group"
                 >
@@ -3005,6 +3075,12 @@ export function MainWindow({
                   <span>待办聚合</span>
                 </button>
                 <button
+                  draggable
+                  style={{ order: sidebarActionOrder.indexOf("import") }}
+                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "import"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("import"); }}
+                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
+                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("import"); } }}
+                  onDragEnd={() => setDraggingSidebarAction(null)}
                   onClick={() => void handleImportNote()}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group"
                 >
@@ -3266,6 +3342,13 @@ export function MainWindow({
                     return (
                       <div key={group.category} className="px-2 mb-0.5">
                         <div
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData("application/x-floral-sidebar-category", group.category);
+                            event.dataTransfer.effectAllowed = "move";
+                            setDraggingSidebarCategory(group.category);
+                          }}
+                          onDragEnd={() => setDraggingSidebarCategory(null)}
                           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
                             dragOverCategory === group.category
                               ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
@@ -3288,11 +3371,17 @@ export function MainWindow({
                           onDragOver={(e) => {
                             e.preventDefault();
                             e.dataTransfer.dropEffect = "move";
-                            setDragOverCategory(group.category);
+                            if (!e.dataTransfer.types.includes("application/x-floral-sidebar-category")) {
+                              setDragOverCategory(group.category);
+                            }
                           }}
                           onDragLeave={() => setDragOverCategory(null)}
                           onDrop={(e) => {
                             e.preventDefault();
+                            if (e.dataTransfer.types.includes("application/x-floral-sidebar-category")) {
+                              reorderSidebarCategory(group.category);
+                              return;
+                            }
                             setDragOverCategory(null);
                             const noteId = e.dataTransfer.getData("text/plain");
                             if (noteId) void handleMoveNote(noteId, group.category);
