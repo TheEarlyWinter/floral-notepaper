@@ -164,6 +164,7 @@ export function NotePad({
     resolveTileColor("system", normalizeTileColor(initialTileColor)),
   );
   const [isExiting, setIsExiting] = useState(false);
+  const pendingCloseRef = useRef(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const tileDragIntentRef = useRef<{ x: number; y: number } | null>(null);
@@ -379,7 +380,9 @@ export function NotePad({
       return [...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     });
     const contentChanged = contentValueRef.current !== content || titleValueRef.current !== title;
-    setStatus(contentChanged ? "dirty" : "saved");
+    const nextStatus: NotePadStatus = contentChanged ? "dirty" : "saved";
+    statusRef.current = nextStatus;
+    setStatus(nextStatus);
     return note;
   }, [content, editingNoteId, notes, title]);
 
@@ -399,6 +402,15 @@ export function NotePad({
 
         try {
           await saveNoteRef.current();
+          if (statusRef.current === "dirty") {
+            await reportInstallPreparation(
+              event.payload.requestId,
+              windowLabel,
+              "failed",
+              "保存期间仍有新的编辑内容，请完成保存后重试",
+            );
+            return;
+          }
           await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
         } catch (error) {
           setStatus("saveFailed");
@@ -629,6 +641,10 @@ export function NotePad({
     if (statusRef.current === "dirty" || statusRef.current === "saveFailed") {
       try {
         await saveNote();
+        if (statusRef.current === "dirty") {
+          setIsExiting(false);
+          return;
+        }
       } catch (error) {
         setIsExiting(false);
         showToast(getErrorMessage(error));
@@ -670,7 +686,9 @@ export function NotePad({
         throw new Error(t("notepad.error.copyUnsupported", { defaultValue: "当前环境不支持复制" }));
       }
       await clipboard.writeText(content);
-      setStatus("copied");
+      if (statusRef.current !== "dirty" && statusRef.current !== "saveFailed") {
+        setStatus("copied");
+      }
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -678,6 +696,37 @@ export function NotePad({
 
   const handleCloseRef = useRef(handleClose);
   handleCloseRef.current = handleClose;
+
+  useEffect(() => {
+    const unlisten = listen<string>("app://quit-save-failed", (event) => {
+      showToast(event.payload);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (pendingCloseRef.current) return;
+        if (statusRef.current !== "dirty" && statusRef.current !== "saveFailed") return;
+        event.preventDefault();
+        pendingCloseRef.current = true;
+        try {
+          await handleCloseRef.current();
+        } finally {
+          pendingCloseRef.current = false;
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
   const copyTileContentRef = useRef(copyTileContent);
   copyTileContentRef.current = copyTileContent;
   const switchSurfaceModeRef = useRef(switchSurfaceMode);

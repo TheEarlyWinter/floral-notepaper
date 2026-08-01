@@ -1518,7 +1518,7 @@ impl NoteStore {
         &self,
         query: &str,
     ) -> Result<Vec<crate::services::library::SearchResult>, AppError> {
-        use crate::services::library::{case_insensitive_find, safe_snippet, SearchResult};
+        use crate::services::library::{safe_snippet, search_match_position, SearchResult};
 
         let ids = crate::services::db::db_search_fts(&self.data_dir, query)?;
         if ids.is_empty() {
@@ -1534,26 +1534,30 @@ impl NoteStore {
                 } else {
                     note.title.clone()
                 };
-                let content_pos = case_insensitive_find(&note.content, &normalized);
-                let title_pos = case_insensitive_find(&note.title, &normalized);
-                let (source, match_pos, score) = if let Some(position) = content_pos {
+                let content_pos = search_match_position(&note.content, &normalized);
+                let title_pos = search_match_position(&note.title, &normalized);
+                let (source, match_pos, match_start, score) = if let Some(position) = content_pos {
                     (
                         &note.content,
                         position,
+                        crate::services::library::utf16_offset_at_byte_for_search(
+                            &note.content,
+                            position,
+                        ),
                         10 + title_pos.map(|_| 8).unwrap_or(0),
                     )
                 } else if let Some(position) = title_pos {
-                    (&note.title, position, 18)
+                    (&note.title, position, -1, 18)
                 } else {
                     // FTS 可处理 trigram 边界匹配；没有精确子串时给出安全的内容开头。
-                    (&note.content, 0, 5)
+                    (&note.content, 0, -1, 5)
                 };
                 results.push(SearchResult {
                     note_id: note.id,
                     title,
                     category: note.category,
                     snippet: safe_snippet(source, match_pos, query),
-                    match_start: match_pos,
+                    match_start,
                     score,
                 });
             }

@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use tauri::{async_runtime, Emitter, Manager, State};
 
 const INSTALL_PREPARE_EVENT: &str = "update://prepare-install";
+const APP_QUIT_SAVE_FAILED_EVENT: &str = "app://quit-save-failed";
 const INSTALL_PREPARE_MIN_TIMEOUT: Duration = Duration::from_secs(30);
 const INSTALL_PREPARE_TIMEOUT_PER_PENDING_WINDOW: Duration = Duration::from_secs(3);
 const INSTALL_PREPARE_MAX_TIMEOUT: Duration = Duration::from_secs(120);
@@ -38,6 +39,32 @@ struct InstallPrepareRequestPayload {
 pub enum InstallPrepareReportStatus {
     Ready,
     Failed,
+}
+
+/// Coordinate a user-requested quit through the same per-window save barrier
+/// used before installing an update. Calling `AppHandle::exit` directly skips
+/// frontend debounce queues and can discard edits in a visible note surface.
+pub(crate) async fn request_app_quit(app: tauri::AppHandle) {
+    let Some(state) = app.try_state::<UpdaterState>() else {
+        app.exit(0);
+        return;
+    };
+
+    let request_id = begin_install_prepare(&app, &state);
+    let result = wait_for_install_prepare(&app, &state, &request_id).await;
+    state.clear_install_prepare(&request_id);
+
+    match result {
+        Ok(()) => {
+            desktop::mark_app_exiting(&app);
+            app.exit(0);
+        }
+        Err(error) => {
+            if let Err(emit_error) = app.emit(APP_QUIT_SAVE_FAILED_EVENT, error.message) {
+                eprintln!("failed to emit quit save failure: {emit_error}");
+            }
+        }
+    }
 }
 
 #[tauri::command]

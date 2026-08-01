@@ -106,7 +106,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
           <section className="space-y-1 py-2 border-y border-paper-deep/25">
             <button
               type="button"
-              onClick={() => void openUrl("https://github.com/Achilng/floral-notepaper")}
+              onClick={() => void openUrl("https://github.com/TheEarlyWinter/floral-notepaper")}
               className="w-full h-8 px-1 flex items-center justify-between text-[11px] text-ink-faint hover:text-bamboo cursor-pointer transition-colors"
             >
               <span className="inline-flex items-center gap-1.5">
@@ -140,7 +140,7 @@ export function AboutPanel({ onClose }: AboutPanelProps) {
             </button>
             <button
               type="button"
-              onClick={() => void openUrl("https://github.com/Achilng/floral-notepaper/issues")}
+              onClick={() => void openUrl("https://github.com/TheEarlyWinter/floral-notepaper/issues")}
               className="w-full h-8 px-1 flex items-center justify-between text-[11px] text-ink-faint hover:text-bamboo cursor-pointer transition-colors"
             >
               <span className="inline-flex items-center gap-1.5">

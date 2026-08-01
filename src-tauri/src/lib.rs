@@ -157,7 +157,14 @@ fn notes_update(app: AppHandle, id: String, request: SaveNoteRequest) -> Result<
 
 #[tauri::command]
 fn notes_delete(app: AppHandle, id: String) -> Result<(), AppError> {
-    default_store()?.delete_note(&id)?;
+    let store = default_store()?;
+    store.delete_note(&id)?;
+    // A deleted note can no longer receive a reminder. Clean these records
+    // only after deletion succeeds; cleanup failure must not misreport the
+    // already-completed note deletion as a failure.
+    if let Err(error) = reminders::delete_for_note(store.data_dir(), &id) {
+        eprintln!("failed to remove reminders for deleted note {id}: {error}");
+    }
     let _ = app.emit("notes-changed", ());
     Ok(())
 }

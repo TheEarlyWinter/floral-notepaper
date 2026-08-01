@@ -109,6 +109,7 @@ import {
 import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
 import {
   closeCurrentWindow,
+  hideCurrentWindow,
   minimizeCurrentWindow,
   toggleMaximizeCurrentWindow,
   isCurrentWindowMaximized,
@@ -451,8 +452,8 @@ export function MainWindow({
   const [outlineOpen, setOutlineOpen] = useState(initialConfig?.showOutline ?? false);
   const [focusMode, setFocusMode] = useState(false);
   const navHistory = useNavigationHistory();
-  const handleSelectNoteRef = useRef<(id: string) => Promise<void>>(async () => {});
-  const handleSelectExternalFileRef = useRef<(id: string) => Promise<void>>(async () => {});
+  const handleSelectNoteRef = useRef<(id: string) => Promise<boolean>>(async () => false);
+  const handleSelectExternalFileRef = useRef<(id: string) => Promise<boolean>>(async () => false);
   const [readingMode, setReadingMode] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
@@ -1200,12 +1201,14 @@ export function MainWindow({
 
   useEffect(() => {
     const unlisten = listen<string>("open-note", (event) => {
-      void loadNote(event.payload);
+      // 从便签/图谱等窗口打开笔记同样必须经过保存队列；直接 loadNote 会
+      // 覆盖主窗口当前未落盘的内容。
+      void handleSelectNoteRef.current(event.payload);
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [loadNote]);
+  }, []);
 
   useEffect(() => {
     const unlisten = listen("open-about-panel", () => {
@@ -1219,6 +1222,15 @@ export function MainWindow({
   useEffect(() => {
     const unlisten = listen<string>("shortcut-register-failed", (event) => {
       showToast(event.payload, "warning");
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<string>("app://quit-save-failed", (event) => {
+      showToast(event.payload);
     });
     return () => {
       void unlisten.then((fn) => fn());
@@ -1433,11 +1445,15 @@ export function MainWindow({
         const windowLabel = windowLabelRef.current;
         // 无未保存修改时直接上报就绪：避免排进 saveQueueRef，被正在执行的
         // 防抖自动保存拖住、不必要地延迟安装准备响应
-        if (saveStateRef.current !== "dirty" && saveStateRef.current !== "error") {
+        if (
+          saveStateRef.current !== "dirty" &&
+          saveStateRef.current !== "error" &&
+          saveStateRef.current !== "saving"
+        ) {
           await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
           return;
         }
-        // dirty 或上次保存失败：强制保存后再上报，避免未落盘内容在安装时丢失
+        // dirty、保存中或上次保存失败：等待保存队列完成后再上报，避免未落盘内容在安装/退出时丢失
         const saved = await saveCurrentNote(true);
         await reportInstallPreparation(
           event.payload.requestId,
@@ -1589,16 +1605,39 @@ export function MainWindow({
         }),
       );
       if (!confirmed) return;
-      const savedConfig = await migrateDataDir(dir);
-      setSettingsConfig(savedConfig);
-      setSavedDataDir(savedConfig.dataDir);
-      // 数据目录已变：刷新图片基准目录，否则已有笔记图片仍指向旧路径
-      refreshImageBaseDir();
-      const loadedNotes = await refreshNotes();
-      if (loadedNotes[0]) {
-        await loadNote(loadedNotes[0].id);
-      } else {
-        clearCurrentNote();
+
+      // 迁移会切换后端数据目录并立即重载笔记；先把当前编辑内容落盘，
+      // 否则迁移后的 loadNote 会直接覆盖尚未保存的内存状态。
+      const saved = await saveCurrentNote(true);
+      if (!saved) return;
+      const revisionAfterSave = editRevisionRef.current;
+
+      setIsLoading(true);
+      try {
+        const savedConfig = await migrateDataDir(dir);
+        const editedDuringMigration = editRevisionRef.current !== revisionAfterSave;
+        setSettingsConfig(savedConfig);
+        setSavedDataDir(savedConfig.dataDir);
+        // 数据目录已变：刷新图片基准目录，否则已有笔记图片仍指向旧路径
+        refreshImageBaseDir();
+
+        if (editedDuringMigration) {
+          // 后端已经切到新目录，必须把迁移期间的新输入写入新目录；此时重载会
+          // 覆盖编辑器内的最新内容，所以只刷新侧栏元数据。
+          const latestSaved = await saveCurrentNote(true);
+          if (!latestSaved) return;
+          await refreshNotes();
+          return;
+        }
+
+        const loadedNotes = await refreshNotes();
+        if (loadedNotes[0]) {
+          await loadNote(loadedNotes[0].id);
+        } else {
+          clearCurrentNote();
+        }
+      } finally {
+        setIsLoading(false);
       }
     } catch (error) {
       showToast(getErrorMessage(error));
@@ -1784,7 +1823,8 @@ export function MainWindow({
   const handleExportHtml = async () => {
     if (!selectedId) return;
     try {
-      await saveCurrentNote(true);
+      const saved = await saveCurrentNote(true);
+      if (!saved) return;
       const filePath = await save({
         defaultPath: `${title || "未命名"}.html`,
         filters: [{ name: "HTML", extensions: ["html"] }],
@@ -1801,7 +1841,8 @@ export function MainWindow({
   const handleExportPdf = async () => {
     if (!selectedId) return;
     try {
-      await saveCurrentNote(true);
+      const saved = await saveCurrentNote(true);
+      if (!saved) return;
       const html = wrapHtml(title || "未命名", content);
       const blob = new Blob([html], { type: "text/html" });
       const url = URL.createObjectURL(blob);
@@ -1825,36 +1866,37 @@ export function MainWindow({
     }
   };
 
-  const handleSelectNote = async (id: string) => {
-    if (id === selectedId) return;
+  const handleSelectNote = async (id: string): Promise<boolean> => {
+    if (id === selectedId) return true;
     setDeleteConfirm(false);
     // 排队保存：等待可能在途的自动保存，并把尚未落盘的修改一并存掉；
     // 保存失败则不切换，避免旧编辑内容被新笔记覆盖
     const saved = await saveCurrentNote();
-    if (!saved) return;
+    if (!saved) return false;
 
     setIsLoading(true);
     try {
       // 只有本次加载真正生效（未被更新的切换打断）才推入导航历史
       const loaded = await loadNote(id);
-      if (!loaded) return;
+      if (!loaded) return false;
       // 推入导航历史
       const noteMeta = notes.find((n) => n.id === id);
       if (noteMeta) {
         navHistory.push(id, noteMeta.title || "无标题笔记");
       }
+      return true;
     } catch (error) {
       showToast(getErrorMessage(error));
+      return false;
     } finally {
       setIsLoading(false);
     }
   };
   handleSelectNoteRef.current = async (id: string) => {
     if (externalFilesRef.current.some((file) => file.id === id)) {
-      await handleSelectExternalFileRef.current(id);
-      return;
+      return handleSelectExternalFileRef.current(id);
     }
-    await handleSelectNote(id);
+    return handleSelectNote(id);
   };
 
   useEffect(() => {
@@ -1866,8 +1908,13 @@ export function MainWindow({
       if (ackedIds.has(reminder.id)) return;
       ackedIds.add(reminder.id);
       showToast(`提醒：${reminder.message}`, "warning");
-      if (reminder.noteId) {
-        await handleSelectNoteRef.current(reminder.noteId);
+      const opened = reminder.noteId
+        ? await handleSelectNoteRef.current(reminder.noteId)
+        : true;
+      if (!opened) {
+        // 当前笔记保存失败或目标笔记无法打开时，不确认送达；下轮会重投。
+        ackedIds.delete(reminder.id);
+        return;
       }
       try {
         await ackReminder(reminder.id);
@@ -1898,15 +1945,15 @@ export function MainWindow({
     };
   }, []);
 
-  const handleSelectExternalFile = async (id: string) => {
-    if (id === selectedId) return;
+  const handleSelectExternalFile = async (id: string): Promise<boolean> => {
+    if (id === selectedId) return true;
     setDeleteConfirm(false);
     // 保存失败不切换外部文件，避免旧编辑内容被新文件覆盖
     const saved = await saveCurrentNote();
-    if (!saved) return;
+    if (!saved) return false;
 
     const file = externalFiles.find((f) => f.id === id);
-    if (!file) return;
+    if (!file) return false;
 
     setIsLoading(true);
     const epoch = loadEpoch.bump();
@@ -1916,7 +1963,7 @@ export function MainWindow({
         getFileModifiedTime(file.filePath),
         prepareExternalFileImages(file.filePath).catch(() => null),
       ]);
-      if (!loadEpoch.isCurrent(epoch)) return;
+      if (!loadEpoch.isCurrent(epoch)) return false;
       editRevisionRef.current += 1;
       selectedIdRef.current = id;
       titleValueRef.current = file.title;
@@ -1934,8 +1981,10 @@ export function MainWindow({
       setNoteTransitionKey((k) => k + 1);
       externalFileMtimeRef.current = mtime;
       navHistory.push(id, file.title || "无标题文件");
+      return true;
     } catch (error) {
       showToast(getErrorMessage(error));
+      return false;
     } finally {
       setIsLoading(false);
     }
@@ -2075,8 +2124,8 @@ export function MainWindow({
   };
 
   const handleOpenWorkspaceNote = async (noteId: string, hitOffset?: number) => {
-    await handleSelectNote(noteId);
-    if (hitOffset == null || hitOffset < 0) return;
+    const opened = await handleSelectNote(noteId);
+    if (!opened || hitOffset == null || hitOffset < 0) return;
     window.requestAnimationFrame(() => {
       const textarea = contentRef.current;
       if (!textarea) return;
@@ -2476,7 +2525,8 @@ export function MainWindow({
     if (!selectedId) return;
     const isPinned = pinnedTileIds.has(selectedId);
     if (!isPinned) {
-      await saveCurrentNote();
+      const saved = await saveCurrentNote();
+      if (!saved) return;
     }
     try {
       const pinned = await toggleTileWindow(selectedId);
@@ -2524,16 +2574,31 @@ export function MainWindow({
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
         if (pendingCloseRef.current) return;
-        if (saveStateRef.current === "saved" || saveStateRef.current === "idle") return;
         event.preventDefault();
-        const saved = await saveCurrentNote(true);
-        if (saved) {
+
+        const needsSave =
+          saveStateRef.current === "dirty" ||
+          saveStateRef.current === "error" ||
+          saveStateRef.current === "saving";
+        if (needsSave && !(await saveCurrentNote(true))) return;
+
+        try {
+          // The tray menu can change closeToTray without rerendering this window,
+          // so read the current persisted setting before deciding hide vs close.
+          const config = await getConfig();
+          if (config.closeToTray) {
+            await hideCurrentWindow();
+            return;
+          }
+
           pendingCloseRef.current = true;
           try {
             await closeCurrentWindow();
           } finally {
             pendingCloseRef.current = false;
           }
+        } catch (error) {
+          showToast(getErrorMessage(error));
         }
       })
       .then((fn) => {
@@ -4152,12 +4217,12 @@ export function MainWindow({
                   {(effectiveViewMode === "preview" || effectiveViewMode === "split") && (
                     <div className="flex flex-col min-h-0 min-w-0 flex-1">
                       {(effectiveViewMode === "split" ||
-                        (settingsConfig?.showOutline && headings.length > 0)) && (
+                        (outlineOpen && headings.length > 0)) && (
                         <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center justify-between">
                           <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
                             {t("main.editor.previewLabel", { defaultValue: "Preview" })}
                           </span>
-                          {settingsConfig?.showOutline && headings.length > 0 && (
+                          {outlineOpen && headings.length > 0 && (
                             <button
                               type="button"
                               onClick={() => setOutlineOpen((o) => !o)}
@@ -4193,8 +4258,7 @@ export function MainWindow({
                       </div>
                     </div>
                   )}
-                  {settingsConfig?.showOutline &&
-                    outlineOpen &&
+                  {outlineOpen &&
                     headings.length > 0 &&
                     effectiveViewMode !== "edit" && (
                       <OutlinePanel

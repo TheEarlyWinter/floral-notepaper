@@ -1186,21 +1186,11 @@ pub fn handle_window_event(window: &Window, event: &WindowEvent) {
 
     match main_window_close_action(app_is_exiting(window.app_handle()), close_to_tray_enabled()) {
         MainWindowCloseAction::AllowClose => {}
-        MainWindowCloseAction::HideToTray => {
-            api.prevent_close();
-            #[cfg(target_os = "macos")]
-            if window.is_fullscreen().unwrap_or(false) {
-                hide_fullscreen_window(window);
-                return;
-            }
-            if let Err(error) = window.hide() {
-                eprintln!("failed to hide main window to tray: {error}");
-            }
-        }
-        MainWindowCloseAction::ExitApp => {
-            api.prevent_close();
-            mark_app_exiting(window.app_handle());
-            window.app_handle().exit(0);
+        // Let the frontend onCloseRequested handler save dirty content before it
+        // either hides the window or closes the app. A native hide here would
+        // bypass that handler and discard the debounce window's latest edits.
+        MainWindowCloseAction::HideToTray | MainWindowCloseAction::ExitApp => {
+            let _ = api;
         }
     }
 }
@@ -1342,8 +1332,10 @@ fn handle_tray_menu_event(app: &AppHandle, id: &str) -> Result<(), Box<dyn Error
             let _ = app.emit("config-changed", &config);
         }
         Some(TrayMenuAction::Quit) => {
-            mark_app_exiting(app);
-            app.exit(0);
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::updater::commands::request_app_quit(handle).await;
+            });
         }
         None => {}
     }

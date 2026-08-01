@@ -71,7 +71,9 @@ pub struct SearchResult {
     pub title: String,
     pub category: String,
     pub snippet: String,
-    pub match_start: usize,
+    /// UTF-16 code-unit offset in the note body. A title-only hit uses -1 so
+    /// the frontend never mistakes a title offset for a body selection.
+    pub match_start: isize,
     pub score: u32,
 }
 
@@ -272,7 +274,10 @@ pub fn move_note_attachments(
                     for (moved_to, moved_from) in &moved_files {
                         let _ = fs::rename(moved_to, moved_from);
                     }
-                    return Err(err("moveAttachmentFailed", format!("移动附件失败: {error}")));
+                    return Err(err(
+                        "moveAttachmentFailed",
+                        format!("移动附件失败: {error}"),
+                    ));
                 }
                 moved_files.push((to, from));
             }
@@ -450,12 +455,8 @@ fn safe_archive_path(name: &str) -> Result<PathBuf, AppError> {
     // 解压到这些名字会让恢复直接失败，属于可拒绝的 DoS
     let base = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (base.starts_with("COM")
-            && base.len() > 3
-            && base[3..].parse::<u8>().is_ok())
-        || (base.starts_with("LPT")
-            && base.len() > 3
-            && base[3..].parse::<u8>().is_ok());
+        || (base.starts_with("COM") && base.len() > 3 && base[3..].parse::<u8>().is_ok())
+        || (base.starts_with("LPT") && base.len() > 3 && base[3..].parse::<u8>().is_ok());
     if reserved {
         return Err(err("backupUnsafe", "备份文件包含 Windows 保留名称"));
     }
@@ -628,16 +629,20 @@ pub fn search(
     let mut results = fallback
         .iter()
         .filter_map(|note| {
-            let title_pos = case_insensitive_find(&note.title, &normalized);
-            let content_pos = case_insensitive_find(&note.content, &normalized);
-            let (source, pos, score) = if let Some(position) = content_pos {
+            if !matches_all_search_terms(&note.title, &note.content, &normalized) {
+                return None;
+            }
+            let title_pos = search_match_position(&note.title, &normalized);
+            let content_pos = search_match_position(&note.content, &normalized);
+            let (source, pos, match_start, score) = if let Some(position) = content_pos {
                 (
                     &note.content,
                     position,
+                    utf16_offset_at_byte_for_search(&note.content, position),
                     10 + title_pos.map(|_| 8).unwrap_or(0),
                 )
             } else if let Some(position) = title_pos {
-                (&note.title, position, 18)
+                (&note.title, position, -1, 18)
             } else {
                 return None;
             };
@@ -653,7 +658,7 @@ pub fn search(
                 title,
                 category: note.category.clone(),
                 snippet,
-                match_start: pos,
+                match_start,
                 score,
             })
         })
@@ -677,6 +682,30 @@ pub(crate) fn case_insensitive_find(source: &str, normalized_query: &str) -> Opt
             .starts_with(normalized_query)
             .then_some(offset)
     })
+}
+
+/// Find a stable position for a search query. FTS accepts whitespace-separated
+/// terms independently, so use the first matching term when the full query is
+/// not a literal substring and still provide a useful jump target.
+pub(crate) fn search_match_position(source: &str, normalized_query: &str) -> Option<usize> {
+    case_insensitive_find(source, normalized_query).or_else(|| {
+        normalized_query
+            .split_whitespace()
+            .find_map(|term| case_insensitive_find(source, term))
+    })
+}
+
+fn matches_all_search_terms(title: &str, content: &str, normalized_query: &str) -> bool {
+    let terms = normalized_query.split_whitespace().collect::<Vec<_>>();
+    !terms.is_empty()
+        && terms.iter().all(|term| {
+            case_insensitive_find(title, term).is_some()
+                || case_insensitive_find(content, term).is_some()
+        })
+}
+
+pub(crate) fn utf16_offset_at_byte_for_search(source: &str, byte_offset: usize) -> isize {
+    source[..byte_offset].encode_utf16().count() as isize
 }
 
 fn floor_char_boundary(source: &str, index: usize) -> usize {
@@ -843,7 +872,47 @@ mod tests {
         )];
         let results = search(&dir, "i̇stan", &notes).expect("unicode search should not panic");
         assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_start, 0);
         assert!(results[0].snippet.contains("İstanbul"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn search_returns_utf16_body_offsets_and_title_hits_are_not_selectable() {
+        let dir = temp_dir("search-offset");
+        let notes = vec![sample_note("unicode", "标题命中", "前缀😀中文目标内容")];
+
+        let body = search(&dir, "目标", &notes).expect("body search");
+        assert_eq!(
+            body[0].match_start,
+            "前缀😀中文".encode_utf16().count() as isize
+        );
+
+        let title = search(&dir, "标题", &notes).expect("title search");
+        assert_eq!(title[0].match_start, -1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn multi_term_search_requires_all_terms_and_jumps_to_the_first_term() {
+        let dir = temp_dir("multi-term-search");
+        let notes = vec![
+            sample_note("complete", "完整", "先出现齿轮，然后讨论强度"),
+            sample_note("partial", "部分", "只有齿轮"),
+        ];
+
+        let results = search(&dir, "齿轮 强度", &notes).expect("multi-term search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].note_id, "complete");
+        assert_eq!(
+            results[0].match_start,
+            "先出现".encode_utf16().count() as isize
+        );
+
+        let split_terms = vec![sample_note("split", "齿轮标题", "正文讨论强度")];
+        let split_results = search(&dir, "齿轮 强度", &split_terms).expect("split search");
+        assert_eq!(split_results.len(), 1);
+        assert_eq!(split_results[0].match_start, "正文讨论".encode_utf16().count() as isize);
         let _ = fs::remove_dir_all(dir);
     }
 }

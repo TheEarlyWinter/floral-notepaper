@@ -86,6 +86,20 @@ pub fn delete(data_dir: &Path, id: &str) -> Result<(), AppError> {
     save(data_dir, &file)
 }
 
+/// Remove reminders whose target note no longer exists, so the scheduler does
+/// not keep retrying a delivery that can never open its destination.
+pub fn delete_for_note(data_dir: &Path, note_id: &str) -> Result<(), AppError> {
+    let _guard = lock()?;
+    let mut file = load(data_dir)?;
+    let original_len = file.reminders.len();
+    file.reminders
+        .retain(|reminder| reminder.note_id != note_id);
+    if file.reminders.len() != original_len {
+        save(data_dir, &file)?;
+    }
+    Ok(())
+}
+
 pub fn take_due(data_dir: &Path, now: DateTime<Utc>) -> Result<Vec<Reminder>, AppError> {
     let _guard = lock()?;
     let file = load(data_dir)?;
@@ -168,6 +182,32 @@ mod tests {
 
         delete(&data_dir, &reminder.id).expect("delete reminder");
         assert!(list(&data_dir).expect("list reminders").is_empty());
+
+        let _ = fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn deleting_a_note_removes_all_of_its_reminders() {
+        let data_dir = temp_data_dir();
+        create(
+            &data_dir,
+            "note-a".into(),
+            "旧笔记提醒".into(),
+            Utc::now() + Duration::days(1),
+        )
+        .expect("create first reminder");
+        let kept = create(
+            &data_dir,
+            "note-b".into(),
+            "保留的提醒".into(),
+            Utc::now() + Duration::days(1),
+        )
+        .expect("create second reminder");
+
+        delete_for_note(&data_dir, "note-a").expect("delete note reminders");
+        let remaining = list(&data_dir).expect("list reminders");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, kept.id);
 
         let _ = fs::remove_dir_all(data_dir);
     }

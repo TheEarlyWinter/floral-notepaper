@@ -69,6 +69,7 @@ export interface IndexedSearchResult {
   title: string;
   category: string;
   snippet: string;
+  /** UTF-16 offset in the note body; -1 means the hit only matched the title. */
   matchStart: number;
   score: number;
 }

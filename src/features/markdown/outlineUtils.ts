@@ -33,10 +33,23 @@ function normalizeHeadingText(raw: string): string {
  */
 function stripInlineMarkdown(text: string): string {
   return text
+    // 行内 HTML：渲染端 rehype-raw 会解析标签，slug 只看标签内的文本
+    .replace(/<[^>]*>/g, "")
+    // HTML 实体：先剥标签再解码，避免 `&lt;span&gt;` 解码后再次被当标签剥掉内容
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    // Obsidian 式高亮 ==文字==，与预览端一致地剥掉标记只留文本
+    .replace(/==([^=]+)==/g, "$1")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(\*\*|__)([^*_]*)\1/g, "$2")
     .replace(/~~([^~]*)~~/g, "$1")
     .replace(/`([^`]*)`/g, "$1")
+    // 行内数学：katex 渲染后的文本节点不含 $，这里同样只留内容
+    .replace(/\$([^$]+)\$/g, "$1")
     .replace(/(^|[^*])\*([^*\n]*)\*(?=$|[^*])/g, "$1$2")
     .replace(/(^|[^_])_([^_\n]*)_(?=$|[^_])/g, "$1$2")
     .trim();

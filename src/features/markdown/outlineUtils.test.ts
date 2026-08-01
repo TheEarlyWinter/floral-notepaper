@@ -22,4 +22,18 @@ describe("extractOutlineHeadings", () => {
 
     expect(headings).toEqual([{ level: 3, text: "收尾标题", id: "收尾标题", line: 1 }]);
   });
+
+  test("strips inline HTML and decodes entities so slugs match the rendered preview", () => {
+    const headings = extractOutlineHeadings(
+      "# <span>标题</span> &amp; 测试\n\n## 实体 &lt;b&gt; 内容",
+    );
+
+    expect(headings.map((heading) => heading.id)).toEqual(["标题--测试", "实体-b-内容"]);
+  });
+
+  test("strips highlight and inline math markers like the preview renderer does", () => {
+    const headings = extractOutlineHeadings("# ==高亮== 文字\n\n## 公式 $E=mc^2$");
+
+    expect(headings.map((heading) => heading.id)).toEqual(["高亮-文字", "公式-emc2"]);
+  });
 });
