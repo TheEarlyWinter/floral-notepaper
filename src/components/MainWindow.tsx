@@ -162,6 +162,7 @@ type SidePanelMode =
   | "knowledgeGraph";
 
 type SidebarSortKind = "action" | "category";
+type SidebarPointerDragKind = SidebarSortKind | "note";
 
 interface SidebarPointerDragState {
   kind: SidebarSortKind;
@@ -169,7 +170,11 @@ interface SidebarPointerDragState {
   targetId: string | null;
 }
 
-interface SidebarPointerDrag extends SidebarPointerDragState {
+interface SidebarPointerDrag {
+  kind: SidebarPointerDragKind;
+  sourceId: string;
+  sourceCategory?: string;
+  targetId: string | null;
   pointerId: number;
   startX: number;
   startY: number;
@@ -197,6 +202,13 @@ function getSidebarSortTarget(clientX: number, clientY: number): SidebarPointerD
   const id = element?.dataset.sidebarSortId;
   if ((kind !== "action" && kind !== "category") || !id) return null;
   return { kind, id };
+}
+
+function getSidebarNoteDropTarget(clientX: number, clientY: number): string | null {
+  const element = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest<HTMLElement>("[data-sidebar-note-drop-category]");
+  return element?.dataset.sidebarNoteDropCategory ?? null;
 }
 
 const BUILT_IN_TEMPLATES: NoteTemplate[] = [
@@ -525,6 +537,7 @@ export function MainWindow({
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const sidebarAutoScrollFrameRef = useRef<number | null>(null);
   const sidebarAutoScrollDirectionRef = useRef<-1 | 0 | 1>(0);
+  const handleMoveNoteRef = useRef<(noteId: string, targetCategory: string) => void>(() => {});
   const suppressNextSidebarClickRef = useRef(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [activeCategory, setActiveCategory] = useState<string>("");
@@ -1809,6 +1822,25 @@ export function MainWindow({
     [],
   );
 
+  // Windows native file drops can suppress DOM HTML5 DnD, so note relocation shares the Pointer path.
+  const beginSidebarNotePointerDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, noteId: string, sourceCategory: string) => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      sidebarPointerDragRef.current = {
+        kind: "note",
+        sourceId: noteId,
+        sourceCategory,
+        targetId: null,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        isDragging: false,
+      };
+    },
+    [],
+  );
+
   const sidebarActionDragClass = (action: SidebarActionId) => {
     if (activeSidebarPointerDrag?.kind !== "action") return "";
     if (activeSidebarPointerDrag.sourceId === action) return "opacity-50";
@@ -1858,6 +1890,7 @@ export function MainWindow({
     const cancelPointerDrag = () => {
       sidebarPointerDragRef.current = null;
       setActiveSidebarPointerDrag(null);
+      setDragOverCategory(null);
       stopSidebarAutoScroll();
     };
 
@@ -1876,6 +1909,18 @@ export function MainWindow({
       }
 
       updateSidebarAutoScroll(event);
+      if (drag.kind === "note") {
+        const targetCategory = getSidebarNoteDropTarget(event.clientX, event.clientY);
+        if (targetCategory === drag.targetId) {
+          event.preventDefault();
+          return;
+        }
+        drag.targetId = targetCategory;
+        setDragOverCategory(targetCategory);
+        event.preventDefault();
+        return;
+      }
+
       const target = getSidebarSortTarget(event.clientX, event.clientY);
       const targetId = target?.kind === drag.kind ? target.id : null;
       if (targetId === drag.targetId) {
@@ -1896,12 +1941,21 @@ export function MainWindow({
       if (!drag || drag.pointerId !== event.pointerId) return;
       sidebarPointerDragRef.current = null;
       setActiveSidebarPointerDrag(null);
+      setDragOverCategory(null);
       stopSidebarAutoScroll();
       if (!drag.isDragging) return;
 
       event.preventDefault();
       suppressNextSidebarClick();
       if (cancelled) return;
+
+      if (drag.kind === "note") {
+        const targetCategory = getSidebarNoteDropTarget(event.clientX, event.clientY);
+        if (targetCategory !== null && targetCategory !== drag.sourceCategory) {
+          handleMoveNoteRef.current(drag.sourceId, targetCategory);
+        }
+        return;
+      }
 
       const target = getSidebarSortTarget(event.clientX, event.clientY);
       if (!target || target.kind !== drag.kind || target.id === drag.sourceId) return;
@@ -2342,14 +2396,23 @@ export function MainWindow({
   };
 
   const handleMoveNote = async (noteId: string, targetCategory: string) => {
-    setNoteMenuClosing(true);
     try {
+      // Moving can relocate the backing file, so flush the active editor before changing metadata.
+      if (noteId === selectedIdRef.current) {
+        const saved = await saveCurrentNote(true);
+        if (!saved) return;
+      }
+      setNoteMenuClosing(true);
       await moveNoteCategory(noteId, targetCategory);
       await refreshNotes();
       showToast(targetCategory ? "已整理到分类" : "已移至未分类");
     } catch (error) {
       showToast(getErrorMessage(error));
     }
+  };
+
+  handleMoveNoteRef.current = (noteId, targetCategory) => {
+    void handleMoveNote(noteId, targetCategory);
   };
 
   const handleMergeNotes = async (targetId: string, sourceId: string) => {
@@ -3469,25 +3532,10 @@ export function MainWindow({
                       return (
                         <div
                           key="__uncategorized__"
+                          data-sidebar-note-drop-category=""
                           className={`rounded-lg transition-all duration-200 ${
                             dragOverCategory === "" ? "bg-bamboo/10 ring-1 ring-bamboo/20" : ""
                           }`}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = "move";
-                            setDragOverCategory("");
-                          }}
-                          onDragLeave={(e) => {
-                            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                              setDragOverCategory(null);
-                            }
-                          }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setDragOverCategory(null);
-                            const noteId = e.dataTransfer.getData("text/plain");
-                            if (noteId) void handleMoveNote(noteId, "");
-                          }}
                         >
                           {group.notes.map((note) => {
                             const isSelected = note.id === selectedId;
@@ -3495,12 +3543,13 @@ export function MainWindow({
                             return (
                               <div
                                 key={note.id}
-                                draggable
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData("text/plain", note.id);
-                                  e.dataTransfer.effectAllowed = "move";
+                                onPointerDown={(event) =>
+                                  beginSidebarNotePointerDrag(event, note.id, note.category)
+                                }
+                                onClick={() => {
+                                  if (consumeSidebarPointerClick()) return;
+                                  void handleSelectNote(note.id);
                                 }}
-                                onClick={() => void handleSelectNote(note.id)}
                                 onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
                                 onMouseEnter={() => setHoveredId(note.id)}
                                 onMouseLeave={() => setHoveredId(null)}
@@ -3562,7 +3611,11 @@ export function MainWindow({
                       !isSidebarCategorySource;
 
                     return (
-                      <div key={group.category} className="px-2 mb-0.5">
+                      <div
+                        key={group.category}
+                        data-sidebar-note-drop-category={group.category}
+                        className="px-2 mb-0.5"
+                      >
                         <div
                           data-sidebar-sort-kind="category"
                           data-sidebar-sort-id={group.category}
@@ -3590,18 +3643,6 @@ export function MainWindow({
                             });
                             setCategoryMenuClosing(false);
                             setCategoryMenuConfirmDelete(false);
-                          }}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = "move";
-                            setDragOverCategory(group.category);
-                          }}
-                          onDragLeave={() => setDragOverCategory(null)}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setDragOverCategory(null);
-                            const noteId = e.dataTransfer.getData("text/plain");
-                            if (noteId) void handleMoveNote(noteId, group.category);
                           }}
                         >
                           <svg
@@ -3685,25 +3726,7 @@ export function MainWindow({
                         </div>
 
                         <div className={`category-body ${isCollapsed ? "" : "expanded"}`}>
-                          <div
-                            className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1"
-                            onDragOver={(e) => {
-                              e.preventDefault();
-                              e.dataTransfer.dropEffect = "move";
-                              setDragOverCategory(group.category);
-                            }}
-                            onDragLeave={(e) => {
-                              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                                setDragOverCategory(null);
-                              }
-                            }}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              setDragOverCategory(null);
-                              const noteId = e.dataTransfer.getData("text/plain");
-                              if (noteId) void handleMoveNote(noteId, group.category);
-                            }}
-                          >
+                          <div className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1">
                             {group.notes.length === 0 ? (
                               <div className="px-3 py-3 text-center text-[11px] text-ink-ghost/50">
                                 {t("main.category.emptyFolder", { defaultValue: "空文件夹" })}
@@ -3716,12 +3739,13 @@ export function MainWindow({
                                 return (
                                   <div
                                     key={note.id}
-                                    draggable
-                                    onDragStart={(e) => {
-                                      e.dataTransfer.setData("text/plain", note.id);
-                                      e.dataTransfer.effectAllowed = "move";
+                                    onPointerDown={(event) =>
+                                      beginSidebarNotePointerDrag(event, note.id, note.category)
+                                    }
+                                    onClick={() => {
+                                      if (consumeSidebarPointerClick()) return;
+                                      void handleSelectNote(note.id);
                                     }}
-                                    onClick={() => void handleSelectNote(note.id)}
                                     onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
                                     onMouseEnter={() => setHoveredId(note.id)}
                                     onMouseLeave={() => setHoveredId(null)}
