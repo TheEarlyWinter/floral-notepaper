@@ -147,7 +147,10 @@
       "italic": "斜體",
       "ol": "有序清單",
       "quote": "引用",
-      "ul": "無序清單"
+      "ul": "無序清單",
+      "collapse": "收納工具列",
+      "expand": "展開工具列",
+      "collapsedLabel": "工具列已收納"
     },
     "window": {
       "close": "關閉",

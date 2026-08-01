@@ -435,6 +435,7 @@ export function MainWindow({
     normalizeViewMode(initialConfig?.defaultViewMode ?? "split"),
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -3497,12 +3498,14 @@ export function MainWindow({
           <div className="flex-1 flex flex-col min-w-0">
             <div
               className={`flex items-center h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20 transition-all duration-200 ${
-                settingsOpen || aboutOpen || focusMode ? "justify-end px-2" : "justify-between px-4"
+                settingsOpen || aboutOpen || focusMode || toolbarCollapsed
+                  ? "justify-end px-2"
+                  : "justify-between px-4"
               }`}
             >
               <div
                 className={`flex items-center gap-1.5 overflow-hidden transition-[max-width,opacity] duration-200 ${
-                  settingsOpen || aboutOpen || focusMode
+                  settingsOpen || aboutOpen || focusMode || toolbarCollapsed
                     ? "max-w-0 opacity-0 pointer-events-none"
                     : "max-w-[900px] opacity-100"
                 }`}
@@ -4029,7 +4032,7 @@ export function MainWindow({
                 )}
               </div>
 
-              {!settingsOpen && !aboutOpen && !focusMode && (
+              {!settingsOpen && !aboutOpen && !focusMode && !toolbarCollapsed && (
                 <SlidingButtonGroup
                   options={viewModeOptions}
                   value={viewMode}
@@ -4037,10 +4040,67 @@ export function MainWindow({
                   buttonClassName="px-3.5 py-1"
                 />
               )}
-              {(settingsOpen || aboutOpen) && (
-                <span className="px-2 text-[11px] text-ink-ghost font-body">
-                  {settingsOpen ? "设置已打开" : "关于已打开"}
-                </span>
+              {(toolbarCollapsed || settingsOpen || aboutOpen) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // 收纳态可点击文字直接展开；设置/关于打开时保持只读提示
+                    if (toolbarCollapsed && !settingsOpen && !aboutOpen && !focusMode) {
+                      setToolbarCollapsed(false);
+                    }
+                  }}
+                  className={`px-2 text-[11px] font-body ${
+                    toolbarCollapsed && !settingsOpen && !aboutOpen && !focusMode
+                      ? "text-ink-ghost hover:text-ink-faint cursor-pointer"
+                      : "text-ink-ghost cursor-default"
+                  }`}
+                  title={
+                    toolbarCollapsed && !settingsOpen && !aboutOpen && !focusMode
+                      ? t("main.toolbar.expand", { defaultValue: "点击展开工具栏" })
+                      : undefined
+                  }
+                >
+                  {toolbarCollapsed
+                    ? t("main.toolbar.collapsedLabel", { defaultValue: "工具栏已收纳" })
+                    : settingsOpen
+                      ? "设置已打开"
+                      : "关于已打开"}
+                </button>
+              )}
+              {!settingsOpen && !aboutOpen && !focusMode && (
+                <button
+                  type="button"
+                  onClick={() => setToolbarCollapsed((collapsed) => !collapsed)}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
+                  title={
+                    toolbarCollapsed
+                      ? t("main.toolbar.expand", { defaultValue: "展开工具栏" })
+                      : t("main.toolbar.collapse", { defaultValue: "收纳工具栏" })
+                  }
+                  aria-label={
+                    toolbarCollapsed
+                      ? t("main.toolbar.expand", { defaultValue: "展开工具栏" })
+                      : t("main.toolbar.collapse", { defaultValue: "收纳工具栏" })
+                  }
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    {toolbarCollapsed ? (
+                      <path d="m6 9 6 6 6-6" />
+                    ) : (
+                      <path d="m6 15 6-6 6 6" />
+                    )}
+                  </svg>
+                </button>
               )}
               {focusMode && (
                 <button

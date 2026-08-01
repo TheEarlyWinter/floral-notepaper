@@ -147,7 +147,10 @@
       "italic": "Italic",
       "ol": "Ordered list",
       "quote": "Blockquote",
-      "ul": "Unordered list"
+      "ul": "Unordered list",
+      "collapse": "Collapse Toolbar",
+      "expand": "Expand Toolbar",
+      "collapsedLabel": "Toolbar collapsed"
     },
     "window": {
       "close": "Close",
