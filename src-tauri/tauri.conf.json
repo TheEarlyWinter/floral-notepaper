@@ -32,7 +32,7 @@
         "object-src": "'none'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' asset: data: blob:",
+        "img-src": "'self' asset: data: blob: https://avatars.githubusercontent.com",
         "font-src": "'self' data:",
         "connect-src": "'self' ipc: http://ipc.localhost",
         "media-src": "'self' asset: data: blob:",
