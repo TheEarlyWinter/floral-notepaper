@@ -1,4 +1,4 @@
-import { isValidElement, useState, useCallback, useMemo } from "react";
+import { isValidElement, useState, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,11 +9,13 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import type { ComponentPropsWithoutRef } from "react";
 import type { Components } from "react-markdown";
 import "katex/dist/katex.min.css";
 import remarkAlerts from "./remarkAlerts";
 import remarkWikiLinks from "./remarkWikiLinks";
-import { resolveMarkdownImageSrc } from "./imageSrc";
+import { cacheExternalMarkdownImage } from "../notes/api";
+import { resolveExternalRelativeImagePath, resolveMarkdownImageSrc } from "./imageSrc";
 
 function CodeBlock({ children, language }: { children: React.ReactNode; language?: string }) {
   const { t } = useTranslation();
@@ -72,6 +74,7 @@ interface MarkdownPreviewProps {
   imageBaseDir?: string;
   /** Parent directory of an explicitly opened external Markdown file. */
   externalImageBaseDir?: string;
+  externalFilePath?: string;
   onOpenWikiLink?: (target: string) => void;
 }
 
@@ -83,7 +86,6 @@ const sanitizeSchema = {
     ...defaultSchema.attributes,
     "*": [
       ...(defaultSchema.attributes?.["*"] ?? []),
-      "style",
       "className",
       "data-alert-type",
       "dataAlertType",
@@ -171,6 +173,72 @@ function Blockquote({
     <blockquote className="border-l-2 border-bamboo/40 pl-4 my-3 text-ink-soft/80 italic leading-[1.9]">
       {children}
     </blockquote>
+  );
+}
+
+type MarkdownImageProps = ComponentPropsWithoutRef<"img"> & {
+  imageBaseDir?: string;
+  externalImageBaseDir?: string;
+  externalFilePath?: string;
+};
+
+function MarkdownImage({
+  src,
+  alt,
+  imageBaseDir,
+  externalImageBaseDir,
+  externalFilePath,
+  ...props
+}: MarkdownImageProps) {
+  const [resolvedSrc, setResolvedSrc] = useState<string | null>(() =>
+    externalImageBaseDir && externalFilePath
+      ? null
+      : resolveMarkdownImageSrc(src, imageBaseDir, convertFileSrc),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (externalImageBaseDir && externalFilePath && src) {
+      const externalPath = resolveExternalRelativeImagePath(externalImageBaseDir, src);
+      if (!externalPath) {
+        setResolvedSrc("");
+        return () => {
+          cancelled = true;
+        };
+      }
+      setResolvedSrc(null);
+      void cacheExternalMarkdownImage(externalFilePath, externalPath)
+        .then((cachedPath) => {
+          if (!cancelled) setResolvedSrc(convertFileSrc(cachedPath));
+        })
+        .catch(() => {
+          if (!cancelled) setResolvedSrc("");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setResolvedSrc(resolveMarkdownImageSrc(src, imageBaseDir, convertFileSrc));
+    return () => {
+      cancelled = true;
+    };
+  }, [externalFilePath, externalImageBaseDir, imageBaseDir, src]);
+
+  if (resolvedSrc === null) {
+    return <span className="text-ink-ghost text-sm">[正在加载本地图片]</span>;
+  }
+  if (!resolvedSrc) {
+    return <span className="text-ink-ghost text-sm">[已阻止或无法加载图片]</span>;
+  }
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt ?? ""}
+      loading="lazy"
+      className="w-[50%] rounded my-2 mx-auto block"
+      {...props}
+    />
   );
 }
 
@@ -282,6 +350,7 @@ export function MarkdownPreview({
   renderHtml = false,
   imageBaseDir,
   externalImageBaseDir,
+  externalFilePath,
   onOpenWikiLink,
 }: MarkdownPreviewProps) {
   const { t } = useTranslation();
@@ -321,25 +390,18 @@ export function MarkdownPreview({
           </a>
         );
       },
-      img: ({ src, alt, ...props }) => {
-        const resolvedSrc = resolveMarkdownImageSrc(
-          src,
-          imageBaseDir,
-          convertFileSrc,
-          externalImageBaseDir,
-        );
-        return (
-          <img
-            src={resolvedSrc}
-            alt={alt ?? ""}
-            loading="lazy"
-            className="w-[50%] rounded my-2 mx-auto block"
-            {...props}
-          />
-        );
-      },
+      img: ({ src, alt, ...props }) => (
+        <MarkdownImage
+          src={src}
+          alt={alt}
+          imageBaseDir={imageBaseDir}
+          externalImageBaseDir={externalImageBaseDir}
+          externalFilePath={externalFilePath}
+          {...props}
+        />
+      ),
     }),
-    [externalImageBaseDir, imageBaseDir, onOpenWikiLink],
+    [externalFilePath, externalImageBaseDir, imageBaseDir, onOpenWikiLink],
   );
   return (
     <div

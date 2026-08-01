@@ -15,6 +15,7 @@ use services::{
     },
     reminders::{self, Reminder},
 };
+use sha2::{Digest, Sha256};
 use std::{env, fs, io::Write, path::PathBuf};
 
 const MAX_EXTERNAL_TEXT_BYTES: u64 = 25 * 1024 * 1024;
@@ -326,20 +327,58 @@ fn read_external_file(path: String) -> Result<String, AppError> {
     decode_external_text_bytes(bytes)
 }
 
-/// Give Markdown opened by the user access to image assets located below that
-/// file's own directory. The canonical path avoids granting access through a
-/// symlinked alias, and the frontend only resolves relative image references.
+/// Return the canonical parent directory for an explicitly opened external
+/// document. This command deliberately does not grant that directory to the
+/// asset protocol: external images are copied into the app-owned preview cache.
 #[tauri::command]
-fn external_file_image_base_dir(app: AppHandle, path: String) -> Result<String, AppError> {
+fn external_file_image_base_dir(_app: AppHandle, path: String) -> Result<String, AppError> {
     let file = validate_external_text_path(&path, false)?;
     let canonical_file = fs::canonicalize(&file).map_err(|error| io_error(error.to_string()))?;
     let parent = canonical_file
         .parent()
         .ok_or_else(|| io_error("外部文件没有有效父目录"))?;
-    app.asset_protocol_scope()
-        .allow_directory(parent, true)
-        .map_err(|error| io_error(error.to_string()))?;
     Ok(parent.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn cache_external_markdown_image(markdown_path: String, image_path: String) -> Result<String, AppError> {
+    let markdown = validate_external_text_path(&markdown_path, false)?;
+    let canonical_markdown =
+        fs::canonicalize(&markdown).map_err(|error| io_error(error.to_string()))?;
+    let parent = canonical_markdown
+        .parent()
+        .ok_or_else(|| io_error("外部文件没有有效父目录"))?;
+
+    let requested_image = PathBuf::from(image_path.trim());
+    if !requested_image.is_absolute() {
+        return Err(io_error("外部图片路径必须是绝对路径"));
+    }
+    let canonical_image =
+        fs::canonicalize(&requested_image).map_err(|error| io_error(error.to_string()))?;
+    if !canonical_image.starts_with(parent) {
+        return Err(io_error("外部图片必须位于 Markdown 文件所在目录内"));
+    }
+    validate_image_source_path(&canonical_image.to_string_lossy())?;
+
+    let bytes = fs::read(&canonical_image).map_err(|error| io_error(error.to_string()))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(io_error("单张图片不能超过 50 MB"));
+    }
+    let extension = canonical_image
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| io_error("外部图片没有有效扩展名"))?;
+    let cache_dir = default_store()?.data_dir().join("external-previews");
+    fs::create_dir_all(&cache_dir).map_err(|error| io_error(error.to_string()))?;
+
+    let digest = Sha256::digest(&bytes);
+    let file_name = format!("{:x}.{}", digest, extension);
+    let cached_path = cache_dir.join(file_name);
+    if !cached_path.exists() {
+        fs::write(&cached_path, bytes).map_err(|error| io_error(error.to_string()))?;
+    }
+    Ok(cached_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -532,8 +571,10 @@ fn config_migrate_data_dir(app: AppHandle, new_data_dir: String) -> Result<AppCo
     let new_store = store.migrate_data_to(&new_path)?;
 
     let scope = app.asset_protocol_scope();
+    let _ = fs::create_dir_all(new_path.join("external-previews"));
     let _ = scope.allow_directory(new_path.join("images"), true);
     let _ = scope.allow_directory(new_path.join("backgrounds"), true);
+    let _ = scope.allow_directory(new_path.join("external-previews"), true);
 
     let config = new_store.load_config()?;
     let _ = app.emit("config-changed", &config);
@@ -708,8 +749,11 @@ pub fn run() {
             if let Ok(store) = default_store() {
                 let data = store.data_dir();
                 let scope = app.asset_protocol_scope();
+                let _ = fs::remove_dir_all(data.join("external-previews"));
+                let _ = fs::create_dir_all(data.join("external-previews"));
                 let _ = scope.allow_directory(data.join("images"), true);
                 let _ = scope.allow_directory(data.join("backgrounds"), true);
+                let _ = scope.allow_directory(data.join("external-previews"), true);
             }
             let updater_state = updater::UpdaterState::new(app.package_info().version.to_string());
             if let Err(error) = updater_state.initialize() {
@@ -751,6 +795,7 @@ pub fn run() {
             notes_move_category,
             read_external_file,
             external_file_image_base_dir,
+            cache_external_markdown_image,
             save_external_file,
             get_file_modified_time,
             categories_list,

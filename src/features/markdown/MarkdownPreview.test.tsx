@@ -45,9 +45,33 @@ describe("MarkdownPreview", () => {
       <MarkdownPreview
         content="![流程图](./assets/flow.png)"
         externalImageBaseDir="C:/Users/Alice/Documents/project"
+        externalFilePath="C:/Users/Alice/Documents/project/readme.md"
       />,
     );
 
-    expect(markup).toContain("asset://C:/Users/Alice/Documents/project/assets/flow.png");
+    expect(markup).toContain("正在加载本地图片");
+  });
+
+  test("removes raw HTML styles and executable attributes", () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPreview
+        renderHtml
+        content={'<p style="position:fixed;inset:0">untrusted</p><img src="x" onerror="alert(1)"><script>alert(1)</script>'}
+      />,
+    );
+
+    expect(markup).toContain("untrusted");
+    expect(markup).not.toContain("position:fixed");
+    expect(markup).not.toContain("onerror");
+    expect(markup).not.toContain("<script");
+  });
+
+  test("renders a placeholder instead of loading a remote image", () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPreview content="![tracking pixel](https://example.com/pixel.png)" />,
+    );
+
+    expect(markup).toContain("已阻止或无法加载图片");
+    expect(markup).not.toContain("https://example.com/pixel.png");
   });
 });

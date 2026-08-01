@@ -26,7 +26,19 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": {
+        "default-src": "'self' asset:",
+        "base-uri": "'none'",
+        "object-src": "'none'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "media-src": "'self' asset: data: blob:",
+        "frame-src": "'none'",
+        "form-action": "'none'"
+      },
       "assetProtocol": {
         "enable": true,
         "scope": []

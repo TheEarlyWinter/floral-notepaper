@@ -17,6 +17,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
+import { canRenderRawHtml } from "../features/markdown/renderPolicy";
 import { extractOutlineHeadings } from "../features/markdown/outlineUtils";
 import { OutlinePanel } from "./OutlinePanel";
 import { showToast } from "./Toast";
@@ -558,6 +559,10 @@ export function MainWindow({
   const updateStatusHydratedRef = useRef(false);
 
   const isExternal = selectedExternalFile !== null;
+  const allowRawHtml = canRenderRawHtml(
+    isExternal,
+    settingsConfig?.renderHtmlMarkdown ?? false,
+  );
   const isExternalRef = useRef(isExternal);
   isExternalRef.current = isExternal;
 
@@ -4315,11 +4320,12 @@ export function MainWindow({
                         <MarkdownPreview
                           content={deferredContent}
                           fontSize={settingsConfig?.fontSize ?? 14}
-                          renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
+                          renderHtml={allowRawHtml}
                           imageBaseDir={isExternal ? undefined : (imageBaseDir ?? undefined)}
                           externalImageBaseDir={
                             isExternal ? (externalImageBaseDir ?? undefined) : undefined
                           }
+                          externalFilePath={selectedExternalFile?.filePath}
                           onOpenWikiLink={handleOpenWikiLink}
                         />
                       </div>

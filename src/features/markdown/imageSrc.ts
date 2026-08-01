@@ -2,6 +2,10 @@ export type FileSrcConverter = (path: string) => string;
 
 const NOTE_IMAGE_PREFIX = "images/";
 
+function isRemoteResource(src: string): boolean {
+  return /^(?:https?:)?\/\//i.test(src.trim());
+}
+
 function decodePathSafely(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -15,7 +19,7 @@ function decodePathSafely(value: string): string {
  * user explicitly opened. External URLs, fragments, and absolute paths stay
  * under browser/Markdown handling instead of being granted asset-protocol access.
  */
-function resolveExternalRelativeImagePath(baseDir: string, src: string): string | null {
+export function resolveExternalRelativeImagePath(baseDir: string, src: string): string | null {
   const normalizedSrc = decodePathSafely(src.replace(/\\/g, "/"));
   if (/^(?:[a-z][a-z\d+.-]*:|\/\/|\/|#)/i.test(normalizedSrc)) {
     return null;
@@ -40,15 +44,9 @@ export function resolveMarkdownImageSrc(
   src: string | undefined,
   imageBaseDir: string | undefined,
   convertFileSrc: FileSrcConverter,
-  externalImageBaseDir?: string,
 ): string {
-  if (!src) {
+  if (!src || isRemoteResource(src)) {
     return "";
-  }
-
-  if (externalImageBaseDir) {
-    const externalPath = resolveExternalRelativeImagePath(externalImageBaseDir, src);
-    if (externalPath) return convertFileSrc(externalPath);
   }
 
   const normalizedSrc = src.replace(/\\/g, "/");

@@ -150,9 +150,17 @@ export function readExternalFile(path: string): Promise<string> {
   return invoke("read_external_file", { path });
 }
 
-/** Allow relative image assets next to a file the user explicitly opened. */
+/** Return the approved base directory for relative images in an external file. */
 export function prepareExternalFileImages(path: string): Promise<string> {
   return invoke("external_file_image_base_dir", { path });
+}
+
+/** Copy one validated external image into the app-owned preview cache. */
+export function cacheExternalMarkdownImage(
+  markdownPath: string,
+  imagePath: string,
+): Promise<string> {
+  return invoke("cache_external_markdown_image", { markdownPath, imagePath });
 }
 
 export function saveExternalFile(path: string, content: string): Promise<void> {

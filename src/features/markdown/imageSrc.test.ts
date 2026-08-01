@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { resolveMarkdownImageSrc } from "./imageSrc";
+import { resolveExternalRelativeImagePath, resolveMarkdownImageSrc } from "./imageSrc";
 
 describe("resolveMarkdownImageSrc", () => {
   const convertFileSrc = vi.fn((path: string) => `asset://${path}`);
@@ -24,40 +24,33 @@ describe("resolveMarkdownImageSrc", () => {
 
   test("resolves relative images next to an explicitly opened Markdown file", () => {
     expect(
-      resolveMarkdownImageSrc(
-        "./assets/diagram%20one.png",
-        "/notes/note-1",
-        convertFileSrc,
+      resolveExternalRelativeImagePath(
         "C:\\Users\\Alice\\Documents\\project",
+        "./assets/diagram%20one.png",
       ),
-    ).toBe("asset://C:/Users/Alice/Documents/project/assets/diagram one.png");
-    expect(convertFileSrc).toHaveBeenCalledWith(
-      "C:/Users/Alice/Documents/project/assets/diagram one.png",
-    );
+    ).toBe("C:/Users/Alice/Documents/project/assets/diagram one.png");
   });
 
   test("resolves external images before internal-note image paths", () => {
-    expect(
-      resolveMarkdownImageSrc(
-        "images/photo.png",
-        "/app-managed-data",
-        convertFileSrc,
-        "D:/external-note",
-      ),
-    ).toBe("asset://D:/external-note/images/photo.png");
-    expect(convertFileSrc).toHaveBeenCalledWith("D:/external-note/images/photo.png");
+    expect(resolveExternalRelativeImagePath("D:/external-note", "images/photo.png")).toBe(
+      "D:/external-note/images/photo.png",
+    );
+    expect(convertFileSrc).not.toHaveBeenCalled();
   });
 
-  test("keeps non-note image paths unchanged and rejects paths escaping an external note folder", () => {
+  test("blocks remote images and rejects paths escaping an external note folder", () => {
     expect(
       resolveMarkdownImageSrc("https://example.com/photo.png", "/notes/note-1", convertFileSrc),
-    ).toBe("https://example.com/photo.png");
+    ).toBe("");
+    expect(
+      resolveMarkdownImageSrc("//example.com/photo.png", "/notes/note-1", convertFileSrc),
+    ).toBe("");
     expect(resolveMarkdownImageSrc("./photo.png", "/notes/note-1", convertFileSrc)).toBe(
       "./photo.png",
     );
     expect(
-      resolveMarkdownImageSrc("../private.png", undefined, convertFileSrc, "C:/notes/project"),
-    ).toBe("../private.png");
+      resolveExternalRelativeImagePath("C:/notes/project", "../private.png"),
+    ).toBeNull();
     expect(convertFileSrc).not.toHaveBeenCalled();
   });
 
