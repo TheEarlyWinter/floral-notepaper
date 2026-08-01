@@ -8,7 +8,7 @@ import {
   Suspense,
   lazy,
 } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -160,6 +160,44 @@ type SidePanelMode =
   | "workspace"
   | "outline"
   | "knowledgeGraph";
+
+type SidebarSortKind = "action" | "category";
+
+interface SidebarPointerDragState {
+  kind: SidebarSortKind;
+  sourceId: string;
+  targetId: string | null;
+}
+
+interface SidebarPointerDrag extends SidebarPointerDragState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  isDragging: boolean;
+}
+
+interface SidebarPointerDropTarget {
+  kind: SidebarSortKind;
+  id: string;
+}
+
+const SIDEBAR_POINTER_DRAG_THRESHOLD = 6;
+const SIDEBAR_POINTER_SCROLL_EDGE = 40;
+const SIDEBAR_POINTER_SCROLL_SPEED = 12;
+
+function isSidebarActionId(value: string): value is SidebarActionId {
+  return (DEFAULT_SIDEBAR_ACTION_ORDER as readonly string[]).includes(value);
+}
+
+function getSidebarSortTarget(clientX: number, clientY: number): SidebarPointerDropTarget | null {
+  const element = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest<HTMLElement>("[data-sidebar-sort-kind][data-sidebar-sort-id]");
+  const kind = element?.dataset.sidebarSortKind;
+  const id = element?.dataset.sidebarSortId;
+  if ((kind !== "action" && kind !== "category") || !id) return null;
+  return { kind, id };
+}
 
 const BUILT_IN_TEMPLATES: NoteTemplate[] = [
   { id: "daily", name: "今日计划", content: "# {{date}}\n\n## 待办\n- [ ] \n\n## 随手记\n" },
@@ -481,8 +519,13 @@ export function MainWindow({
   const [deleteExiting, setDeleteExiting] = useState(false);
   const [pinnedTileIds, setPinnedTileIds] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<string[]>([]);
-  const [draggingSidebarAction, setDraggingSidebarAction] = useState<SidebarActionId | null>(null);
-  const [draggingSidebarCategory, setDraggingSidebarCategory] = useState<string | null>(null);
+  const sidebarPointerDragRef = useRef<SidebarPointerDrag | null>(null);
+  const [activeSidebarPointerDrag, setActiveSidebarPointerDrag] =
+    useState<SidebarPointerDragState | null>(null);
+  const sidebarScrollRef = useRef<HTMLDivElement>(null);
+  const sidebarAutoScrollFrameRef = useRef<number | null>(null);
+  const sidebarAutoScrollDirectionRef = useRef<-1 | 0 | 1>(0);
+  const suppressNextSidebarClickRef = useRef(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [activeCategory, setActiveCategory] = useState<string>("");
   const [showCategoryInput, setShowCategoryInput] = useState(false);
@@ -567,10 +610,7 @@ export function MainWindow({
   const updateStatusHydratedRef = useRef(false);
 
   const isExternal = selectedExternalFile !== null;
-  const allowRawHtml = canRenderRawHtml(
-    isExternal,
-    settingsConfig?.renderHtmlMarkdown ?? false,
-  );
+  const allowRawHtml = canRenderRawHtml(isExternal, settingsConfig?.renderHtmlMarkdown ?? false);
   const isExternalRef = useRef(isExternal);
   isExternalRef.current = isExternal;
 
@@ -757,7 +797,11 @@ export function MainWindow({
     [settingsConfig?.sidebarItemOrder],
   );
   const sidebarCategoryOrder = useMemo(
-    () => normalizeOrder(settingsConfig?.sidebarCategoryOrder, categories.filter((category) => category !== INBOX_CATEGORY)),
+    () =>
+      normalizeOrder(
+        settingsConfig?.sidebarCategoryOrder,
+        categories.filter((category) => category !== INBOX_CATEGORY),
+      ),
     [categories, settingsConfig?.sidebarCategoryOrder],
   );
   const categoryGroups = useMemo(() => {
@@ -769,7 +813,10 @@ export function MainWindow({
     return [...groups].sort((left, right) => {
       if (!left.category) return -1;
       if (!right.category) return 1;
-      return (positions.get(left.category) ?? Number.MAX_SAFE_INTEGER) - (positions.get(right.category) ?? Number.MAX_SAFE_INTEGER);
+      return (
+        (positions.get(left.category) ?? Number.MAX_SAFE_INTEGER) -
+        (positions.get(right.category) ?? Number.MAX_SAFE_INTEGER)
+      );
     });
   }, [filteredNotes, categories, sidebarCategoryOrder]);
   const inboxCount = useMemo(
@@ -1371,11 +1418,7 @@ export function MainWindow({
     async (force: boolean): Promise<boolean> => {
       // 非强制保存（自动保存、切换前保存）在没有未保存修改时直接视为成功；
       // 上次保存失败（error）也需要重新尝试，不能误报成功
-      if (
-        !force &&
-        saveStateRef.current !== "dirty" &&
-        saveStateRef.current !== "error"
-      ) {
+      if (!force && saveStateRef.current !== "dirty" && saveStateRef.current !== "error") {
         return true;
       }
       const id = selectedIdRef.current;
@@ -1525,8 +1568,7 @@ export function MainWindow({
         void (async () => {
           // 关闭标签前先落盘：防抖窗口内的输入不能静默丢弃，保存失败则保留编辑器。
           // dirty 与 error（上次保存失败）都需要强制重试保存
-          const needsSave =
-            saveStateRef.current === "dirty" || saveStateRef.current === "error";
+          const needsSave = saveStateRef.current === "dirty" || saveStateRef.current === "error";
           const saved = needsSave ? await saveCurrentNote(true) : true;
           if (saved) clearCurrentNote();
         })();
@@ -1716,19 +1758,184 @@ export function MainWindow({
     [persistSettings],
   );
 
-  const reorderSidebarAction = useCallback((target: SidebarActionId) => {
-    if (!draggingSidebarAction || !settingsConfig) return;
-    const nextOrder = moveOrderItem(sidebarActionOrder, draggingSidebarAction, target);
-    setDraggingSidebarAction(null);
-    handleSettingsChange({ ...settingsConfig, sidebarItemOrder: nextOrder });
-  }, [draggingSidebarAction, handleSettingsChange, settingsConfig, sidebarActionOrder]);
+  const reorderSidebarAction = useCallback(
+    (source: SidebarActionId, target: SidebarActionId) => {
+      if (source === target || !settingsConfig) return;
+      const nextOrder = moveOrderItem(sidebarActionOrder, source, target);
+      handleSettingsChange({ ...settingsConfig, sidebarItemOrder: nextOrder });
+    },
+    [handleSettingsChange, settingsConfig, sidebarActionOrder],
+  );
 
-  const reorderSidebarCategory = useCallback((target: string) => {
-    if (!draggingSidebarCategory || !settingsConfig) return;
-    const nextOrder = moveOrderItem(sidebarCategoryOrder, draggingSidebarCategory, target);
-    setDraggingSidebarCategory(null);
-    handleSettingsChange({ ...settingsConfig, sidebarCategoryOrder: nextOrder });
-  }, [draggingSidebarCategory, handleSettingsChange, settingsConfig, sidebarCategoryOrder]);
+  const reorderSidebarCategory = useCallback(
+    (source: string, target: string) => {
+      if (source === target || !settingsConfig) return;
+      const nextOrder = moveOrderItem(sidebarCategoryOrder, source, target);
+      handleSettingsChange({ ...settingsConfig, sidebarCategoryOrder: nextOrder });
+    },
+    [handleSettingsChange, settingsConfig, sidebarCategoryOrder],
+  );
+
+  const suppressNextSidebarClick = useCallback(() => {
+    suppressNextSidebarClickRef.current = true;
+    window.setTimeout(() => {
+      suppressNextSidebarClickRef.current = false;
+    }, 0);
+  }, []);
+
+  const consumeSidebarPointerClick = useCallback(() => {
+    if (!suppressNextSidebarClickRef.current) return false;
+    suppressNextSidebarClickRef.current = false;
+    return true;
+  }, []);
+
+  const beginSidebarPointerDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, kind: SidebarSortKind, sourceId: string) => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      if (kind === "category" && (event.target as Element).closest("button, input, select")) {
+        return;
+      }
+      event.currentTarget.setPointerCapture(event.pointerId);
+      sidebarPointerDragRef.current = {
+        kind,
+        sourceId,
+        targetId: null,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        isDragging: false,
+      };
+    },
+    [],
+  );
+
+  const sidebarActionDragClass = (action: SidebarActionId) => {
+    if (activeSidebarPointerDrag?.kind !== "action") return "";
+    if (activeSidebarPointerDrag.sourceId === action) return "opacity-50";
+    return activeSidebarPointerDrag.targetId === action ? "bg-bamboo/15 ring-1 ring-bamboo/20" : "";
+  };
+
+  useEffect(() => {
+    const stopSidebarAutoScroll = () => {
+      sidebarAutoScrollDirectionRef.current = 0;
+      if (sidebarAutoScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(sidebarAutoScrollFrameRef.current);
+        sidebarAutoScrollFrameRef.current = null;
+      }
+    };
+
+    const startSidebarAutoScroll = () => {
+      if (sidebarAutoScrollFrameRef.current !== null) return;
+      const tick = () => {
+        const scrollContainer = sidebarScrollRef.current;
+        const direction = sidebarAutoScrollDirectionRef.current;
+        if (!scrollContainer || direction === 0) {
+          sidebarAutoScrollFrameRef.current = null;
+          return;
+        }
+        scrollContainer.scrollTop += direction * SIDEBAR_POINTER_SCROLL_SPEED;
+        sidebarAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
+      };
+      sidebarAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
+    };
+
+    const updateSidebarAutoScroll = (event: PointerEvent) => {
+      const scrollContainer = sidebarScrollRef.current;
+      if (!scrollContainer) return;
+      const { top, bottom } = scrollContainer.getBoundingClientRect();
+      const nextDirection: -1 | 0 | 1 =
+        event.clientY < top + SIDEBAR_POINTER_SCROLL_EDGE
+          ? -1
+          : event.clientY > bottom - SIDEBAR_POINTER_SCROLL_EDGE
+            ? 1
+            : 0;
+      if (nextDirection === sidebarAutoScrollDirectionRef.current) return;
+      sidebarAutoScrollDirectionRef.current = nextDirection;
+      if (nextDirection === 0) stopSidebarAutoScroll();
+      else startSidebarAutoScroll();
+    };
+
+    const cancelPointerDrag = () => {
+      sidebarPointerDragRef.current = null;
+      setActiveSidebarPointerDrag(null);
+      stopSidebarAutoScroll();
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = sidebarPointerDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if ((event.buttons & 1) === 0) {
+        cancelPointerDrag();
+        return;
+      }
+
+      if (!drag.isDragging) {
+        const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+        if (distance < SIDEBAR_POINTER_DRAG_THRESHOLD) return;
+        drag.isDragging = true;
+      }
+
+      updateSidebarAutoScroll(event);
+      const target = getSidebarSortTarget(event.clientX, event.clientY);
+      const targetId = target?.kind === drag.kind ? target.id : null;
+      if (targetId === drag.targetId) {
+        event.preventDefault();
+        return;
+      }
+      drag.targetId = targetId;
+      setActiveSidebarPointerDrag({
+        kind: drag.kind,
+        sourceId: drag.sourceId,
+        targetId,
+      });
+      event.preventDefault();
+    };
+
+    const finishPointerDrag = (event: PointerEvent, cancelled = false) => {
+      const drag = sidebarPointerDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      sidebarPointerDragRef.current = null;
+      setActiveSidebarPointerDrag(null);
+      stopSidebarAutoScroll();
+      if (!drag.isDragging) return;
+
+      event.preventDefault();
+      suppressNextSidebarClick();
+      if (cancelled) return;
+
+      const target = getSidebarSortTarget(event.clientX, event.clientY);
+      if (!target || target.kind !== drag.kind || target.id === drag.sourceId) return;
+      if (
+        drag.kind === "action" &&
+        isSidebarActionId(drag.sourceId) &&
+        isSidebarActionId(target.id)
+      ) {
+        reorderSidebarAction(drag.sourceId, target.id);
+      } else if (drag.kind === "category") {
+        reorderSidebarCategory(drag.sourceId, target.id);
+      }
+    };
+
+    const onPointerCancel = (event: PointerEvent) => finishPointerDrag(event, true);
+    const onWindowBlur = () => cancelPointerDrag();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") cancelPointerDrag();
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", finishPointerDrag, { passive: false });
+    window.addEventListener("pointercancel", onPointerCancel, { passive: false });
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stopSidebarAutoScroll();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", finishPointerDrag);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [reorderSidebarAction, reorderSidebarCategory, suppressNextSidebarClick]);
 
   const handleCloseSettings = useCallback(() => {
     setSettingsOpen(false);
@@ -1949,9 +2156,7 @@ export function MainWindow({
       if (ackedIds.has(reminder.id)) return;
       ackedIds.add(reminder.id);
       showToast(`提醒：${reminder.message}`, "warning");
-      const opened = reminder.noteId
-        ? await handleSelectNoteRef.current(reminder.noteId)
-        : true;
+      const opened = reminder.noteId ? await handleSelectNoteRef.current(reminder.noteId) : true;
       if (!opened) {
         // 当前笔记保存失败或目标笔记无法打开时，不确认送达；下轮会重投。
         ackedIds.delete(reminder.id);
@@ -2060,8 +2265,7 @@ export function MainWindow({
       // 删除当前笔记前先落盘未保存修改：保存失败则取消删除，
       // 避免未保存内容随笔记一起丢失
       if (selectedIdRef.current === noteId) {
-        const needsSave =
-          saveStateRef.current === "dirty" || saveStateRef.current === "error";
+        const needsSave = saveStateRef.current === "dirty" || saveStateRef.current === "error";
         const saved = needsSave ? await saveCurrentNote(true) : true;
         if (!saved) return;
       }
@@ -2164,7 +2368,11 @@ export function MainWindow({
     }
   };
 
-  const handleOpenWorkspaceNote = async (noteId: string, hitOffset?: number, hitLength?: number) => {
+  const handleOpenWorkspaceNote = async (
+    noteId: string,
+    hitOffset?: number,
+    hitLength?: number,
+  ) => {
     const opened = await handleSelectNote(noteId);
     if (!opened || hitOffset == null || hitOffset < 0) return;
     window.requestAnimationFrame(() => {
@@ -2919,14 +3127,15 @@ export function MainWindow({
                   ))}
                 </select>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="daily"
                   style={{ order: sidebarActionOrder.indexOf("daily") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "daily"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("daily"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("daily"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={() => void handleOpenDailyNote()}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "daily")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    void handleOpenDailyNote();
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("daily")}`}
                 >
                   <svg
                     width="13"
@@ -2944,14 +3153,15 @@ export function MainWindow({
                   <span>每日便笺</span>
                 </button>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="inbox"
                   style={{ order: sidebarActionOrder.indexOf("inbox") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "inbox"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("inbox"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("inbox"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={() => openWorkspace("inbox")}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "inbox")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    openWorkspace("inbox");
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("inbox")}`}
                 >
                   <svg
                     width="13"
@@ -2974,14 +3184,15 @@ export function MainWindow({
                   ) : null}
                 </button>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="journal"
                   style={{ order: sidebarActionOrder.indexOf("journal") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "journal"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("journal"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("journal"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={() => openWorkspace("journal")}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "journal")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    openWorkspace("journal");
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("journal")}`}
                 >
                   <svg
                     width="13"
@@ -2999,14 +3210,15 @@ export function MainWindow({
                   <span>日记流</span>
                 </button>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="dashboard"
                   style={{ order: sidebarActionOrder.indexOf("dashboard") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "dashboard"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("dashboard"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("dashboard"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={() => openWorkspace("dashboard")}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "dashboard")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    openWorkspace("dashboard");
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("dashboard")}`}
                 >
                   <svg
                     width="13"
@@ -3026,14 +3238,15 @@ export function MainWindow({
                   <span>笔记仪表盘</span>
                 </button>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="new-note"
                   style={{ order: sidebarActionOrder.indexOf("new-note") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "new-note"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("new-note"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("new-note"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={() => void handleNewNote()}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-bamboo hover:bg-bamboo-mist/60 transition-all cursor-pointer group"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "new-note")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    void handleNewNote();
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-bamboo hover:bg-bamboo-mist/60 transition-all cursor-pointer group ${sidebarActionDragClass("new-note")}`}
                 >
                   <svg
                     width="13"
@@ -3050,14 +3263,15 @@ export function MainWindow({
                   <span>{t("main.sidebar.newNote", { defaultValue: "新建笔记" })}</span>
                 </button>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="todos"
                   style={{ order: sidebarActionOrder.indexOf("todos") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "todos"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("todos"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("todos"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={handleToggleTodos}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "todos")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    handleToggleTodos();
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group ${sidebarActionDragClass("todos")}`}
                 >
                   <svg
                     width="13"
@@ -3075,14 +3289,15 @@ export function MainWindow({
                   <span>待办聚合</span>
                 </button>
                 <button
-                  draggable
+                  data-sidebar-sort-kind="action"
+                  data-sidebar-sort-id="import"
                   style={{ order: sidebarActionOrder.indexOf("import") }}
-                  onDragStart={(event) => { event.dataTransfer.setData("application/x-floral-sidebar-action", "import"); event.dataTransfer.effectAllowed = "move"; setDraggingSidebarAction("import"); }}
-                  onDragOver={(event) => { if (draggingSidebarAction) event.preventDefault(); }}
-                  onDrop={(event) => { if (event.dataTransfer.types.includes("application/x-floral-sidebar-action")) { event.preventDefault(); reorderSidebarAction("import"); } }}
-                  onDragEnd={() => setDraggingSidebarAction(null)}
-                  onClick={() => void handleImportNote()}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group"
+                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "import")}
+                  onClick={() => {
+                    if (consumeSidebarPointerClick()) return;
+                    void handleImportNote();
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group ${sidebarActionDragClass("import")}`}
                 >
                   <svg
                     width="13"
@@ -3162,7 +3377,7 @@ export function MainWindow({
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto px-2 pb-2">
+              <div ref={sidebarScrollRef} className="flex-1 overflow-y-auto px-2 pb-2">
                 <div className="space-y-0.5">
                   {externalFiles.length > 0 && (
                     <>
@@ -3338,25 +3553,33 @@ export function MainWindow({
                     }
 
                     const isCollapsed = collapsedCategories.has(group.category);
+                    const isSidebarCategorySource =
+                      activeSidebarPointerDrag?.kind === "category" &&
+                      activeSidebarPointerDrag.sourceId === group.category;
+                    const isSidebarCategoryTarget =
+                      activeSidebarPointerDrag?.kind === "category" &&
+                      activeSidebarPointerDrag.targetId === group.category &&
+                      !isSidebarCategorySource;
 
                     return (
                       <div key={group.category} className="px-2 mb-0.5">
                         <div
-                          draggable
-                          onDragStart={(event) => {
-                            event.dataTransfer.setData("application/x-floral-sidebar-category", group.category);
-                            event.dataTransfer.effectAllowed = "move";
-                            setDraggingSidebarCategory(group.category);
-                          }}
-                          onDragEnd={() => setDraggingSidebarCategory(null)}
+                          data-sidebar-sort-kind="category"
+                          data-sidebar-sort-id={group.category}
+                          onPointerDown={(event) =>
+                            beginSidebarPointerDrag(event, "category", group.category)
+                          }
                           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
-                            dragOverCategory === group.category
+                            isSidebarCategoryTarget || dragOverCategory === group.category
                               ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
                               : isCollapsed
                                 ? "bg-transparent border border-bamboo/15"
                                 : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
-                          }`}
-                          onClick={() => toggleCategoryCollapse(group.category)}
+                          } ${isSidebarCategorySource ? "opacity-50" : ""}`}
+                          onClick={() => {
+                            if (consumeSidebarPointerClick()) return;
+                            toggleCategoryCollapse(group.category);
+                          }}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -3371,17 +3594,11 @@ export function MainWindow({
                           onDragOver={(e) => {
                             e.preventDefault();
                             e.dataTransfer.dropEffect = "move";
-                            if (!e.dataTransfer.types.includes("application/x-floral-sidebar-category")) {
-                              setDragOverCategory(group.category);
-                            }
+                            setDragOverCategory(group.category);
                           }}
                           onDragLeave={() => setDragOverCategory(null)}
                           onDrop={(e) => {
                             e.preventDefault();
-                            if (e.dataTransfer.types.includes("application/x-floral-sidebar-category")) {
-                              reorderSidebarCategory(group.category);
-                              return;
-                            }
                             setDragOverCategory(null);
                             const noteId = e.dataTransfer.getData("text/plain");
                             if (noteId) void handleMoveNote(noteId, group.category);
@@ -4188,11 +4405,7 @@ export function MainWindow({
                     strokeLinejoin="round"
                     aria-hidden="true"
                   >
-                    {toolbarCollapsed ? (
-                      <path d="m6 9 6 6 6-6" />
-                    ) : (
-                      <path d="m6 15 6-6 6 6" />
-                    )}
+                    {toolbarCollapsed ? <path d="m6 9 6 6 6-6" /> : <path d="m6 15 6-6 6 6" />}
                   </svg>
                 </button>
               )}
@@ -4377,8 +4590,7 @@ export function MainWindow({
 
                   {(effectiveViewMode === "preview" || effectiveViewMode === "split") && (
                     <div className="flex flex-col min-h-0 min-w-0 flex-1">
-                      {(effectiveViewMode === "split" ||
-                        (outlineOpen && headings.length > 0)) && (
+                      {(effectiveViewMode === "split" || (outlineOpen && headings.length > 0)) && (
                         <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center justify-between">
                           <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
                             {t("main.editor.previewLabel", { defaultValue: "Preview" })}
@@ -4420,15 +4632,13 @@ export function MainWindow({
                       </div>
                     </div>
                   )}
-                  {outlineOpen &&
-                    headings.length > 0 &&
-                    effectiveViewMode !== "edit" && (
-                      <OutlinePanel
-                        headings={headings}
-                        previewScrollRef={previewScrollRef}
-                        onClose={() => setOutlineOpen(false)}
-                      />
-                    )}
+                  {outlineOpen && headings.length > 0 && effectiveViewMode !== "edit" && (
+                    <OutlinePanel
+                      headings={headings}
+                      previewScrollRef={previewScrollRef}
+                      onClose={() => setOutlineOpen(false)}
+                    />
+                  )}
                 </>
               )}
             </div>
@@ -4623,8 +4833,7 @@ export function MainWindow({
                     // 即使恢复失败也能从保护备份找回，不会丢未保存的修改。
                     // dirty 与 error 状态都需要强制重试保存
                     const needsSave =
-                      saveStateRef.current === "dirty" ||
-                      saveStateRef.current === "error";
+                      saveStateRef.current === "dirty" || saveStateRef.current === "error";
                     const saved = needsSave ? await saveCurrentNote(true) : true;
                     if (!saved) {
                       showToast("当前笔记保存失败，已取消恢复");
