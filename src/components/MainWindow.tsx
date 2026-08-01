@@ -3501,7 +3501,7 @@ export function MainWindow({
               }`}
             >
               <div
-                className={`flex items-center gap-1 overflow-hidden transition-[max-width,opacity] duration-200 ${
+                className={`flex items-center gap-1.5 overflow-hidden transition-[max-width,opacity] duration-200 ${
                   settingsOpen || aboutOpen || focusMode
                     ? "max-w-0 opacity-0 pointer-events-none"
                     : "max-w-[900px] opacity-100"
@@ -3941,7 +3941,7 @@ export function MainWindow({
                 <button
                   onClick={() => void saveCurrentNote(true)}
                   disabled={!selectedId || saveState === "saving"}
-                  className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="px-3 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                   title={t("common.save", { defaultValue: "保存" })}
                 >
                   {t("common.save", { defaultValue: "保存" })}
@@ -3954,7 +3954,7 @@ export function MainWindow({
                     <button
                       onClick={() => void handleExportHtml()}
                       disabled={!selectedId}
-                      className="px-2 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                       title={t("main.export.html", { defaultValue: "导出 HTML" })}
                     >
                       HTML
@@ -3962,7 +3962,7 @@ export function MainWindow({
                     <button
                       onClick={() => void handleExportPdf()}
                       disabled={!selectedId}
-                      className="px-2 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                       title={t("main.export.pdf", { defaultValue: "导出 PDF" })}
                     >
                       PDF
@@ -4034,7 +4034,7 @@ export function MainWindow({
                   options={viewModeOptions}
                   value={viewMode}
                   onChange={setViewMode}
-                  buttonClassName="px-3 py-1"
+                  buttonClassName="px-3.5 py-1"
                 />
               )}
               {(settingsOpen || aboutOpen) && (
