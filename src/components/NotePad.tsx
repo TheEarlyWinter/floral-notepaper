@@ -14,7 +14,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   animateCurrentWindowBounds,
-  closeCurrentWindow,
+  destroyCurrentWindow,
   getCurrentWindowBounds,
   getCurrentWindowScaleFactor,
   recycleCurrentNotepad,
@@ -671,10 +671,16 @@ export function NotePad({
       }
     }
     if (surfaceMode === "tile") {
-      void closeCurrentWindow().catch((error) => {
+      // Save has completed above. Force-destroy instead of calling close() again:
+      // close() emits CloseRequested and can be swallowed as a re-entrant request,
+      // leaving the tile registered and making the next pin click a no-op.
+      try {
+        await destroyCurrentWindow();
+        await emitTileWindowUnpinned(tileNoteId).catch(() => undefined);
+      } catch (error) {
         setIsExiting(false);
         showToast(getErrorMessage(error));
-      });
+      }
       return;
     }
 
@@ -730,7 +736,10 @@ export function NotePad({
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
         if (pendingCloseRef.current) return;
-        if (statusRef.current !== "dirty" && statusRef.current !== "saveFailed") return;
+        // Tauri automatically prevents native close while this JS listener exists.
+        // Always take over the request so a clean tile is destroyed as well; simply
+        // returning here leaves the window registered and makes the next pin click
+        // appear to do nothing.
         event.preventDefault();
         pendingCloseRef.current = true;
         try {

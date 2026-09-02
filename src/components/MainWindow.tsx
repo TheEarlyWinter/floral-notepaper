@@ -16,6 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
+import { exportMarkdownPdf, pdfFileName } from "../features/importExport/pdf";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
 import { canRenderRawHtml } from "../features/markdown/renderPolicy";
 import { extractOutlineHeadings } from "../features/markdown/outlineUtils";
@@ -2145,24 +2146,24 @@ export function MainWindow({
     try {
       const saved = await saveCurrentNote(true);
       if (!saved) return;
-      const html = wrapHtml(title || "未命名", content);
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      const win = window.open(url, "_blank", "width=800,height=600");
-      if (win) {
-        win.onload = () => {
-          win.print();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        };
-      } else {
-        // 弹窗被拦截：释放临时 URL，提示用户放行弹窗
-        URL.revokeObjectURL(url);
-        showToast(
-          t("main.export.pdfBlocked", {
-            defaultValue: "导出窗口被拦截，请允许弹出窗口后重试",
-          }),
-        );
-      }
+      const exportTitle = titleValueRef.current || "未命名";
+      const filePath = await save({
+        defaultPath: pdfFileName(exportTitle),
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!filePath) return;
+
+      await exportMarkdownPdf({
+        path: filePath,
+        title: exportTitle,
+        markdown: contentValueRef.current,
+        fontSize: settingsConfig?.fontSize ?? 14,
+        renderHtml: allowRawHtml,
+        imageBaseDir: isExternal ? undefined : (imageBaseDir ?? undefined),
+        externalImageBaseDir: isExternal ? (externalImageBaseDir ?? undefined) : undefined,
+        externalFilePath: selectedExternalFile?.filePath,
+      });
+      showToast(t("main.export.pdfSaved", { defaultValue: "PDF 已导出" }), "info");
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -2838,16 +2839,30 @@ export function MainWindow({
 
   const handlePinEntry = async () => {
     if (!selectedId) return;
-    const isPinned = pinnedTileIds.has(selectedId);
+    const currentId = selectedId;
+    const isPinned = pinnedTileIds.has(currentId);
     if (!isPinned) {
       const saved = await saveCurrentNote();
       if (!saved) return;
     }
     try {
-      const pinned = await toggleTileWindow(selectedId);
-      setPinnedTileIds((previous) => {
-        return syncPinnedTileIds(previous, selectedId, pinned);
-      });
+      let tileNoteId = currentId;
+      if (selectedExternalFile) {
+        const imported = await createNote({
+          title: titleValueRef.current,
+          content: contentValueRef.current,
+          category: activeCategory,
+        });
+        tileNoteId = imported.id;
+        setExternalFiles((current) => current.filter((file) => file.id !== currentId));
+        navHistory.remove(currentId);
+        replaceNoteMetadata(imported);
+        applyNote(imported);
+        navHistory.push(imported.id, imported.title || "无标题笔记");
+      }
+
+      const pinned = await toggleTileWindow(tileNoteId);
+      setPinnedTileIds((previous) => syncPinnedTileIds(previous, tileNoteId, pinned));
     } catch (error) {
       showToast(getErrorMessage(error));
     }

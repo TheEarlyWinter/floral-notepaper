@@ -562,6 +562,7 @@ input::placeholder {
 
 .markdown-selectable {
   cursor: text;
+  overflow-wrap: anywhere;
 }
 
 .markdown-selectable button,

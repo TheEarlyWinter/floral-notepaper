@@ -226,16 +226,23 @@ function MarkdownImage({
   }, [externalFilePath, externalImageBaseDir, imageBaseDir, src]);
 
   if (resolvedSrc === null) {
-    return <span className="text-ink-ghost text-sm">[正在加载本地图片]</span>;
+    return (
+      <span className="markdown-image-loading text-ink-ghost text-sm">[正在加载本地图片]</span>
+    );
   }
   if (!resolvedSrc) {
-    return <span className="text-ink-ghost text-sm">[已阻止或无法加载图片]</span>;
+    return (
+      <span className="markdown-image-blocked text-ink-ghost text-sm">[已阻止或无法加载图片]</span>
+    );
   }
+  // Local assets use eager loading; Chromium can suppress lazy loading inside
+  // the scrollable preview immediately after a drag-and-drop edit.
   return (
     <img
       src={resolvedSrc}
       alt={alt ?? ""}
-      loading="lazy"
+      loading="eager"
+      decoding="async"
       className="w-[50%] rounded my-2 mx-auto block"
       {...props}
     />

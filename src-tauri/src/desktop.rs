@@ -1168,6 +1168,9 @@ static APP_STARTED_AT: std::sync::OnceLock<std::time::Instant> = std::sync::Once
 
 pub fn handle_window_event(window: &Window, event: &WindowEvent) {
     if matches!(event, WindowEvent::Destroyed) {
+        if let Some(job_id) = window.label().strip_prefix(crate::PDF_EXPORT_WINDOW_PREFIX) {
+            crate::abort_pdf_export(&window.app_handle(), job_id);
+        }
         if let Some(note_id) = window.label().strip_prefix("tile-") {
             let _ = window
                 .app_handle()
@@ -1215,7 +1218,10 @@ pub fn handle_window_event(window: &Window, event: &WindowEvent) {
             // 此时放行会让窗口直接关闭（并触发应用退出），而不是按配置隐藏到
             // 托盘。宽限期内由 Rust 侧直接隐藏，行为与配置一致；超过宽限期
             // 前端已就绪，放行交给 JS 保存后隐藏。
-            let started = APP_STARTED_AT.get().copied().unwrap_or_else(std::time::Instant::now);
+            let started = APP_STARTED_AT
+                .get()
+                .copied()
+                .unwrap_or_else(std::time::Instant::now);
             if started.elapsed() < MAIN_WINDOW_READY_GRACE {
                 api.prevent_close();
                 if let Err(error) = window.hide() {
@@ -2255,9 +2261,13 @@ fn install_global_shortcut_bindings(
     let bindings = shortcut_bindings_from_config(config)?;
 
     // 已注册的旧绑定（用于替换时精确卸载，避免 unregister_all 把新键也卸掉）
-    let previous = app
-        .try_state::<RuntimeState>()
-        .and_then(|state| state.shortcut_bindings.lock().ok().map(|guard| guard.clone()));
+    let previous = app.try_state::<RuntimeState>().and_then(|state| {
+        state
+            .shortcut_bindings
+            .lock()
+            .ok()
+            .map(|guard| guard.clone())
+    });
     let previous_strings = previous
         .as_ref()
         .map(|old| {

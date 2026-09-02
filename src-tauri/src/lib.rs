@@ -8,6 +8,7 @@ pub mod updater;
 
 use encoding_rs::{Encoding, GBK, UTF_16BE, UTF_16LE};
 use locales::Locale;
+use serde::{Deserialize, Serialize};
 use services::{
     library::{Attachment, BackupInfo, SearchResult},
     notes::{
@@ -16,12 +17,44 @@ use services::{
     reminders::{self, Reminder},
 };
 use sha2::{Digest, Sha256};
-use std::{env, fs, io::Write, path::PathBuf};
+use std::{collections::HashMap, env, fs, io::Write, path::PathBuf, sync::Mutex};
+use uuid::Uuid;
 
 const MAX_EXTERNAL_TEXT_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+const MAX_PDF_MARKDOWN_BYTES: usize = 25 * 1024 * 1024;
+const PDF_EXPORT_TIMEOUT_SECS: u64 = 90;
+pub(crate) const PDF_EXPORT_WINDOW_PREFIX: &str = "pdf-export-";
 const EXTERNAL_TEXT_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "html", "htm"];
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PdfExportRequest {
+    path: String,
+    title: String,
+    markdown: String,
+    #[serde(default)]
+    font_size: Option<u32>,
+    #[serde(default)]
+    render_html: bool,
+    #[serde(default)]
+    image_base_dir: Option<String>,
+    #[serde(default)]
+    external_image_base_dir: Option<String>,
+    #[serde(default)]
+    external_file_path: Option<String>,
+}
+
+struct PdfExportSession {
+    request: Option<PdfExportRequest>,
+    sender: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
+}
+
+#[derive(Default)]
+struct PdfExportState {
+    sessions: Mutex<HashMap<String, PdfExportSession>>,
+}
 
 fn io_error(message: impl Into<String>) -> AppError {
     AppError {
@@ -62,6 +95,35 @@ fn validate_external_text_path(raw_path: &str, allow_new_file: bool) -> Result<P
                 .ok_or_else(|| io_error("外部文件没有有效父目录"))?;
             if !parent.is_dir() {
                 return Err(io_error("外部文件的目标文件夹不存在"));
+            }
+        }
+        Err(error) => return Err(io_error(error.to_string())),
+    }
+    Ok(path)
+}
+
+fn validate_pdf_export_path(raw_path: &str) -> Result<PathBuf, AppError> {
+    let path = PathBuf::from(raw_path.trim());
+    if !path.is_absolute() {
+        return Err(io_error("PDF 导出路径必须是绝对路径"));
+    }
+    let is_pdf = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("pdf"));
+    if !is_pdf {
+        return Err(io_error("PDF 导出路径必须使用 .pdf 扩展名"));
+    }
+
+    match fs::metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Err(io_error("PDF 导出目标必须是普通文件")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| io_error("PDF 导出路径没有有效父目录"))?;
+            if !parent.is_dir() {
+                return Err(io_error("PDF 导出目标文件夹不存在"));
             }
         }
         Err(error) => return Err(io_error(error.to_string())),
@@ -124,7 +186,7 @@ fn validate_image_source_path(raw_path: &str) -> Result<PathBuf, AppError> {
     }
     Ok(path)
 }
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 #[tauri::command]
 fn app_name() -> Result<String, AppError> {
@@ -341,7 +403,10 @@ fn external_file_image_base_dir(_app: AppHandle, path: String) -> Result<String,
 }
 
 #[tauri::command]
-fn cache_external_markdown_image(markdown_path: String, image_path: String) -> Result<String, AppError> {
+fn cache_external_markdown_image(
+    markdown_path: String,
+    image_path: String,
+) -> Result<String, AppError> {
     let markdown = validate_external_text_path(&markdown_path, false)?;
     let canonical_markdown =
         fs::canonicalize(&markdown).map_err(|error| io_error(error.to_string()))?;
@@ -402,6 +467,276 @@ fn save_external_file(path: String, content: String) -> Result<(), AppError> {
     let path = validate_external_text_path(&path, true)?;
     // 文件选择器已选择目标目录；这里不再递归创建任意目录，避免命令被滥用为写入 API。
     fs::write(path, content).map_err(|error| io_error(error.to_string()))
+}
+
+fn lock_pdf_sessions(
+    state: &PdfExportState,
+) -> Result<std::sync::MutexGuard<'_, HashMap<String, PdfExportSession>>, AppError> {
+    state
+        .sessions
+        .lock()
+        .map_err(|_| io_error("PDF 导出状态锁已中毒，请重启应用后重试"))
+}
+
+fn validate_pdf_job_window(window: &tauri::WebviewWindow, job_id: &str) -> Result<(), AppError> {
+    if Uuid::parse_str(job_id).is_err()
+        || window.label() != format!("{PDF_EXPORT_WINDOW_PREFIX}{job_id}")
+    {
+        return Err(io_error("PDF 导出任务标识无效"));
+    }
+    Ok(())
+}
+
+pub(crate) fn abort_pdf_export(app: &AppHandle, job_id: &str) {
+    let Some(state) = app.try_state::<PdfExportState>() else {
+        return;
+    };
+    let Ok(mut sessions) = lock_pdf_sessions(&state) else {
+        return;
+    };
+    if let Some(session) = sessions.get_mut(job_id) {
+        if let Some(sender) = session.sender.take() {
+            let _ = sender.send(Err("PDF 导出窗口意外关闭".into()));
+        }
+    }
+}
+
+#[tauri::command]
+fn take_pdf_export(
+    window: tauri::WebviewWindow,
+    state: State<'_, PdfExportState>,
+    job_id: String,
+) -> Result<PdfExportRequest, AppError> {
+    validate_pdf_job_window(&window, &job_id)?;
+    let mut sessions = lock_pdf_sessions(&state)?;
+    let session = sessions
+        .get_mut(&job_id)
+        .ok_or_else(|| io_error("PDF 导出任务不存在或已过期"))?;
+    session
+        .request
+        .take()
+        .ok_or_else(|| io_error("PDF 导出任务已被领取"))
+}
+
+#[tauri::command]
+fn finish_pdf_export(
+    window: tauri::WebviewWindow,
+    state: State<'_, PdfExportState>,
+    job_id: String,
+    success: bool,
+    error: Option<String>,
+) -> Result<(), AppError> {
+    validate_pdf_job_window(&window, &job_id)?;
+    let mut sessions = lock_pdf_sessions(&state)?;
+    let session = sessions
+        .get_mut(&job_id)
+        .ok_or_else(|| io_error("PDF 导出任务不存在或已过期"))?;
+    if let Some(sender) = session.sender.take() {
+        let result = if success {
+            Ok(())
+        } else {
+            Err(error.unwrap_or_else(|| "PDF 导出失败".into()))
+        };
+        let _ = sender.send(result);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn start_pdf_export(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    mut request: PdfExportRequest,
+) -> Result<(), AppError> {
+    if window.label() != "main" {
+        return Err(io_error("PDF 导出只能从主窗口发起"));
+    }
+    let path = validate_pdf_export_path(&request.path)?;
+    if request.markdown.len() > MAX_PDF_MARKDOWN_BYTES {
+        return Err(io_error("PDF 导出内容不能超过 25 MB"));
+    }
+    request.path = path.to_string_lossy().into_owned();
+
+    let job_id = Uuid::new_v4().to_string();
+    let label = format!("{PDF_EXPORT_WINDOW_PREFIX}{job_id}");
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    {
+        let state = app.state::<PdfExportState>();
+        let mut sessions = lock_pdf_sessions(&state)?;
+        if !sessions.is_empty() {
+            return Err(io_error("PDF 正在导出，请稍候"));
+        }
+        sessions.insert(
+            job_id.clone(),
+            PdfExportSession {
+                request: Some(request),
+                sender: Some(sender),
+            },
+        );
+    }
+
+    let url = format!("index.html?view=pdf-export&jobId={job_id}");
+    let window = match WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        .title("PDF Export")
+        .inner_size(794.0, 1123.0)
+        .min_inner_size(794.0, 1123.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(false)
+        .visible(false)
+        .focused(false)
+        .focusable(false)
+        .skip_taskbar(true)
+        .shadow(false)
+        .build()
+    {
+        Ok(window) => window,
+        Err(error) => {
+            let state = app.state::<PdfExportState>();
+            {
+                let mut sessions = match lock_pdf_sessions(&state) {
+                    Ok(sessions) => sessions,
+                    Err(_) => return Err(io_error("PDF 导出状态锁已中毒，请重启应用后重试")),
+                };
+                sessions.remove(&job_id);
+            }
+            return Err(io_error(format!("无法创建 PDF 导出窗口: {error}")));
+        }
+    };
+
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(PDF_EXPORT_TIMEOUT_SECS),
+        receiver,
+    )
+    .await
+    {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(message))) => Err(io_error(message)),
+        Ok(Err(_)) => Err(io_error("PDF 导出任务意外结束")),
+        Err(_) => Err(io_error("PDF 导出超时")),
+    };
+
+    {
+        let state = app.state::<PdfExportState>();
+        {
+            if let Ok(mut sessions) = lock_pdf_sessions(&state) {
+                sessions.remove(&job_id);
+            };
+        }
+    }
+    let _ = window.destroy();
+    result
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn start_pdf_export(_app: AppHandle, _request: PdfExportRequest) -> Result<(), AppError> {
+    Err(io_error("当前系统暂不支持直接导出 PDF"))
+}
+
+#[cfg(target_os = "windows")]
+type PdfExportSender = std::sync::Arc<
+    std::sync::Mutex<Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>>,
+>;
+
+#[cfg(target_os = "windows")]
+fn complete_pdf_export(sender: &PdfExportSender, result: std::result::Result<(), String>) {
+    if let Ok(mut sender) = sender.lock() {
+        if let Some(sender) = sender.take() {
+            let _ = sender.send(result);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn export_pdf(window: tauri::WebviewWindow, path: String) -> Result<(), AppError> {
+    if !window.label().starts_with(PDF_EXPORT_WINDOW_PREFIX) {
+        return Err(io_error("PDF 导出只能由专用导出窗口执行"));
+    }
+
+    use std::{iter, os::windows::ffi::OsStrExt, sync::Arc, time::Duration};
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::{ICoreWebView2Environment6, ICoreWebView2_7},
+        PrintToPdfCompletedHandler,
+    };
+    use windows_core::{Interface, PCWSTR};
+
+    let path = validate_pdf_export_path(&path)?;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let sender = Arc::new(std::sync::Mutex::new(Some(sender)));
+    let dispatch_sender = Arc::clone(&sender);
+
+    window
+        .with_webview(move |webview| {
+            let callback_sender = Arc::clone(&dispatch_sender);
+            let start_result = (|| -> std::result::Result<(), String> {
+                let core = unsafe { webview.controller().CoreWebView2() }
+                    .map_err(|error| format!("无法获取 WebView2 实例: {error}"))?;
+                let core_v7: ICoreWebView2_7 = core
+                    .cast()
+                    .map_err(|error| format!("当前 WebView2 运行时不支持 PDF 导出: {error}"))?;
+                let environment_v6: ICoreWebView2Environment6 = webview
+                    .environment()
+                    .cast()
+                    .map_err(|error| format!("当前 WebView2 运行时不支持打印设置: {error}"))?;
+                let settings = unsafe { environment_v6.CreatePrintSettings() }
+                    .map_err(|error| format!("无法创建 PDF 打印设置: {error}"))?;
+
+                unsafe {
+                    settings
+                        .SetShouldPrintBackgrounds(true)
+                        .map_err(|error| format!("无法启用 PDF 背景打印: {error}"))?;
+                    settings
+                        .SetShouldPrintHeaderAndFooter(false)
+                        .map_err(|error| format!("无法关闭 PDF 页眉页脚: {error}"))?;
+                }
+
+                let handler = PrintToPdfCompletedHandler::create(Box::new(
+                    move |operation_result, succeeded| {
+                        let result = operation_result
+                            .map_err(|error| format!("PDF 导出失败: {error}"))
+                            .and_then(|_| {
+                                succeeded
+                                    .then_some(())
+                                    .ok_or_else(|| "WebView2 未能生成 PDF 文件".to_string())
+                            });
+                        complete_pdf_export(&callback_sender, result);
+                        Ok(())
+                    },
+                ));
+                let wide_path: Vec<u16> = path
+                    .as_os_str()
+                    .encode_wide()
+                    .chain(iter::once(0))
+                    .collect();
+                unsafe {
+                    core_v7
+                        .PrintToPdf(PCWSTR(wide_path.as_ptr()), &settings, &handler)
+                        .map_err(|error| format!("无法启动 PDF 导出: {error}"))?;
+                }
+                Ok(())
+            })();
+
+            if let Err(error) = start_result {
+                complete_pdf_export(&dispatch_sender, Err(error));
+            }
+        })
+        .map_err(|error| io_error(format!("无法访问导出窗口: {error}")))?;
+
+    match tokio::time::timeout(Duration::from_secs(60), receiver).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(message))) => Err(io_error(message)),
+        Ok(Err(_)) => Err(io_error("PDF 导出任务意外结束")),
+        Err(_) => Err(io_error("PDF 导出超时")),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn export_pdf(_window: tauri::WebviewWindow, _path: String) -> Result<(), AppError> {
+    Err(io_error("当前系统暂不支持直接导出 PDF"))
 }
 
 #[tauri::command]
@@ -755,6 +1090,7 @@ pub fn run() {
                 let _ = scope.allow_directory(data.join("backgrounds"), true);
                 let _ = scope.allow_directory(data.join("external-previews"), true);
             }
+            app.manage(PdfExportState::default());
             let updater_state = updater::UpdaterState::new(app.package_info().version.to_string());
             if let Err(error) = updater_state.initialize() {
                 eprintln!("failed to initialize updater infrastructure: {error}");
@@ -797,6 +1133,10 @@ pub fn run() {
             external_file_image_base_dir,
             cache_external_markdown_image,
             save_external_file,
+            start_pdf_export,
+            take_pdf_export,
+            finish_pdf_export,
+            export_pdf,
             get_file_modified_time,
             categories_list,
             categories_create,

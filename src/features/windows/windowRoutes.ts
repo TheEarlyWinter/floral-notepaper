@@ -1,8 +1,9 @@
-export type AppView = "main" | "notepad" | "tile";
+export type AppView = "main" | "notepad" | "tile" | "pdf-export";
 
 export interface AppRoute {
   view: AppView;
   noteId?: string;
+  jobId?: string;
 }
 
 export function getInitialRoute(url: URL = new URL(window.location.href)): AppRoute {
@@ -16,6 +17,10 @@ export function routeFromSearch(search: string): AppRoute {
 
   if (view === "notepad") return noteId ? { view, noteId } : { view };
   if (view === "tile") return noteId ? { view, noteId } : { view };
+  if (view === "pdf-export") {
+    const jobId = params.get("jobId") ?? undefined;
+    return jobId ? { view, jobId } : { view: "main" };
+  }
   return { view: "main" };
 }
 

@@ -6,9 +6,12 @@
     <title>花笺</title>
     <script>
       (function () {
+        var isPdfExport = new URLSearchParams(window.location.search).get("view") === "pdf-export";
         var opt = localStorage.getItem("theme-option");
         var t;
-        if (opt === "light" || opt === "dark") {
+        if (isPdfExport) {
+          t = "light";
+        } else if (opt === "light" || opt === "dark") {
           t = opt;
         } else {
           t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";

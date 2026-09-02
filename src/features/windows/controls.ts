@@ -19,6 +19,11 @@ export function closeCurrentWindow(): Promise<void> {
   return getCurrentWindow().close();
 }
 
+/** Force-close a surface after its own save barrier has completed. */
+export function destroyCurrentWindow(): Promise<void> {
+  return getCurrentWindow().destroy();
+}
+
 export function recycleCurrentNotepad(): Promise<void> {
   return invoke("recycle_notepad_window", {
     label: getCurrentWindow().label,
