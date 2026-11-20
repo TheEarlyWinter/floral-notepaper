@@ -110,6 +110,7 @@ import {
   type TodoItem,
 } from "../features/notes/todoUtils";
 import { resolveWikiLink, wikiLinkSyntax } from "../features/notes/wikiLinks";
+import { useExternalSync } from "../features/notes/useExternalSync";
 import { useNavigationHistory } from "../features/notes/useNavigationHistory";
 import {
   getNoteContextMenuItems,
@@ -508,6 +509,7 @@ export function MainWindow({
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
+  const [remindersRefreshKey, setRemindersRefreshKey] = useState(0);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(initialConfig?.showOutline ?? false);
   const [focusMode, setFocusMode] = useState(false);
@@ -1222,6 +1224,44 @@ export function MainWindow({
     replaceNoteMetadata,
     navHistory.replaceCurrent,
   ]);
+
+  useExternalSync({
+    refreshNotes,
+    getActiveNoteId: () => (!isExternalRef.current ? selectedIdRef.current : null),
+    isDirty: () =>
+      saveStateRef.current === "dirty" ||
+      saveStateRef.current === "error" ||
+      saveStateRef.current === "saving",
+    getSyncEpoch: () => loadEpoch.peek(),
+    onApplyNote: (note) => {
+      applyNote(note);
+      replaceNoteMetadata(note);
+      navHistory.replaceCurrent(
+        note.id,
+        note.title || t("common.untitledNote", { defaultValue: "无标题笔记" }),
+      );
+    },
+    onActiveNoteDeleted: (loaded) => {
+      if (!selectedNoteRef.current) return;
+      if (loaded[0]) {
+        void loadNote(loaded[0].id);
+      } else {
+        clearCurrentNote();
+      }
+    },
+    onDirtyConflict: () => {
+      showToast(
+        t("main.externalSync.dirtyConflict", {
+          defaultValue: "检测到外部笔记更改，已保留当前未保存的本地编辑",
+        }),
+        "warning",
+      );
+    },
+    onRefreshReminders: async () => {
+      setRemindersRefreshKey((key) => key + 1);
+      await listReminders();
+    },
+  });
 
   useEffect(() => {
     function handleFocus() {
@@ -4849,6 +4889,7 @@ export function MainWindow({
                 <ReminderPanel
                   noteId={selectedId}
                   noteTitle={title}
+                  refreshKey={remindersRefreshKey}
                   onClose={() => setRemindersOpen(false)}
                 />
               ) : null}

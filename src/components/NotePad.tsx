@@ -3,6 +3,7 @@ import type { MouseEvent } from "react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { createNote, getErrorMessage, getNote, listNotes, updateNote } from "../features/notes/api";
+import { useExternalSync } from "../features/notes/useExternalSync";
 import { useImagePaste } from "../features/images/useImagePaste";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import { reportInstallPreparation } from "../features/update/api";
@@ -176,6 +177,10 @@ export function NotePad({
   titleValueRef.current = title;
   const editingNoteIdRef = useRef(editingNoteId);
   editingNoteIdRef.current = editingNoteId;
+  const surfaceModeRef = useRef(surfaceMode);
+  surfaceModeRef.current = surfaceMode;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const notesRef = useRef(notes);
   notesRef.current = notes;
   // 串行保存队列：自动保存与关闭/退出保存并发时，后发请求排队等待前一个
@@ -275,6 +280,32 @@ export function NotePad({
       void unlisten.then((fn) => fn());
     };
   }, [refreshNotes]);
+
+  useExternalSync({
+    refreshNotes,
+    getActiveNoteId: () =>
+      !dormantRef.current && (surfaceModeRef.current === "tile" || modeRef.current === "new")
+        ? editingNoteIdRef.current
+        : null,
+    isDirty: () => statusRef.current === "dirty" || statusRef.current === "saveFailed",
+    onApplyNote: (note) => {
+      if (note.title === titleValueRef.current && note.content === contentValueRef.current) {
+        return;
+      }
+      setEditingNoteId(note.id);
+      setTitle(note.title);
+      setContent(note.content);
+      setStatus("opened");
+    },
+    onDirtyConflict: () => {
+      showToast(
+        t("main.externalSync.dirtyConflict", {
+          defaultValue: "检测到外部笔记更改，已保留当前未保存的本地编辑",
+        }),
+        "warning",
+      );
+    },
+  });
 
   useEffect(() => {
     if (isStandby.current) return;

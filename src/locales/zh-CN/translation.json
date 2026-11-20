@@ -101,6 +101,9 @@
       "remove": "从列表移除",
       "title": "外部文件"
     },
+    "externalSync": {
+      "dirtyConflict": "检测到外部笔记更改，已保留当前未保存的本地编辑"
+    },
     "formatSample": {
       "boldText": "粗体文本",
       "codeText": "代码",

@@ -101,6 +101,9 @@
       "remove": "從清單移除",
       "title": "外部檔案"
     },
+    "externalSync": {
+      "dirtyConflict": "偵測到外部筆記變更，已保留目前未儲存的本機編輯"
+    },
     "formatSample": {
       "boldText": "粗體文字",
       "codeText": "程式碼",

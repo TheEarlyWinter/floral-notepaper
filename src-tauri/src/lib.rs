@@ -1,7 +1,9 @@
 pub mod cli;
 pub mod desktop;
+pub mod external_sync;
 pub mod json_io;
 pub mod locales;
+pub mod mcp;
 pub mod reminder_scheduler;
 pub mod services;
 pub mod updater;
@@ -1098,6 +1100,7 @@ pub fn run() {
             app.manage(updater_state);
             updater::start_auto_check_scheduler(app.handle().clone());
             reminder_scheduler::start(app.handle().clone());
+            external_sync::start(app.handle().clone());
             desktop::setup_desktop(app)?;
             Ok(())
         })

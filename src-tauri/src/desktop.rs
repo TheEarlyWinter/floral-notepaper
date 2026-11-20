@@ -1813,7 +1813,7 @@ fn visible_surface_size(app: &AppHandle) -> Option<(f64, f64)> {
     fallback
 }
 
-fn open_tile_window_now(
+pub(crate) fn open_tile_window_now(
     app: &AppHandle,
     note_id: &str,
     bounds: Option<WindowBounds>,

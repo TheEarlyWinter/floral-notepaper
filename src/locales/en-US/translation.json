@@ -101,6 +101,9 @@
       "remove": "Remove from list",
       "title": "External Files"
     },
+    "externalSync": {
+      "dirtyConflict": "External note changes detected; unsaved local edits were preserved"
+    },
     "formatSample": {
       "boldText": "Bold text",
       "codeText": "Code",

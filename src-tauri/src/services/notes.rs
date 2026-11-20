@@ -1,5 +1,6 @@
 use crate::json_io::write_json_atomic;
 use chrono::{DateTime, Utc};
+use fs4::fs_std::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -7,7 +8,6 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
 };
-use fs4::fs_std::FileExt;
 use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
@@ -399,12 +399,21 @@ pub fn default_store() -> Result<NoteStore, AppError> {
     Ok(store)
 }
 
-pub(crate) fn default_config_dir() -> Result<PathBuf, AppError> {
-    if let Ok(path) = env::var("FLORAL_NOTEPAPER_CONFIG_DIR") {
+fn non_empty_env_path(name: &str) -> Option<PathBuf> {
+    env::var(name).ok().and_then(|path| {
         let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed));
-        }
+        (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+    })
+}
+
+fn has_isolated_env_override() -> bool {
+    non_empty_env_path("FLORAL_NOTEPAPER_CONFIG_DIR").is_some()
+        || non_empty_env_path("FLORAL_NOTEPAPER_DATA_DIR").is_some()
+}
+
+pub(crate) fn default_config_dir() -> Result<PathBuf, AppError> {
+    if let Some(dir) = non_empty_env_path("FLORAL_NOTEPAPER_CONFIG_DIR") {
+        return Ok(dir);
     }
     if let Some(dir) = dirs::config_dir() {
         return Ok(dir.join("floral-notepaper"));
@@ -413,11 +422,8 @@ pub(crate) fn default_config_dir() -> Result<PathBuf, AppError> {
 }
 
 fn default_data_dir() -> Result<PathBuf, AppError> {
-    if let Ok(path) = env::var("FLORAL_NOTEPAPER_DATA_DIR") {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed));
-        }
+    if let Some(dir) = non_empty_env_path("FLORAL_NOTEPAPER_DATA_DIR") {
+        return Ok(dir);
     }
 
     #[cfg(target_os = "macos")]
@@ -468,19 +474,21 @@ fn resolve_data_dir(config_dir: &Path) -> Result<PathBuf, AppError> {
         }
     }
 
-    for old_dir in known_data_migration_candidates() {
-        let old_config = old_dir.join("config.json");
-        if !old_config.exists() {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&old_config) {
-            if let Ok(partial) = serde_json::from_str::<PartialConfig>(&content) {
-                if let Some(dir) = data_dir_from_partial(&partial) {
-                    return Ok(dir);
+    if !cfg!(test) && !has_isolated_env_override() {
+        for old_dir in known_data_migration_candidates() {
+            let old_config = old_dir.join("config.json");
+            if !old_config.exists() {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&old_config) {
+                if let Ok(partial) = serde_json::from_str::<PartialConfig>(&content) {
+                    if let Some(dir) = data_dir_from_partial(&partial) {
+                        return Ok(dir);
+                    }
                 }
             }
+            return Ok(old_dir);
         }
-        return Ok(old_dir);
     }
 
     default_data_dir()
@@ -1216,14 +1224,10 @@ impl NoteStore {
         let base = segments.first().copied().unwrap_or(version_id);
         let suffix_ok = match segments.len() {
             1 => true,
-            2 => {
-                segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit())
-            }
+            2 => segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit()),
             _ => false,
         };
-        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err()
-            || !suffix_ok
-        {
+        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err() || !suffix_ok {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
         Ok(self
@@ -1820,9 +1824,8 @@ impl NoteStore {
             .map_err(|error| {
                 AppError::new("metadataLock", format!("无法打开存储锁文件: {error}"))
             })?;
-        file.lock_exclusive().map_err(|error| {
-            AppError::new("metadataLock", format!("获取存储锁失败: {error}"))
-        })?;
+        file.lock_exclusive()
+            .map_err(|error| AppError::new("metadataLock", format!("获取存储锁失败: {error}")))?;
         Ok(MetadataLockGuard {
             _process: process,
             _file: file,
@@ -1892,6 +1895,10 @@ impl NoteStore {
     }
 
     fn migrate_config_from_legacy(&self) -> Result<(), AppError> {
+        // 显式指定了配置/数据目录环境变量或处于测试模式时保持隔离，避免空沙盒把用户真实旧目录搬走
+        if cfg!(test) || has_isolated_env_override() {
+            return Ok(());
+        }
         self.migrate_config_from_candidates(&known_data_migration_candidates())
     }
 
@@ -2403,10 +2410,7 @@ impl NoteStore {
             // 同名文件（如 `abc.md` 与 `abc_xxx.md`）可能产生相同 ID：
             // 扫描时跳过重复，避免读错内容、改错文件、误删笔记
             if notes.iter().any(|note| note.id == id) {
-                eprintln!(
-                    "[花笺] 跳过与已有笔记 ID 冲突的文件: {}",
-                    path.display()
-                );
+                eprintln!("[花笺] 跳过与已有笔记 ID 冲突的文件: {}", path.display());
                 continue;
             }
             let content = fs::read_to_string(&path).unwrap_or_default();
@@ -2682,9 +2686,7 @@ fn image_payload_matches_extension(data: &[u8], extension: &str) -> bool {
             .ok()
             .map(|text| {
                 let trimmed = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
-                let has_script = text
-                    .to_ascii_lowercase()
-                    .contains("<script");
+                let has_script = text.to_ascii_lowercase().contains("<script");
                 (trimmed.starts_with("<svg")
                     || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")))
                     && !has_script
@@ -4028,5 +4030,22 @@ mod tests {
             .expect("search migrated data");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].note_id, note.id);
+    }
+
+    #[test]
+    fn resolves_data_dir_without_scanning_legacy_when_config_already_exists() {
+        let root = test_root("isolated-env-resolve");
+        let config_dir = root.join("config");
+        let data_dir = root.join("data");
+        let store = NoteStore::new(config_dir.clone(), data_dir.clone());
+        let config = store.load_config().expect("create fresh isolated config");
+        assert_eq!(
+            config.data_dir.as_deref(),
+            Some(data_dir.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            resolve_data_dir(&config_dir).expect("resolve data dir"),
+            data_dir
+        );
     }
 }
