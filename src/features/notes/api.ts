@@ -215,6 +215,10 @@ function shortcutFieldLabel(field: string | undefined, translate: TFunction): st
     return translate("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" });
   }
 
+  if (field === "quickCaptureShortcut") {
+    return translate("settings.quickCaptureShortcut", { defaultValue: "快速捕获快捷键" });
+  }
+
   return null;
 }
 

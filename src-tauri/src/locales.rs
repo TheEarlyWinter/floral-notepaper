@@ -44,6 +44,14 @@ pub fn tile_window_title(locale: Locale) -> &'static str {
     }
 }
 
+pub fn quick_capture_window_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::ZhCn => "花笺 · 快速捕获",
+        Locale::EnUs => "Floral Notepaper Quick Capture",
+        Locale::ZhHk => "花箋 · 快速捕獲",
+    }
+}
+
 pub fn tray_tooltip(locale: Locale) -> &'static str {
     app_name(locale)
 }
@@ -61,6 +69,14 @@ pub fn tray_quick_note_label(locale: Locale) -> &'static str {
         Locale::ZhCn => "快速记录",
         Locale::EnUs => "Quick Note",
         Locale::ZhHk => "快速便箋",
+    }
+}
+
+pub fn tray_quick_capture_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::ZhCn => "快速捕获",
+        Locale::EnUs => "Quick Capture",
+        Locale::ZhHk => "快速捕獲",
     }
 }
 
@@ -272,9 +288,16 @@ mod tests {
             "Floral Notepaper Quick Note"
         );
         assert_eq!(tile_window_title(Locale::ZhHk), "花箋磁貼");
+        assert_eq!(
+            quick_capture_window_title(Locale::EnUs),
+            "Floral Notepaper Quick Capture"
+        );
         assert_eq!(tray_tooltip(Locale::EnUs), "Floral Notepaper");
         assert_eq!(tray_show_main_label(Locale::EnUs), "Open Main Window");
         assert_eq!(tray_quick_note_label(Locale::ZhHk), "快速便箋");
+        assert_eq!(tray_quick_capture_label(Locale::ZhCn), "快速捕获");
+        assert_eq!(tray_quick_capture_label(Locale::EnUs), "Quick Capture");
+        assert_eq!(tray_quick_capture_label(Locale::ZhHk), "快速捕獲");
         assert_eq!(
             tray_toggle_close_to_tray_label(Locale::EnUs),
             "Close to Tray"

@@ -46,7 +46,7 @@
     "categoryNameInvalidChars": "分類名稱不能包含特殊字元",
     "categoryNotFound": "分類「{{category}}」不存在",
     "desktopConfig": "桌面配置更新失敗",
-    "duplicateShortcut": "顯示／隱藏視窗快捷鍵不能與呼出小窗快捷鍵重複",
+    "duplicateShortcut": "全域快捷鍵不能與其他全域快捷鍵重複",
     "imagePasteFailed": "圖片貼上失敗",
     "imageTooLarge": "圖片檔案過大（上限 20 MB）",
     "noPool": "便箋視窗池尚未初始化",
@@ -232,6 +232,7 @@
     },
     "dataDir": "數據目錄",
     "openAtCursor": "快捷鍵開啟時跟隨滑鼠位置",
+    "quickCaptureShortcut": "快速捕獲快捷鍵",
     "quickNoteShortcut": "快捷記錄快捷鍵",
     "rememberSurfaceSize": "記住小窗尺寸",
     "tabIndentSize": "Tab 縮排寬度",
@@ -251,6 +252,7 @@
         "system": "快捷鍵 {{shortcut}} 與系統快捷鍵衝突",
         "unknown": "檢測完成，但釋放臨時快捷鍵失敗"
       },
+      "forQuickCapture": "用於呼出桌面快速捕獲輸入框",
       "forQuickNote": "用於開啟快捷記錄小窗",
       "needsModifier": "快捷鍵需要包含 Ctrl、Option/Alt 或 Command/Meta",
       "notSet": "未設定",
@@ -421,6 +423,76 @@
         "repeat": "平鋪"
       }
     }
+  },
+  "quickCapture": {
+    "action": {
+      "close": "關閉 (Esc)",
+      "saving": "儲存中…",
+      "submit": "儲存"
+    },
+    "error": {
+      "empty": "請輸入內容後再儲存"
+    },
+    "hint": {
+      "close": "Esc 隱藏",
+      "newline": "Shift+Enter 換行",
+      "submit": "Enter 儲存"
+    },
+    "placeholder": "記下這一刻的想法… (Enter 儲存，Shift+Enter 換行)",
+    "target": {
+      "daily": "每日便箋",
+      "inbox": "收件箱",
+      "switchHint": "Tab 切換"
+    },
+    "title": "快速捕獲"
+  },
+  "commandPalette": {
+    "clearQuery": "清除輸入",
+    "commandFilter": "僅命令",
+    "commandFilterTitle": "切換僅命令模式 (>)",
+    "commands": {
+      "exportPdf": "匯出 PDF",
+      "exportPdfDesc": "將目前筆記匯出為 PDF 文件",
+      "newNote": "新增筆記",
+      "newNoteDesc": "在目前分類建立一篇空白筆記",
+      "openDaily": "打開每日便箋",
+      "openDailyDesc": "打開或建立今天的每日便箋",
+      "openInbox": "打開收件箱",
+      "openInboxDesc": "查看並整理快速記錄的收件箱想法",
+      "openJournal": "打開日記流",
+      "openJournalDesc": "按時間軸瀏覽每日便箋",
+      "openKnowledgeGraph": "打開知識圖譜",
+      "openKnowledgeGraphDesc": "視覺化查看筆記間的雙向連結關係",
+      "openQuickCapture": "打開快速捕獲",
+      "openQuickCaptureDesc": "呼出桌面浮動快速捕獲框",
+      "openReminders": "打開提醒",
+      "openRemindersDesc": "為目前筆記設定或查看定時提醒",
+      "openSettings": "打開設定",
+      "openSettingsDesc": "打開應用程式偏好與快捷鍵設定",
+      "openTodos": "打開待辦面板",
+      "openTodosDesc": "彙整全部筆記中的待辦事項",
+      "openWeeklyReview": "打開本週回顧",
+      "openWeeklyReviewDesc": "打開儀表板並查看或生成本週回顧",
+      "toggleFocusMode": "切換專注模式",
+      "toggleFocusModeDesc": "隱藏側欄與工具列，專注寫作",
+      "toggleReadingMode": "切換沉浸閱讀",
+      "toggleReadingModeDesc": "以純預覽模式沉浸閱讀目前筆記"
+    },
+    "createNote": "建立筆記：{{title}}",
+    "empty": "沒有符合的筆記或命令",
+    "footer": {
+      "close": "Esc 關閉",
+      "confirm": "Enter 開啟/執行",
+      "navigate": "↑↓ 選擇"
+    },
+    "placeholder": "搜尋筆記或輸入 > 執行命令…",
+    "searching": "正在搜尋正文…",
+    "section": {
+      "commands": "命令",
+      "create": "快速建立",
+      "notes": "筆記"
+    },
+    "title": "命令面板"
   },
   "tile": {
     "empty": "空"

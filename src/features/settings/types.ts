@@ -49,6 +49,7 @@ export interface AppConfig {
   surfaceWidth?: number;
   surfaceHeight?: number;
   toggleVisibilityShortcut: string;
+  quickCaptureShortcut: string;
   openAtCursor: boolean;
   backgroundImagePath?: string;
   backgroundFit?: BackgroundFit;

@@ -1,4 +1,4 @@
-export type AppView = "main" | "notepad" | "tile" | "pdf-export";
+export type AppView = "main" | "notepad" | "tile" | "pdf-export" | "quick-capture";
 
 export interface AppRoute {
   view: AppView;
@@ -17,6 +17,7 @@ export function routeFromSearch(search: string): AppRoute {
 
   if (view === "notepad") return noteId ? { view, noteId } : { view };
   if (view === "tile") return noteId ? { view, noteId } : { view };
+  if (view === "quick-capture") return { view };
   if (view === "pdf-export") {
     const jobId = params.get("jobId") ?? undefined;
     return jobId ? { view, jobId } : { view: "main" };
@@ -30,6 +31,10 @@ export function buildNotepadUrl(noteId?: string): string {
 
 export function buildTileUrl(noteId: string): string {
   return buildUrl("tile", noteId);
+}
+
+export function buildQuickCaptureUrl(): string {
+  return buildUrl("quick-capture");
 }
 
 function buildUrl(view: AppView, noteId?: string): string {

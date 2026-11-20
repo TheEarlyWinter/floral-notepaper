@@ -40,4 +40,24 @@ describe("locale resources", () => {
       }
     }
   });
+
+  it("defines quickCapture, commandPalette, and quickCaptureShortcut keys directly in all locales", () => {
+    const requiredNamespaces = ["quickCapture.", "commandPalette."];
+    const requiredExact = new Set([
+      "settings.quickCaptureShortcut",
+      "settings.shortcut.forQuickCapture",
+    ]);
+    const requiredKeys = sourceKeys.filter(
+      (key) => requiredExact.has(key) || requiredNamespaces.some((ns) => key.startsWith(ns)),
+    );
+
+    expect(requiredKeys.length).toBeGreaterThan(0);
+
+    for (const locale of SUPPORTED_LOCALES) {
+      const directKeys = new Set(collectLeafKeys(translationOverrides[locale]));
+      for (const key of requiredKeys) {
+        expect(directKeys.has(key), `Missing ${key} in ${locale}`).toBe(true);
+      }
+    }
+  });
 });

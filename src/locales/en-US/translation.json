@@ -46,7 +46,7 @@
     "categoryNameInvalidChars": "Category name cannot contain special characters",
     "categoryNotFound": "Category \"{{category}}\" not found",
     "desktopConfig": "Failed to update desktop configuration",
-    "duplicateShortcut": "Show/Hide shortcut cannot be the same as Quick Note shortcut",
+    "duplicateShortcut": "Global shortcuts must not duplicate each other",
     "imagePasteFailed": "Image paste failed",
     "imageTooLarge": "Image file too large (max 20 MB)",
     "noPool": "Notepad window pool not yet initialized",
@@ -232,6 +232,7 @@
     },
     "dataDir": "Data directory",
     "openAtCursor": "Open near cursor with shortcut",
+    "quickCaptureShortcut": "Quick Capture shortcut",
     "quickNoteShortcut": "Quick Note shortcut",
     "rememberSurfaceSize": "Remember surface size",
     "tabIndentSize": "Tab indent width",
@@ -251,6 +252,7 @@
         "system": "Shortcut {{shortcut}} conflicts with a system shortcut",
         "unknown": "Check completed, but failed to release temporary shortcut"
       },
+      "forQuickCapture": "Opens the floating Quick Capture bar",
       "forQuickNote": "Opens the Quick Note window",
       "needsModifier": "Shortcut must include Ctrl, Option/Alt, or Command/Meta",
       "notSet": "Not set",
@@ -440,6 +442,76 @@
         "repeat": "Repeat"
       }
     }
+  },
+  "quickCapture": {
+    "action": {
+      "close": "Close (Esc)",
+      "saving": "Saving…",
+      "submit": "Save"
+    },
+    "error": {
+      "empty": "Please enter some text before saving"
+    },
+    "hint": {
+      "close": "Esc Hide",
+      "newline": "Shift+Enter Newline",
+      "submit": "Enter Save"
+    },
+    "placeholder": "Capture a thought… (Enter to save, Shift+Enter for newline)",
+    "target": {
+      "daily": "Daily Note",
+      "inbox": "Inbox",
+      "switchHint": "Tab to switch"
+    },
+    "title": "Quick Capture"
+  },
+  "commandPalette": {
+    "clearQuery": "Clear",
+    "commandFilter": "Commands",
+    "commandFilterTitle": "Toggle command-only mode (>)",
+    "commands": {
+      "exportPdf": "Export PDF",
+      "exportPdfDesc": "Export current note as a PDF document",
+      "newNote": "New Note",
+      "newNoteDesc": "Create a blank note in the current category",
+      "openDaily": "Open Daily Note",
+      "openDailyDesc": "Open or create today's daily note",
+      "openInbox": "Open Inbox",
+      "openInboxDesc": "Review and organize inbox notes",
+      "openJournal": "Open Journal Stream",
+      "openJournalDesc": "Browse daily notes on a timeline",
+      "openKnowledgeGraph": "Open Knowledge Graph",
+      "openKnowledgeGraphDesc": "Visualize bidirectional links between notes",
+      "openQuickCapture": "Open Quick Capture",
+      "openQuickCaptureDesc": "Show the floating Quick Capture bar",
+      "openReminders": "Open Reminders",
+      "openRemindersDesc": "Set or view reminders for the current note",
+      "openSettings": "Open Settings",
+      "openSettingsDesc": "Open application preferences and shortcuts",
+      "openTodos": "Open Todo Panel",
+      "openTodosDesc": "Aggregate tasks across all notes",
+      "openWeeklyReview": "Open Weekly Review",
+      "openWeeklyReviewDesc": "Open dashboard to view or generate weekly review",
+      "toggleFocusMode": "Toggle Focus Mode",
+      "toggleFocusModeDesc": "Hide sidebar and toolbars for distraction-free writing",
+      "toggleReadingMode": "Toggle Immersive Reading",
+      "toggleReadingModeDesc": "Read the current note in clean preview mode"
+    },
+    "createNote": "Create note: {{title}}",
+    "empty": "No matching notes or commands",
+    "footer": {
+      "close": "Esc Close",
+      "confirm": "Enter Open/Run",
+      "navigate": "↑↓ Navigate"
+    },
+    "placeholder": "Search notes or type > for commands…",
+    "searching": "Searching note content…",
+    "section": {
+      "commands": "Commands",
+      "create": "Quick Create",
+      "notes": "Notes"
+    },
+    "title": "Command Palette"
   },
   "tile": {
     "empty": "Empty"

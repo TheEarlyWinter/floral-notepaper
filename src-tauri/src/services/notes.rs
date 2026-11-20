@@ -1,5 +1,6 @@
 use crate::json_io::write_json_atomic;
 use chrono::{DateTime, Utc};
+use fs4::fs_std::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -7,7 +8,6 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
 };
-use fs4::fs_std::FileExt;
 use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
@@ -118,6 +118,8 @@ pub struct AppConfig {
     pub surface_height: Option<u32>,
     #[serde(default = "default_toggle_visibility_shortcut")]
     pub toggle_visibility_shortcut: String,
+    #[serde(default = "default_quick_capture_shortcut")]
+    pub quick_capture_shortcut: String,
     #[serde(default = "default_open_at_cursor")]
     pub open_at_cursor: bool,
     #[serde(default = "default_preset_theme")]
@@ -1216,14 +1218,10 @@ impl NoteStore {
         let base = segments.first().copied().unwrap_or(version_id);
         let suffix_ok = match segments.len() {
             1 => true,
-            2 => {
-                segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit())
-            }
+            2 => segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit()),
             _ => false,
         };
-        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err()
-            || !suffix_ok
-        {
+        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err() || !suffix_ok {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
         Ok(self
@@ -1820,9 +1818,8 @@ impl NoteStore {
             .map_err(|error| {
                 AppError::new("metadataLock", format!("无法打开存储锁文件: {error}"))
             })?;
-        file.lock_exclusive().map_err(|error| {
-            AppError::new("metadataLock", format!("获取存储锁失败: {error}"))
-        })?;
+        file.lock_exclusive()
+            .map_err(|error| AppError::new("metadataLock", format!("获取存储锁失败: {error}")))?;
         Ok(MetadataLockGuard {
             _process: process,
             _file: file,
@@ -1868,6 +1865,7 @@ impl NoteStore {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: default_toggle_visibility_shortcut(),
+            quick_capture_shortcut: default_quick_capture_shortcut(),
             open_at_cursor: default_open_at_cursor(),
             preset_theme: default_preset_theme(),
             accent_color: String::new(),
@@ -2403,10 +2401,7 @@ impl NoteStore {
             // 同名文件（如 `abc.md` 与 `abc_xxx.md`）可能产生相同 ID：
             // 扫描时跳过重复，避免读错内容、改错文件、误删笔记
             if notes.iter().any(|note| note.id == id) {
-                eprintln!(
-                    "[花笺] 跳过与已有笔记 ID 冲突的文件: {}",
-                    path.display()
-                );
+                eprintln!("[花笺] 跳过与已有笔记 ID 冲突的文件: {}", path.display());
                 continue;
             }
             let content = fs::read_to_string(&path).unwrap_or_default();
@@ -2682,9 +2677,7 @@ fn image_payload_matches_extension(data: &[u8], extension: &str) -> bool {
             .ok()
             .map(|text| {
                 let trimmed = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
-                let has_script = text
-                    .to_ascii_lowercase()
-                    .contains("<script");
+                let has_script = text.to_ascii_lowercase().contains("<script");
                 (trimmed.starts_with("<svg")
                     || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")))
                     && !has_script
@@ -2849,6 +2842,10 @@ fn default_split_scroll_sync() -> bool {
 
 fn default_toggle_visibility_shortcut() -> String {
     String::new()
+}
+
+fn default_quick_capture_shortcut() -> String {
+    "Alt+Shift+Space".into()
 }
 
 fn default_open_at_cursor() -> bool {
@@ -3246,6 +3243,7 @@ mod tests {
         assert!(!default_config.tile_save_returns_to_pin);
         assert!(!default_config.tile_desktop_only);
         assert_eq!(default_config.theme, "system");
+        assert_eq!(default_config.quick_capture_shortcut, "Alt+Shift+Space");
         assert_eq!(default_config.preset_theme, "default");
         assert_eq!(default_config.code_theme, "light");
         assert_eq!(default_config.editor_line_height, 1.8);
@@ -3293,6 +3291,7 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: String::new(),
+            quick_capture_shortcut: "Ctrl+Alt+Space".into(),
             preset_theme: "paper".into(),
             accent_color: "#7a5b32".into(),
             code_theme: "dark".into(),
@@ -3385,6 +3384,31 @@ mod tests {
         assert_eq!(loaded.locale, "zh-CN");
         assert_eq!(loaded.font_size, 14);
         assert_eq!(loaded.surface_font_size, 14);
+        assert_eq!(loaded.quick_capture_shortcut, "Alt+Shift+Space");
+    }
+
+    #[test]
+    fn app_config_deserialization_defaults_missing_quick_capture_shortcut_and_preserves_empty() {
+        let missing_json = r#"{
+  "globalShortcut": "Ctrl+Space",
+  "closeToTray": true,
+  "autostart": false,
+  "defaultViewMode": "split"
+}"#;
+        let parsed_missing: AppConfig = serde_json::from_str(missing_json)
+            .expect("deserialize config without quickCaptureShortcut");
+        assert_eq!(parsed_missing.quick_capture_shortcut, "Alt+Shift+Space");
+
+        let empty_json = r#"{
+  "globalShortcut": "Ctrl+Space",
+  "closeToTray": true,
+  "autostart": false,
+  "defaultViewMode": "split",
+  "quickCaptureShortcut": ""
+}"#;
+        let parsed_empty: AppConfig = serde_json::from_str(empty_json)
+            .expect("deserialize config with empty quickCaptureShortcut");
+        assert_eq!(parsed_empty.quick_capture_shortcut, "");
     }
 
     fn legacy_config_json(notes_dir: &Path, background_image_path: &str) -> String {
