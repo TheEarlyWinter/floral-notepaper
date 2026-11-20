@@ -1,4 +1,13 @@
-import { isValidElement, useState, useCallback, useEffect, useMemo } from "react";
+import {
+  createContext,
+  isValidElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import type { ComponentPropsWithoutRef, InputHTMLAttributes } from "react";
 import { useTranslation } from "react-i18next";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,11 +18,11 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { ComponentPropsWithoutRef } from "react";
-import type { Components } from "react-markdown";
+import type { Components, ExtraProps } from "react-markdown";
 import "katex/dist/katex.min.css";
 import remarkAlerts from "./remarkAlerts";
 import remarkWikiLinks from "./remarkWikiLinks";
+import rehypeTaskLists from "./rehypeTaskLists";
 import { cacheExternalMarkdownImage } from "../notes/api";
 import { resolveExternalRelativeImagePath, resolveMarkdownImageSrc } from "./imageSrc";
 
@@ -76,6 +85,21 @@ interface MarkdownPreviewProps {
   externalImageBaseDir?: string;
   externalFilePath?: string;
   onOpenWikiLink?: (target: string) => void;
+  onContentChange?: (content: string) => void;
+}
+
+const TaskListContext = createContext<((offset: number, checked: boolean) => void) | undefined>(
+  undefined,
+);
+
+/** Toggle a single GFM task-list marker (` `, `x`, `X`) at a verified source offset. */
+export function toggleTaskCheckboxAtOffset(
+  content: string,
+  offset: number,
+  checked: boolean,
+): string | null {
+  if (!/^[ xX]$/.test(content[offset] ?? "")) return null;
+  return content.slice(0, offset) + (checked ? "x" : " ") + content.slice(offset + 1);
 }
 
 const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts, remarkWikiLinks];
@@ -94,12 +118,13 @@ const sanitizeSchema = {
     abbr: ["title"],
   },
 };
-const rehypePluginsDefault = [rehypeKatex, rehypeSlug];
+const rehypePluginsDefault = [rehypeKatex, rehypeSlug, rehypeTaskLists];
 const rehypePluginsWithHtml = [
   rehypeRaw,
   [rehypeSanitize, sanitizeSchema],
   rehypeKatex,
   rehypeSlug,
+  rehypeTaskLists,
 ] as Parameters<typeof Markdown>[0]["rehypePlugins"];
 
 function AlertIcon({ type }: { type: string }) {
@@ -346,10 +371,30 @@ const staticComponents: Components = {
   td: ({ children }) => (
     <td className="px-3 py-1.5 border border-paper-deep/35 text-ink-soft">{children}</td>
   ),
-  input: ({ checked, ...props }) => (
-    <input {...props} checked={checked} disabled className="mr-1.5 accent-bamboo" />
-  ),
+  input: TaskCheckbox,
 };
+
+function TaskCheckbox({
+  node,
+  checked,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & ExtraProps) {
+  const onToggle = useContext(TaskListContext);
+  const offset = node?.properties.dataTaskOffset;
+  const interactive = props.type === "checkbox" && typeof offset === "number" && Boolean(onToggle);
+  return (
+    <input
+      {...props}
+      checked={checked ?? false}
+      disabled={!interactive}
+      aria-label={props["aria-label"] ?? node?.properties.dataTaskLabel?.toString()}
+      onChange={(event) => {
+        if (interactive && typeof offset === "number") onToggle?.(offset, event.target.checked);
+      }}
+      className="mr-1.5 accent-bamboo"
+    />
+  );
+}
 
 export function MarkdownPreview({
   content,
@@ -359,6 +404,7 @@ export function MarkdownPreview({
   externalImageBaseDir,
   externalFilePath,
   onOpenWikiLink,
+  onContentChange,
 }: MarkdownPreviewProps) {
   const { t } = useTranslation();
   const components = useMemo<Components>(
@@ -411,29 +457,40 @@ export function MarkdownPreview({
     [externalFilePath, externalImageBaseDir, imageBaseDir, onOpenWikiLink],
   );
   return (
-    <div
-      className="font-body markdown-selectable"
-      style={{
-        fontSize: `${fontSize}px`,
-        fontFamily: "var(--editor-font-family)",
-        lineHeight: "var(--editor-line-height)",
-        maxWidth: "var(--editor-max-width)",
-        margin: "0 auto",
-      }}
+    <TaskListContext.Provider
+      value={
+        onContentChange
+          ? (offset, checked) => {
+              const nextContent = toggleTaskCheckboxAtOffset(content, offset, checked);
+              if (nextContent !== null) onContentChange(nextContent);
+            }
+          : undefined
+      }
     >
-      {content.trim() ? (
-        <Markdown
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={renderHtml ? rehypePluginsWithHtml : rehypePluginsDefault}
-          components={components}
-        >
-          {content}
-        </Markdown>
-      ) : (
-        <p className="text-ink-ghost leading-[1.9]">
-          {t("markdown.emptyHint", { defaultValue: "预览区会显示当前笔记内容" })}
-        </p>
-      )}
-    </div>
+      <div
+        className="font-body markdown-selectable"
+        style={{
+          fontSize: `${fontSize}px`,
+          fontFamily: "var(--editor-font-family)",
+          lineHeight: "var(--editor-line-height)",
+          maxWidth: "var(--editor-max-width)",
+          margin: "0 auto",
+        }}
+      >
+        {content.trim() ? (
+          <Markdown
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={renderHtml ? rehypePluginsWithHtml : rehypePluginsDefault}
+            components={components}
+          >
+            {content}
+          </Markdown>
+        ) : (
+          <p className="text-ink-ghost leading-[1.9]">
+            {t("markdown.emptyHint", { defaultValue: "预览区会显示当前笔记内容" })}
+          </p>
+        )}
+      </div>
+    </TaskListContext.Provider>
   );
 }

@@ -97,7 +97,7 @@ const surfaceResizeHandles: Array<{
 
 function isTileControlDoubleClickTarget(target: EventTarget | null): boolean {
   return (
-    target instanceof HTMLElement &&
+    target instanceof Element &&
     Boolean(target.closest('button,input,textarea,select,a,[data-surface-resize-handle="true"]'))
   );
 }
@@ -303,6 +303,7 @@ export function NotePad({
       tileDesktopOnly?: boolean;
       tileDoubleClickToEdit?: boolean;
       tileSaveReturnsToPin?: boolean;
+      noteSurfaceAutoSave?: boolean;
     }>("config-changed", (event) => {
       const mode = event.payload.tileColorMode ?? tileColorModeRef.current;
       const raw = event.payload.tileColor ?? tileColorRawRef.current;
@@ -320,6 +321,8 @@ export function NotePad({
         setTileDoubleClickToEdit(event.payload.tileDoubleClickToEdit);
       if (event.payload.tileSaveReturnsToPin != null)
         setTileSaveReturnsToPin(event.payload.tileSaveReturnsToPin);
+      if (event.payload.noteSurfaceAutoSave != null)
+        setNoteSurfaceAutoSave(event.payload.noteSurfaceAutoSave);
     });
     return () => {
       void unlisten.then((fn) => fn());
@@ -702,7 +705,7 @@ export function NotePad({
         setIsExiting(false);
         showToast(getErrorMessage(error));
       });
-  }, [surfaceMode, saveNote]);
+  }, [surfaceMode, saveNote, tileNoteId]);
 
   const copyTileContent = useCallback(async () => {
     try {
@@ -711,9 +714,10 @@ export function NotePad({
         throw new Error(t("notepad.error.copyUnsupported", { defaultValue: "当前环境不支持复制" }));
       }
       await clipboard.writeText(content);
-      if (statusRef.current !== "dirty" && statusRef.current !== "saveFailed") {
-        setStatus("copied");
-      }
+      // 复制不能清除磁贴勾选产生的未保存状态，否则自动保存会被取消。
+      setStatus((current) =>
+        current === "dirty" || current === "saveFailed" ? current : "copied",
+      );
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -803,8 +807,7 @@ export function NotePad({
   }, [handleSave, hasDraftContent, mode, noteSurfaceAutoSave, status]);
 
   const handleDrag = (event: MouseEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest("button,input,textarea")) return;
+    if (event.target instanceof Element && event.target.closest("button,input,textarea")) return;
 
     if (surfaceMode === "tile" && tileDoubleClickToEdit) {
       if (event.button !== 0 || event.detail > 1) return;
@@ -840,6 +843,12 @@ export function NotePad({
         <Tile
           title={tileTitle || undefined}
           content={content}
+          onContentChange={(nextContent) => {
+            contentValueRef.current = nextContent;
+            setContent(nextContent);
+            statusRef.current = "dirty";
+            setStatus("dirty");
+          }}
           color={tileColor}
           fontSize={surfaceFontSize}
           renderMarkdown={tileRenderMarkdown}
