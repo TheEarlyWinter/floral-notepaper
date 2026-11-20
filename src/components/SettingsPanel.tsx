@@ -349,6 +349,16 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
               onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
             />
           </div>
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+              {t("settings.quickCaptureShortcut", { defaultValue: "快速捕获快捷键" })}
+            </label>
+            <ShortcutRecorder
+              value={config.quickCaptureShortcut}
+              onChange={(v) => setConfigValue("quickCaptureShortcut", v)}
+              defaultHintKey="settings.shortcut.forQuickCapture"
+            />
+          </div>
         </section>
 
         <section className="space-y-2">
@@ -929,17 +939,22 @@ function RangeRow({ label, value, min, max, step, format, onChange }: RangeRowPr
 interface ShortcutRecorderProps {
   value: string;
   onChange: (value: string) => void;
+  defaultHintKey?: string;
 }
 
 type ShortcutMsg = { key: string; params?: Record<string, string> } | { raw: string };
 
-function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
+function ShortcutRecorder({
+  value,
+  onChange,
+  defaultHintKey = "settings.shortcut.forQuickNote",
+}: ShortcutRecorderProps) {
   const { t } = useTranslation();
   const [checkState, setCheckState] = useState<"idle" | "checking" | "ok" | "warning" | "error">(
     "idle",
   );
   const [checkMsg, setCheckMsg] = useState<ShortcutMsg>({
-    key: "settings.shortcut.forQuickNote",
+    key: defaultHintKey,
   });
   const shortcutCheckRequestId = useRef(0);
   const isMounted = useRef(true);
@@ -1055,7 +1070,11 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
   const isChecking = checkState === "checking";
 
   return (
-    <div ref={containerRef} className="relative space-y-1.5">
+    <div
+      ref={containerRef}
+      data-shortcut-recording={recorder.isRecording ? "true" : undefined}
+      className="relative space-y-1.5"
+    >
       <div className="flex gap-2">
         <button
           type="button"

@@ -118,7 +118,13 @@ import {
   getNoteContextMenuItems,
   type NoteContextMenuAction,
 } from "../features/notes/noteContextMenu";
-import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
+import {
+  openNotepadWindow,
+  openQuickCaptureWindow,
+  takeStartupFile,
+  toggleTileWindow,
+} from "../features/windows/api";
+import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import {
   closeCurrentWindow,
   hideCurrentWindow,
@@ -518,6 +524,10 @@ export function MainWindow({
   const handleSelectNoteRef = useRef<(id: string) => Promise<boolean>>(async () => false);
   const handleSelectExternalFileRef = useRef<(id: string) => Promise<boolean>>(async () => false);
   const [readingMode, setReadingMode] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteOpenRef = useRef(false);
+  paletteOpenRef.current = paletteOpen;
+  const palettePreviousFocusRef = useRef<HTMLElement | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
   const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
     initialSettingsOpen && initialConfig ? "settings" : null,
@@ -767,6 +777,37 @@ export function MainWindow({
                     : null;
   const sidePanelExpanded = visibleSidePanel !== null;
   const effectiveViewMode: ViewMode = readingMode ? "preview" : viewMode;
+  const closeAllSidePanels = useCallback(() => {
+    setSettingsOpen(false);
+    setAboutOpen(false);
+    setTodosOpen(false);
+    setHistoryOpen(false);
+    setBacklinksOpen(false);
+    setRemindersOpen(false);
+    setLibraryOpen(false);
+    setKnowledgeGraphOpen(false);
+    setWorkspaceMode(null);
+  }, []);
+
+  const openCommandPalette = useCallback(() => {
+    palettePreviousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPaletteOpen(true);
+  }, []);
+
+  const closeCommandPalette = useCallback((options?: { restoreFocus?: boolean }) => {
+    setPaletteOpen(false);
+    if (options?.restoreFocus) {
+      const previous = palettePreviousFocusRef.current;
+      palettePreviousFocusRef.current = null;
+      requestAnimationFrame(() => {
+        previous?.focus();
+      });
+    } else {
+      palettePreviousFocusRef.current = null;
+    }
+  }, []);
+
   const openWorkspace = useCallback((mode: NotesWorkspaceMode) => {
     setSettingsOpen(false);
     setAboutOpen(false);
@@ -1193,20 +1234,24 @@ export function MainWindow({
           if (!currentId) return;
           const stillExists = loaded.some((n) => n.id === currentId);
           if (stillExists) {
-            if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
-              void getNote(currentId)
-                .then((note) => {
-                  if (isStale()) return;
-                  if (selectedIdRef.current !== currentId) return;
-                  if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
-                    return;
-                  }
-                  applyNote(note);
-                  replaceNoteMetadata(note);
-                  navHistory.replaceCurrent(note.id, note.title || "无标题笔记");
-                })
-                .catch(() => undefined);
-            }
+            void saveQueueRef.current.then(() => {
+              if (isStale()) return;
+              if (selectedIdRef.current !== currentId) return;
+              if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
+                void getNote(currentId)
+                  .then((note) => {
+                    if (isStale()) return;
+                    if (selectedIdRef.current !== currentId) return;
+                    if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
+                      return;
+                    }
+                    applyNote(note);
+                    replaceNoteMetadata(note);
+                    navHistory.replaceCurrent(note.id, note.title || "无标题笔记");
+                  })
+                  .catch(() => undefined);
+              }
+            });
           } else if (selectedNoteRef.current) {
             if (loaded[0]) {
               void loadNote(loaded[0].id);
@@ -1531,6 +1576,20 @@ export function MainWindow({
   );
 
   useEffect(() => {
+    function handleBlur() {
+      if (saveStateRef.current !== "dirty") return;
+      const autoSaveEnabled = isExternalRef.current
+        ? settingsConfig?.externalFileAutoSave
+        : settingsConfig?.noteAutoSave;
+      if (autoSaveEnabled) {
+        void saveCurrentNote();
+      }
+    }
+    window.addEventListener("blur", handleBlur);
+    return () => window.removeEventListener("blur", handleBlur);
+  }, [saveCurrentNote, settingsConfig?.externalFileAutoSave, settingsConfig?.noteAutoSave]);
+
+  useEffect(() => {
     const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
       const respond = async () => {
         const windowLabel = windowLabelRef.current;
@@ -1578,6 +1637,24 @@ export function MainWindow({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "k"
+      ) {
+        if (document.querySelector('[data-shortcut-recording="true"]')) return;
+        event.preventDefault();
+        if (paletteOpenRef.current) {
+          closeCommandPalette({ restoreFocus: true });
+        } else {
+          openCommandPalette();
+        }
+        return;
+      }
+
+      if (paletteOpenRef.current) return;
+
       if ((event.ctrlKey || event.metaKey) && event.key === "s") {
         event.preventDefault();
         void saveCurrentNote(true);
@@ -1608,7 +1685,7 @@ export function MainWindow({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [saveCurrentNote, navHistory]);
+  }, [saveCurrentNote, navHistory, openCommandPalette, closeCommandPalette]);
 
   useEffect(() => {
     // error（上次保存失败）也触发自动重试，避免失败后永远不再保存
@@ -2992,6 +3069,193 @@ export function MainWindow({
       unlisten?.();
     };
   }, [saveCurrentNote]);
+  const handleCreateNoteWithTitle = async (noteTitle: string) => {
+    const saved = await saveCurrentNote();
+    if (!saved) return;
+    try {
+      const note = await createNote({
+        title: noteTitle,
+        content: "",
+        category: activeCategory,
+      });
+      replaceNoteMetadata(note);
+      applyNote(note);
+      if (activeCategory) {
+        setCollapsedCategories((current) => {
+          const next = new Set(current);
+          next.delete(activeCategory);
+          return next;
+        });
+      }
+      requestAnimationFrame(() => {
+        contentRef.current?.focus();
+      });
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const openSettingsFromPalette = () => {
+    closeAllSidePanels();
+    setSettingsOpen(true);
+    if (settingsConfig) return;
+    void getConfig()
+      .then((config) => {
+        setSettingsConfig(config);
+        setSavedDataDir(config.dataDir);
+        setViewMode(normalizeViewMode(config.defaultViewMode));
+      })
+      .catch((error) => {
+        showToast(getErrorMessage(error));
+      });
+  };
+
+  const paletteCommands: PaletteCommand[] = [
+    {
+      id: "new-note",
+      label: t("commandPalette.commands.newNote", { defaultValue: "新建笔记" }),
+      description: t("commandPalette.commands.newNoteDesc", {
+        defaultValue: "在当前分类创建一篇空白笔记",
+      }),
+      keywords: ["new note", "create", "新建", "笔记"],
+      onExecute: () => handleNewNote(),
+    },
+    {
+      id: "open-daily",
+      label: t("commandPalette.commands.openDaily", { defaultValue: "打开每日便笺" }),
+      description: t("commandPalette.commands.openDailyDesc", {
+        defaultValue: "打开或创建今天的每日便笺",
+      }),
+      keywords: ["daily", "today", "journal", "每日", "便笺", "日记"],
+      onExecute: () => handleOpenDailyNote(),
+    },
+    {
+      id: "open-inbox",
+      label: t("commandPalette.commands.openInbox", { defaultValue: "打开收件箱" }),
+      description: t("commandPalette.commands.openInboxDesc", {
+        defaultValue: "查看并整理快速记录的收件箱想法",
+      }),
+      keywords: ["inbox", "收件箱", "整理"],
+      onExecute: () => openWorkspace("inbox"),
+    },
+    {
+      id: "open-journal",
+      label: t("commandPalette.commands.openJournal", { defaultValue: "打开日记流" }),
+      description: t("commandPalette.commands.openJournalDesc", {
+        defaultValue: "按时间线浏览每日便笺",
+      }),
+      keywords: ["journal", "stream", "timeline", "日记流", "时间线"],
+      onExecute: () => openWorkspace("journal"),
+    },
+    {
+      id: "open-todos",
+      label: t("commandPalette.commands.openTodos", { defaultValue: "打开待办面板" }),
+      description: t("commandPalette.commands.openTodosDesc", {
+        defaultValue: "汇总全部笔记中的待办事项",
+      }),
+      keywords: ["todo", "tasks", "checklist", "待办", "任务"],
+      onExecute: () => {
+        closeAllSidePanels();
+        setTodosOpen(true);
+      },
+    },
+    {
+      id: "open-knowledge-graph",
+      label: t("commandPalette.commands.openKnowledgeGraph", { defaultValue: "打开知识图谱" }),
+      description: t("commandPalette.commands.openKnowledgeGraphDesc", {
+        defaultValue: "可视化查看笔记间的双向链接关系",
+      }),
+      keywords: ["graph", "knowledge", "links", "知识图谱", "双链"],
+      onExecute: () => {
+        closeAllSidePanels();
+        setKnowledgeGraphOpen(true);
+      },
+    },
+    {
+      id: "open-weekly-review",
+      label: t("commandPalette.commands.openWeeklyReview", { defaultValue: "打开本周回顾" }),
+      description: t("commandPalette.commands.openWeeklyReviewDesc", {
+        defaultValue: "打开仪表盘并查看或生成本周回顾",
+      }),
+      keywords: ["weekly", "review", "dashboard", "本周回顾", "仪表盘", "总结"],
+      onExecute: () => openWorkspace("dashboard"),
+    },
+    {
+      id: "toggle-focus-mode",
+      label: t("commandPalette.commands.toggleFocusMode", { defaultValue: "切换专注模式" }),
+      description: t("commandPalette.commands.toggleFocusModeDesc", {
+        defaultValue: "隐藏侧栏与工具栏，专注写作",
+      }),
+      keywords: ["focus", "zen", "专注", "写作"],
+      onExecute: () => {
+        setReadingMode(false);
+        setFocusMode((active) => !active);
+      },
+    },
+    {
+      id: "toggle-reading-mode",
+      label: t("commandPalette.commands.toggleReadingMode", { defaultValue: "切换沉浸阅读" }),
+      description: t("commandPalette.commands.toggleReadingModeDesc", {
+        defaultValue: "以纯预览模式沉浸阅读当前笔记",
+      }),
+      keywords: ["reading", "immersive", "preview", "阅读", "沉浸"],
+      onExecute: () => {
+        setFocusMode(false);
+        setReadingMode((active) => !active);
+      },
+    },
+    {
+      id: "open-reminders",
+      label: t("commandPalette.commands.openReminders", { defaultValue: "打开提醒" }),
+      description: t("commandPalette.commands.openRemindersDesc", {
+        defaultValue: "为当前笔记设置或查看定时提醒",
+      }),
+      keywords: ["reminder", "alarm", "提醒", "定时"],
+      disabled: !selectedId || isExternal,
+      onExecute: () => {
+        if (!selectedId || isExternal) return;
+        closeAllSidePanels();
+        setRemindersOpen(true);
+      },
+    },
+    {
+      id: "export-pdf",
+      label: t("commandPalette.commands.exportPdf", { defaultValue: "导出 PDF" }),
+      description: t("commandPalette.commands.exportPdfDesc", {
+        defaultValue: "将当前笔记导出为 PDF 文档",
+      }),
+      keywords: ["pdf", "export", "print", "导出"],
+      disabled: !selectedId || isExternal,
+      onExecute: () => handleExportPdf(),
+    },
+    {
+      id: "open-settings",
+      label: t("commandPalette.commands.openSettings", { defaultValue: "打开设置" }),
+      description: t("commandPalette.commands.openSettingsDesc", {
+        defaultValue: "打开应用偏好与快捷键设置",
+      }),
+      keywords: ["settings", "preferences", "config", "设置", "偏好"],
+      onExecute: openSettingsFromPalette,
+    },
+    {
+      id: "open-quick-capture",
+      label: t("commandPalette.commands.openQuickCapture", { defaultValue: "打开快速捕获" }),
+      description: t("commandPalette.commands.openQuickCaptureDesc", {
+        defaultValue: "呼出桌面浮动快速捕获框",
+      }),
+      keywords: ["quick capture", "capture", "快速捕获", "速记"],
+      shortcut: settingsConfig?.quickCaptureShortcut || undefined,
+      onExecute: async () => {
+        if (saveStateRef.current === "dirty") {
+          await saveCurrentNote();
+        }
+        await openQuickCaptureWindow().catch((error) => {
+          showToast(getErrorMessage(error));
+        });
+      },
+    },
+  ];
+
   const aboutButtonLabel = t("settings.update.title", { defaultValue: "更新" });
   const aboutButtonExpanded = aboutUpdateReminder.showText;
   const aboutButtonTitle = aboutUpdateReminder.hasPendingUpdate
@@ -5175,6 +5439,16 @@ export function MainWindow({
           )}
         </div>
       )}
+      <CommandPalette
+        open={paletteOpen}
+        notes={notes}
+        commands={paletteCommands}
+        onSelectNote={(noteId, matchStart, matchLength) => {
+          void handleOpenWorkspaceNote(noteId, matchStart, matchLength);
+        }}
+        onCreateNote={handleCreateNoteWithTitle}
+        onClose={closeCommandPalette}
+      />
     </div>
   );
 }

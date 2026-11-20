@@ -118,6 +118,8 @@ pub struct AppConfig {
     pub surface_height: Option<u32>,
     #[serde(default = "default_toggle_visibility_shortcut")]
     pub toggle_visibility_shortcut: String,
+    #[serde(default = "default_quick_capture_shortcut")]
+    pub quick_capture_shortcut: String,
     #[serde(default = "default_open_at_cursor")]
     pub open_at_cursor: bool,
     #[serde(default = "default_preset_theme")]
@@ -1868,6 +1870,7 @@ impl NoteStore {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: default_toggle_visibility_shortcut(),
+            quick_capture_shortcut: default_quick_capture_shortcut(),
             open_at_cursor: default_open_at_cursor(),
             preset_theme: default_preset_theme(),
             accent_color: String::new(),
@@ -2851,6 +2854,10 @@ fn default_toggle_visibility_shortcut() -> String {
     String::new()
 }
 
+fn default_quick_capture_shortcut() -> String {
+    "Alt+Shift+Space".into()
+}
+
 fn default_open_at_cursor() -> bool {
     true
 }
@@ -3246,6 +3253,7 @@ mod tests {
         assert!(!default_config.tile_save_returns_to_pin);
         assert!(!default_config.tile_desktop_only);
         assert_eq!(default_config.theme, "system");
+        assert_eq!(default_config.quick_capture_shortcut, "Alt+Shift+Space");
         assert_eq!(default_config.preset_theme, "default");
         assert_eq!(default_config.code_theme, "light");
         assert_eq!(default_config.editor_line_height, 1.8);
@@ -3293,6 +3301,7 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: String::new(),
+            quick_capture_shortcut: "Ctrl+Alt+Space".into(),
             preset_theme: "paper".into(),
             accent_color: "#7a5b32".into(),
             code_theme: "dark".into(),
@@ -3385,6 +3394,31 @@ mod tests {
         assert_eq!(loaded.locale, "zh-CN");
         assert_eq!(loaded.font_size, 14);
         assert_eq!(loaded.surface_font_size, 14);
+        assert_eq!(loaded.quick_capture_shortcut, "Alt+Shift+Space");
+    }
+
+    #[test]
+    fn app_config_deserialization_defaults_missing_quick_capture_shortcut_and_preserves_empty() {
+        let missing_json = r#"{
+  "globalShortcut": "Ctrl+Space",
+  "closeToTray": true,
+  "autostart": false,
+  "defaultViewMode": "split"
+}"#;
+        let parsed_missing: AppConfig = serde_json::from_str(missing_json)
+            .expect("deserialize config without quickCaptureShortcut");
+        assert_eq!(parsed_missing.quick_capture_shortcut, "Alt+Shift+Space");
+
+        let empty_json = r#"{
+  "globalShortcut": "Ctrl+Space",
+  "closeToTray": true,
+  "autostart": false,
+  "defaultViewMode": "split",
+  "quickCaptureShortcut": ""
+}"#;
+        let parsed_empty: AppConfig = serde_json::from_str(empty_json)
+            .expect("deserialize config with empty quickCaptureShortcut");
+        assert_eq!(parsed_empty.quick_capture_shortcut, "");
     }
 
     fn legacy_config_json(notes_dir: &Path, background_image_path: &str) -> String {
