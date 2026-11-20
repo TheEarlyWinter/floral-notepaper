@@ -1,6 +1,5 @@
 use crate::json_io::write_json_atomic;
 use chrono::{DateTime, Utc};
-use fs4::fs_std::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -8,6 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
 };
+use fs4::fs_std::FileExt;
 use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
@@ -1218,10 +1218,14 @@ impl NoteStore {
         let base = segments.first().copied().unwrap_or(version_id);
         let suffix_ok = match segments.len() {
             1 => true,
-            2 => segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit()),
+            2 => {
+                segments[1].len() == 8 && segments[1].chars().all(|ch| ch.is_ascii_hexdigit())
+            }
             _ => false,
         };
-        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err() || !suffix_ok {
+        if chrono::NaiveDateTime::parse_from_str(base, "%Y%m%dT%H%M%S%.fZ").is_err()
+            || !suffix_ok
+        {
             return Err(AppError::new("noteVersionNotFound", "找不到该历史版本"));
         }
         Ok(self
@@ -1818,8 +1822,9 @@ impl NoteStore {
             .map_err(|error| {
                 AppError::new("metadataLock", format!("无法打开存储锁文件: {error}"))
             })?;
-        file.lock_exclusive()
-            .map_err(|error| AppError::new("metadataLock", format!("获取存储锁失败: {error}")))?;
+        file.lock_exclusive().map_err(|error| {
+            AppError::new("metadataLock", format!("获取存储锁失败: {error}"))
+        })?;
         Ok(MetadataLockGuard {
             _process: process,
             _file: file,
@@ -2401,7 +2406,10 @@ impl NoteStore {
             // 同名文件（如 `abc.md` 与 `abc_xxx.md`）可能产生相同 ID：
             // 扫描时跳过重复，避免读错内容、改错文件、误删笔记
             if notes.iter().any(|note| note.id == id) {
-                eprintln!("[花笺] 跳过与已有笔记 ID 冲突的文件: {}", path.display());
+                eprintln!(
+                    "[花笺] 跳过与已有笔记 ID 冲突的文件: {}",
+                    path.display()
+                );
                 continue;
             }
             let content = fs::read_to_string(&path).unwrap_or_default();
@@ -2677,7 +2685,9 @@ fn image_payload_matches_extension(data: &[u8], extension: &str) -> bool {
             .ok()
             .map(|text| {
                 let trimmed = text.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
-                let has_script = text.to_ascii_lowercase().contains("<script");
+                let has_script = text
+                    .to_ascii_lowercase()
+                    .contains("<script");
                 (trimmed.starts_with("<svg")
                     || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")))
                     && !has_script

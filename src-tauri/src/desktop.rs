@@ -1118,7 +1118,7 @@ pub fn apply_runtime_config(
         || changes.toggle_visibility_shortcut_changed
         || changes.quick_capture_shortcut_changed
     {
-        apply_global_shortcut_config(app, next)?;
+        apply_global_shortcut_config(app, next, changes.quick_capture_shortcut_changed)?;
     }
 
     if changes.autostart_changed {
@@ -2295,7 +2295,7 @@ fn register_configured_global_shortcut(app: &AppHandle) {
         return;
     };
 
-    if let Err(error) = install_global_shortcut_bindings(app, &config, false) {
+    if let Err(error) = install_global_shortcut_bindings(app, &config, false, false) {
         let msg = format!("快捷键注册失败：{error}");
         eprintln!("{msg}");
         let _ = app.emit("shortcut-register-failed", &msg);
@@ -2435,7 +2435,10 @@ fn parse_configured_shortcut(field: &str, value: &str) -> Result<Shortcut, Box<d
 }
 
 #[cfg(desktop)]
-fn shortcut_bindings_from_config(config: &AppConfig) -> Result<ShortcutBindings, Box<dyn Error>> {
+fn shortcut_bindings_from_config(
+    config: &AppConfig,
+    strict_quick_capture: bool,
+) -> Result<ShortcutBindings, Box<dyn Error>> {
     // 允许用户主动清空快捷键；空值表示不注册对应的全局快捷键。
     let open_notepad = if config.global_shortcut.is_empty() {
         None
@@ -2453,34 +2456,55 @@ fn shortcut_bindings_from_config(config: &AppConfig) -> Result<ShortcutBindings,
             &config.toggle_visibility_shortcut,
         )?)
     };
-    let quick_capture = if config.quick_capture_shortcut.is_empty() {
-        None
-    } else {
-        Some(parse_configured_shortcut(
-            "quickCaptureShortcut",
-            &config.quick_capture_shortcut,
-        )?)
-    };
 
     // 只有两个快捷键都已设置时才需要检查重复，避免清空快捷键时误报配置冲突。
     if open_notepad
         .as_ref()
         .zip(toggle_visibility.as_ref())
         .is_some_and(|(open_notepad, toggle_visibility)| open_notepad == toggle_visibility)
-        || quick_capture
-            .as_ref()
-            .zip(open_notepad.as_ref())
-            .is_some_and(|(quick_capture, open_notepad)| quick_capture == open_notepad)
-        || quick_capture
-            .as_ref()
-            .zip(toggle_visibility.as_ref())
-            .is_some_and(|(quick_capture, toggle_visibility)| quick_capture == toggle_visibility)
     {
         return Err(Box::new(AppError {
             code: "duplicateShortcut".into(),
             message: "visibility toggle shortcut must differ from global shortcut".into(),
             details: Default::default(),
         }));
+    }
+
+    let mut quick_capture = if config.quick_capture_shortcut.is_empty() {
+        None
+    } else {
+        match parse_configured_shortcut("quickCaptureShortcut", &config.quick_capture_shortcut) {
+            Ok(shortcut) => Some(shortcut),
+            Err(error) if strict_quick_capture => return Err(error),
+            Err(error) => {
+                eprintln!("skipping invalid quickCaptureShortcut: {error}");
+                None
+            }
+        }
+    };
+
+    let quick_capture_duplicates_other = quick_capture
+        .as_ref()
+        .zip(open_notepad.as_ref())
+        .is_some_and(|(quick_capture, open_notepad)| quick_capture == open_notepad)
+        || quick_capture
+            .as_ref()
+            .zip(toggle_visibility.as_ref())
+            .is_some_and(|(quick_capture, toggle_visibility)| quick_capture == toggle_visibility);
+
+    if quick_capture_duplicates_other {
+        if strict_quick_capture {
+            return Err(Box::new(AppError {
+                code: "duplicateShortcut".into(),
+                message: "quick capture shortcut must differ from other global shortcuts".into(),
+                details: Default::default(),
+            }));
+        }
+        eprintln!(
+            "skipping quickCaptureShortcut ({}) because it duplicates an existing global shortcut",
+            config.quick_capture_shortcut
+        );
+        quick_capture = None;
     }
 
     Ok(ShortcutBindings {
@@ -2495,8 +2519,9 @@ fn install_global_shortcut_bindings(
     app: &AppHandle,
     config: &AppConfig,
     replace_existing: bool,
+    strict_quick_capture: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let bindings = shortcut_bindings_from_config(config)?;
+    let mut bindings = shortcut_bindings_from_config(config, strict_quick_capture)?;
 
     // 已注册的旧绑定（用于替换时精确卸载，避免 unregister_all 把新键也卸掉）
     let previous = app.try_state::<RuntimeState>().and_then(|state| {
@@ -2521,22 +2546,18 @@ fn install_global_shortcut_bindings(
         })
         .unwrap_or_default();
 
-    let new_shortcuts = [
-        &bindings.open_notepad,
-        &bindings.toggle_visibility,
-        &bindings.quick_capture,
-    ]
-    .into_iter()
-    .flatten()
-    .copied()
-    .collect::<Vec<_>>();
+    let primary_shortcuts = [&bindings.open_notepad, &bindings.toggle_visibility]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
 
-    // 先注册新绑定（与旧绑定相同的跳过，避免重复注册报错）；
-    // 全部成功后再卸载旧绑定。若新键被其他应用占用导致注册失败，
+    // 先注册主快捷键（与旧绑定相同的跳过，避免重复注册报错）；
+    // 全部成功后再尝试注册快速捕获快捷键与卸载旧绑定。若主快捷键被其他应用占用，
     // 回滚本次注册并保留旧快捷键，不会让本会话快捷键全部失效。
     let mut registered: Vec<Shortcut> = Vec::new();
     let register_result = (|| -> Result<(), Box<dyn Error>> {
-        for shortcut in &new_shortcuts {
+        for shortcut in &primary_shortcuts {
             if previous_strings.contains(&shortcut.to_string()) {
                 continue;
             }
@@ -2552,11 +2573,36 @@ fn install_global_shortcut_bindings(
         return Err(error);
     }
 
+    // 快速捕获默认非空（Alt+Shift+Space）：在启动、结束录制或修改其他配置时采用尽力注册，
+    // 即使被系统/其他软件占用也只降级跳过，不影响用户原有的全局快捷键；
+    // 仅当用户在设置中显式修改快速捕获快捷键时才作为硬错误返回。
+    if let Some(quick_capture) = bindings.quick_capture {
+        if !previous_strings.contains(&quick_capture.to_string()) {
+            if let Err(error) = app.global_shortcut().register(quick_capture) {
+                if strict_quick_capture {
+                    for shortcut in &registered {
+                        let _ = app.global_shortcut().unregister(*shortcut);
+                    }
+                    return Err(error.into());
+                }
+                let msg = format!("快速捕获快捷键注册失败：{error}");
+                eprintln!("{msg}");
+                let _ = app.emit("shortcut-register-failed", &msg);
+                bindings.quick_capture = None;
+            }
+        }
+    }
+
     if replace_existing {
-        let new_strings = new_shortcuts
-            .iter()
-            .map(|shortcut| shortcut.to_string())
-            .collect::<Vec<_>>();
+        let active_strings = [
+            &bindings.open_notepad,
+            &bindings.toggle_visibility,
+            &bindings.quick_capture,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|shortcut| shortcut.to_string())
+        .collect::<Vec<_>>();
         if let Some(previous) = previous.as_ref() {
             for shortcut in [
                 &previous.open_notepad,
@@ -2566,7 +2612,7 @@ fn install_global_shortcut_bindings(
             .into_iter()
             .flatten()
             {
-                if !new_strings.contains(&shortcut.to_string()) {
+                if !active_strings.contains(&shortcut.to_string()) {
                     let _ = app.global_shortcut().unregister(*shortcut);
                 }
             }
@@ -2581,14 +2627,19 @@ fn install_global_shortcut_bindings(
 }
 
 #[cfg(desktop)]
-fn apply_global_shortcut_config(app: &AppHandle, config: &AppConfig) -> Result<(), Box<dyn Error>> {
-    install_global_shortcut_bindings(app, config, true)
+fn apply_global_shortcut_config(
+    app: &AppHandle,
+    config: &AppConfig,
+    strict_quick_capture: bool,
+) -> Result<(), Box<dyn Error>> {
+    install_global_shortcut_bindings(app, config, true, strict_quick_capture)
 }
 
 #[cfg(not(desktop))]
 fn apply_global_shortcut_config(
     _app: &AppHandle,
     _config: &AppConfig,
+    _strict_quick_capture: bool,
 ) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
@@ -2780,7 +2831,7 @@ pub fn stop_shortcut_recording(app: &AppHandle) -> Result<(), Box<dyn Error>> {
     keyboard_hook::stop();
 
     let config = load_config()?;
-    if let Err(e) = install_global_shortcut_bindings(app, &config, false) {
+    if let Err(e) = install_global_shortcut_bindings(app, &config, false, false) {
         eprintln!("failed to re-register global shortcuts after recording: {e}");
     }
 
@@ -3018,7 +3069,7 @@ mod tests {
     fn rejects_duplicate_shortcut_bindings() {
         let config = test_app_config("Ctrl+Shift+K", "Ctrl+Shift+K", "");
 
-        let error = match shortcut_bindings_from_config(&config) {
+        let error = match shortcut_bindings_from_config(&config, false) {
             Ok(_) => panic!("expected duplicate shortcut error"),
             Err(error) => error,
         };
@@ -3026,10 +3077,30 @@ mod tests {
         assert!(error.to_string().contains("must differ"));
 
         let quick_capture_dup = test_app_config("Ctrl+Space", "", "Ctrl+Space");
-        assert!(shortcut_bindings_from_config(&quick_capture_dup).is_err());
+        assert!(shortcut_bindings_from_config(&quick_capture_dup, true).is_err());
 
         let visibility_dup = test_app_config("", "Alt+Shift+Space", "Alt+Shift+Space");
-        assert!(shortcut_bindings_from_config(&visibility_dup).is_err());
+        assert!(shortcut_bindings_from_config(&visibility_dup, true).is_err());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn default_quick_capture_colliding_with_existing_global_shortcut_keeps_others_bound() {
+        let collides_with_global =
+            test_app_config("Alt+Shift+Space", "Ctrl+Shift+H", "Alt+Shift+Space");
+        let bindings = shortcut_bindings_from_config(&collides_with_global, false)
+            .expect("non-strict quick capture collision should keep existing shortcuts bound");
+        assert!(bindings.open_notepad.is_some());
+        assert!(bindings.toggle_visibility.is_some());
+        assert!(bindings.quick_capture.is_none());
+
+        let collides_with_visibility =
+            test_app_config("Ctrl+Space", "Alt+Shift+Space", "Alt+Shift+Space");
+        let bindings = shortcut_bindings_from_config(&collides_with_visibility, false)
+            .expect("non-strict quick capture collision with visibility should keep others bound");
+        assert!(bindings.open_notepad.is_some());
+        assert!(bindings.toggle_visibility.is_some());
+        assert!(bindings.quick_capture.is_none());
     }
 
     #[cfg(desktop)]
@@ -3037,7 +3108,8 @@ mod tests {
     fn accepts_empty_shortcut_bindings() {
         let config = test_app_config("", "", "");
 
-        let bindings = shortcut_bindings_from_config(&config).expect("empty shortcuts are valid");
+        let bindings =
+            shortcut_bindings_from_config(&config, false).expect("empty shortcuts are valid");
 
         assert!(bindings.open_notepad.is_none());
         assert!(bindings.toggle_visibility.is_none());
@@ -3049,8 +3121,8 @@ mod tests {
     fn accepts_visibility_shortcut_when_quick_note_shortcut_is_empty() {
         let config = test_app_config("", "Ctrl+Shift+H", "Alt+Shift+Space");
 
-        let bindings =
-            shortcut_bindings_from_config(&config).expect("single visibility shortcut is valid");
+        let bindings = shortcut_bindings_from_config(&config, false)
+            .expect("single visibility shortcut is valid");
 
         assert!(bindings.open_notepad.is_none());
         assert!(bindings.toggle_visibility.is_some());

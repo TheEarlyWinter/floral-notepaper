@@ -1227,20 +1227,24 @@ export function MainWindow({
           if (!currentId) return;
           const stillExists = loaded.some((n) => n.id === currentId);
           if (stillExists) {
-            if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
-              void getNote(currentId)
-                .then((note) => {
-                  if (isStale()) return;
-                  if (selectedIdRef.current !== currentId) return;
-                  if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
-                    return;
-                  }
-                  applyNote(note);
-                  replaceNoteMetadata(note);
-                  navHistory.replaceCurrent(note.id, note.title || "无标题笔记");
-                })
-                .catch(() => undefined);
-            }
+            void saveQueueRef.current.then(() => {
+              if (isStale()) return;
+              if (selectedIdRef.current !== currentId) return;
+              if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
+                void getNote(currentId)
+                  .then((note) => {
+                    if (isStale()) return;
+                    if (selectedIdRef.current !== currentId) return;
+                    if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
+                      return;
+                    }
+                    applyNote(note);
+                    replaceNoteMetadata(note);
+                    navHistory.replaceCurrent(note.id, note.title || "无标题笔记");
+                  })
+                  .catch(() => undefined);
+              }
+            });
           } else if (selectedNoteRef.current) {
             if (loaded[0]) {
               void loadNote(loaded[0].id);
@@ -1563,6 +1567,20 @@ export function MainWindow({
     },
     [performSave],
   );
+
+  useEffect(() => {
+    function handleBlur() {
+      if (saveStateRef.current !== "dirty") return;
+      const autoSaveEnabled = isExternalRef.current
+        ? settingsConfig?.externalFileAutoSave
+        : settingsConfig?.noteAutoSave;
+      if (autoSaveEnabled) {
+        void saveCurrentNote();
+      }
+    }
+    window.addEventListener("blur", handleBlur);
+    return () => window.removeEventListener("blur", handleBlur);
+  }, [saveCurrentNote, settingsConfig?.externalFileAutoSave, settingsConfig?.noteAutoSave]);
 
   useEffect(() => {
     const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
@@ -3176,10 +3194,14 @@ export function MainWindow({
       }),
       keywords: ["quick capture", "capture", "快速捕获", "速记"],
       shortcut: settingsConfig?.quickCaptureShortcut || undefined,
-      onExecute: () =>
-        openQuickCaptureWindow().catch((error) => {
+      onExecute: async () => {
+        if (saveStateRef.current === "dirty") {
+          await saveCurrentNote();
+        }
+        await openQuickCaptureWindow().catch((error) => {
           showToast(getErrorMessage(error));
-        }),
+        });
+      },
     },
   ];
 
