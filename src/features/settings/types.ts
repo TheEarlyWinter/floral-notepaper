@@ -83,4 +83,7 @@ export interface AppConfig {
   // ── 自定义 CSS ──
   customCss: string;
   templates: NoteTemplate[];
+  // ── 图片压缩 ──
+  imageCompressWebp?: boolean;
+  imageCompressQuality?: number;
 }

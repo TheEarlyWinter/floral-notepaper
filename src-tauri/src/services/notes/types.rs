@@ -121,6 +121,10 @@ pub struct AppConfig {
     pub notes_dir: Option<String>,
     #[serde(default, skip_serializing)]
     pub last_known_base_dir: Option<String>,
+    #[serde(default = "super::config::default_image_compress_webp")]
+    pub image_compress_webp: bool,
+    #[serde(default = "super::config::default_image_compress_quality")]
+    pub image_compress_quality: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

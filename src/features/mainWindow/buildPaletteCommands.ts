@@ -18,6 +18,7 @@ interface BuildPaletteCommandsOptions {
   onExportPdf: () => void | Promise<void>;
   onOpenSettings: () => void;
   onOpenQuickCapture: () => void | Promise<void>;
+  onOpenFindReplace?: () => void;
 }
 
 export function buildPaletteCommands({
@@ -36,6 +37,7 @@ export function buildPaletteCommands({
   onExportPdf,
   onOpenSettings,
   onOpenQuickCapture,
+  onOpenFindReplace,
 }: BuildPaletteCommandsOptions): PaletteCommand[] {
   return [
     {
@@ -158,5 +160,20 @@ export function buildPaletteCommands({
       shortcut: quickCaptureShortcut || undefined,
       onExecute: onOpenQuickCapture,
     },
+    ...(onOpenFindReplace
+      ? [
+          {
+            id: "find-replace",
+            label: t("commandPalette.commands.findReplace", { defaultValue: "查找与替换" }),
+            description: t("commandPalette.commands.findReplaceDesc", {
+              defaultValue: "在当前笔记中查找或替换文本",
+            }),
+            keywords: ["find", "replace", "search", "regex", "查找", "替换", "正则"],
+            shortcut: "Ctrl+F",
+            disabled: !selectedId,
+            onExecute: onOpenFindReplace,
+          },
+        ]
+      : []),
   ];
 }

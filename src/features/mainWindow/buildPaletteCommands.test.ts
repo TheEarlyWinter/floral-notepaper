@@ -51,13 +51,16 @@ describe("buildPaletteCommands", () => {
       onExportPdf,
       onOpenSettings: vi.fn(),
       onOpenQuickCapture: vi.fn(),
+      onOpenFindReplace: vi.fn(),
     });
 
     const exportPdf = commands.find((cmd) => cmd.id === "export-pdf");
     const quickCapture = commands.find((cmd) => cmd.id === "open-quick-capture");
+    const findReplace = commands.find((cmd) => cmd.id === "find-replace");
 
     expect(exportPdf?.disabled).toBe(false);
     expect(quickCapture?.shortcut).toBe("Alt+Space");
+    expect(findReplace?.disabled).toBe(false);
     void exportPdf?.onExecute();
     expect(onExportPdf).toHaveBeenCalledOnce();
   });

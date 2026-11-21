@@ -9,6 +9,13 @@ import type { TFunction } from "i18next";
 import { showToast } from "../../components/Toast";
 import { importMarkdownNote } from "../importExport/api";
 import {
+  batchAddTagsToNotes,
+  batchDeleteNotes,
+  batchExportNotesMarkdown,
+  batchMoveNotesCategory,
+  parseTagInput,
+} from "../notes/bulkActions";
+import {
   createNote,
   deleteNote,
   getErrorMessage,
@@ -414,6 +421,172 @@ export function useNoteOperations({
     }
   }, [selectedId, title, content, activeCategory, replaceNoteMetadata, applyNote]);
 
+  const flushActiveNoteIfIncluded = useCallback(
+    async (noteIds: string[]): Promise<boolean> => {
+      if (!selectedIdRef.current || isExternal || !noteIds.includes(selectedIdRef.current)) {
+        return true;
+      }
+      if (saveStateRef.current === "dirty" || saveStateRef.current === "error") {
+        return saveCurrentNote(true);
+      }
+      return true;
+    },
+    [isExternal, saveCurrentNote, saveStateRef, selectedIdRef],
+  );
+
+  const handleBatchMoveCategory = useCallback(
+    async (noteIds: string[], targetCategory: string): Promise<string[]> => {
+      if (noteIds.length === 0) return [];
+      try {
+        const flushed = await flushActiveNoteIfIncluded(noteIds);
+        if (!flushed) return [];
+        const result = await batchMoveNotesCategory(noteIds, targetCategory);
+        await refreshNotes();
+        if (result.succeededIds.length > 0) {
+          showToast(
+            t("bulkActions.movedToast", {
+              count: result.succeededIds.length,
+              defaultValue: "已移动 {{count}} 篇笔记",
+            }),
+            result.failedIds.length > 0 ? "warning" : "info",
+          );
+        } else if (result.failedIds.length > 0) {
+          showToast(t("common.operationFailed", { defaultValue: "操作失败" }), "warning");
+        }
+        return result.succeededIds;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return [];
+      }
+    },
+    [flushActiveNoteIfIncluded, refreshNotes, t],
+  );
+
+  const handleBatchAddTags = useCallback(
+    async (noteIds: string[], rawTags: string): Promise<string[]> => {
+      if (noteIds.length === 0 || parseTagInput(rawTags).length === 0) return [];
+      try {
+        const flushed = await flushActiveNoteIfIncluded(noteIds);
+        if (!flushed) return [];
+        const { updatedNotes, result } = await batchAddTagsToNotes(noteIds, rawTags);
+        const currentId = selectedIdRef.current;
+        if (currentId && !isExternal) {
+          const updatedCurrent = updatedNotes.find((note) => note.id === currentId);
+          if (updatedCurrent) {
+            tagsValueRef.current = updatedCurrent.tags;
+            setNoteTags(updatedCurrent.tags);
+          }
+        }
+        await refreshNotes();
+        if (result.succeededIds.length > 0) {
+          showToast(
+            t("bulkActions.taggedToast", {
+              count: result.succeededIds.length,
+              defaultValue: "已为 {{count}} 篇笔记添加标签",
+            }),
+            result.failedIds.length > 0 ? "warning" : "info",
+          );
+        } else if (result.skippedIds.length > 0 && result.failedIds.length === 0) {
+          showToast(
+            t("bulkActions.tagsAlreadyPresent", { defaultValue: "所选笔记已包含这些标签" }),
+            "info",
+          );
+        } else if (result.failedIds.length > 0) {
+          showToast(t("common.operationFailed", { defaultValue: "操作失败" }), "warning");
+        }
+        return result.succeededIds;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return [];
+      }
+    },
+    [
+      flushActiveNoteIfIncluded,
+      isExternal,
+      refreshNotes,
+      selectedIdRef,
+      setNoteTags,
+      t,
+      tagsValueRef,
+    ],
+  );
+
+  const handleBatchExportMarkdown = useCallback(
+    async (noteIds: string[]): Promise<boolean> => {
+      if (noteIds.length === 0) return false;
+      try {
+        const flushed = await flushActiveNoteIfIncluded(noteIds);
+        if (!flushed) return false;
+        const noteMap = new Map(notes.map((note) => [note.id, note]));
+        const targets = noteIds
+          .map((id) => {
+            const meta = noteMap.get(id);
+            if (!meta) return null;
+            return {
+              id,
+              title: id === selectedIdRef.current ? titleValueRef.current : meta.title,
+            };
+          })
+          .filter((entry): entry is { id: string; title: string } => entry !== null);
+
+        const { cancelled, result } = await batchExportNotesMarkdown(targets, { translate: t });
+        if (cancelled) return false;
+        if (result.succeededIds.length > 0) {
+          showToast(
+            t("bulkActions.exportedToast", {
+              count: result.succeededIds.length,
+              defaultValue: "已导出 {{count}} 篇 Markdown 笔记",
+            }),
+            result.failedIds.length > 0 ? "warning" : "info",
+          );
+        } else if (result.failedIds.length > 0) {
+          showToast(t("common.operationFailed", { defaultValue: "操作失败" }), "warning");
+        }
+        return result.succeededIds.length > 0;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return false;
+      }
+    },
+    [flushActiveNoteIfIncluded, notes, selectedIdRef, t, titleValueRef],
+  );
+
+  const handleBatchDeleteNotes = useCallback(
+    async (noteIds: string[]): Promise<string[]> => {
+      if (noteIds.length === 0) return [];
+      try {
+        const result = await batchDeleteNotes(noteIds);
+        for (const deletedId of result.succeededIds) {
+          navRemove(deletedId);
+        }
+        if (
+          selectedIdRef.current &&
+          !isExternal &&
+          result.succeededIds.includes(selectedIdRef.current)
+        ) {
+          clearCurrentNote();
+        }
+        await refreshNotes();
+        if (result.succeededIds.length > 0) {
+          showToast(
+            t("bulkActions.deletedToast", {
+              count: result.succeededIds.length,
+              defaultValue: "已删除 {{count}} 篇笔记",
+            }),
+            result.failedIds.length > 0 ? "warning" : "info",
+          );
+        } else if (result.failedIds.length > 0) {
+          showToast(t("common.operationFailed", { defaultValue: "操作失败" }), "warning");
+        }
+        return result.succeededIds;
+      } catch (error) {
+        showToast(getErrorMessage(error));
+        return [];
+      }
+    },
+    [clearCurrentNote, isExternal, navRemove, refreshNotes, selectedIdRef, t],
+  );
+
   return {
     handleNewNote,
     handleToggleTodo,
@@ -429,5 +602,9 @@ export function useNoteOperations({
     handleOpenWorkspaceNote,
     handleCreateNoteWithTitle,
     ensureNoteSaved,
+    handleBatchMoveCategory,
+    handleBatchAddTags,
+    handleBatchExportMarkdown,
+    handleBatchDeleteNotes,
   };
 }

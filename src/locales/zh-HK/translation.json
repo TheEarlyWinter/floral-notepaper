@@ -467,6 +467,12 @@
       "title": "更新"
     },
     "visibilityShortcut": "顯示／隱藏視窗快捷鍵",
+    "imageCompress": {
+      "enable": "貼上／拖入圖片自動轉為 WebP",
+      "heading": "圖片壓縮",
+      "hint": "自動跳過 GIF、SVG、WebP 及小於 30 KB 的圖片，僅在體積更小時替換。",
+      "quality": "WebP 壓縮品質"
+    },
     "background": {
       "label": "背景圖片",
       "default": "預設背景",
@@ -513,6 +519,8 @@
     "commands": {
       "exportPdf": "匯出 PDF",
       "exportPdfDesc": "將目前筆記匯出為 PDF 文件",
+      "findReplace": "尋找與替換",
+      "findReplaceDesc": "在目前筆記中尋找或替換文字",
       "newNote": "新增筆記",
       "newNoteDesc": "在目前分類建立一篇空白筆記",
       "openDaily": "打開每日便箋",
@@ -553,6 +561,42 @@
       "notes": "筆記"
     },
     "title": "命令面板"
+  },
+  "findReplace": {
+    "caseSensitive": "區分大小寫",
+    "clearFind": "清除尋找",
+    "close": "關閉 (Esc)",
+    "findPlaceholder": "尋找…",
+    "invalidRegex": "正則表達式無效",
+    "next": "下一個 (Enter)",
+    "previous": "上一個 (Shift+Enter)",
+    "regex": "正則表達式",
+    "regionLabel": "尋找與替換",
+    "replace": "替換",
+    "replaceAll": "全部替換",
+    "replacePlaceholder": "替換為…",
+    "toggleReplace": "展開或收起替換"
+  },
+  "bulkActions": {
+    "addTags": "新增標籤",
+    "barLabel": "批次管理操作列",
+    "clearSelection": "清除",
+    "confirmDelete": "確認刪除 {{count}} 篇？",
+    "confirmDeleteAction": "確認刪除",
+    "delete": "刪除所選",
+    "deletedToast": "已刪除 {{count}} 篇筆記",
+    "exitMode": "結束多選",
+    "exportMarkdown": "匯出 Markdown",
+    "exportedToast": "已匯出 {{count}} 篇 Markdown 筆記",
+    "move": "移動分類",
+    "movedToast": "已移動 {{count}} 篇筆記",
+    "selectAll": "全選",
+    "selectedCount": "已選 {{count}} 項",
+    "taggedToast": "已為 {{count}} 篇筆記新增標籤",
+    "tagsAlreadyPresent": "所選筆記已包含這些標籤",
+    "tagsPlaceholder": "標籤（逗號分隔）",
+    "targetCategory": "目標分類",
+    "toggleMode": "批次選擇"
   },
   "tile": {
     "empty": "空"

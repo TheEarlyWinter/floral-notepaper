@@ -467,6 +467,12 @@
       "title": "Updates"
     },
     "visibilityShortcut": "Show/Hide window shortcut",
+    "imageCompress": {
+      "enable": "Auto-convert pasted/dropped images to WebP",
+      "heading": "Image Compression",
+      "hint": "Automatically skips GIF, SVG, WebP, and images under 30 KB; replaces only when smaller.",
+      "quality": "WebP compression quality"
+    },
     "background": {
       "label": "Background image",
       "default": "Default background",
@@ -513,6 +519,8 @@
     "commands": {
       "exportPdf": "Export PDF",
       "exportPdfDesc": "Export current note as a PDF document",
+      "findReplace": "Find & Replace",
+      "findReplaceDesc": "Find or replace text in the current note",
       "newNote": "New Note",
       "newNoteDesc": "Create a blank note in the current category",
       "openDaily": "Open Daily Note",
@@ -553,6 +561,42 @@
       "notes": "Notes"
     },
     "title": "Command Palette"
+  },
+  "findReplace": {
+    "caseSensitive": "Match case",
+    "clearFind": "Clear search",
+    "close": "Close (Esc)",
+    "findPlaceholder": "Find…",
+    "invalidRegex": "Invalid regular expression",
+    "next": "Next match (Enter)",
+    "previous": "Previous match (Shift+Enter)",
+    "regex": "Use regular expression",
+    "regionLabel": "Find and replace",
+    "replace": "Replace",
+    "replaceAll": "Replace All",
+    "replacePlaceholder": "Replace with…",
+    "toggleReplace": "Toggle replace"
+  },
+  "bulkActions": {
+    "addTags": "Add Tags",
+    "barLabel": "Bulk action bar",
+    "clearSelection": "Clear",
+    "confirmDelete": "Delete {{count}} notes?",
+    "confirmDeleteAction": "Confirm Delete",
+    "delete": "Delete Selected",
+    "deletedToast": "Deleted {{count}} note(s)",
+    "exitMode": "Exit multi-select",
+    "exportMarkdown": "Export Markdown",
+    "exportedToast": "Exported {{count}} Markdown note(s)",
+    "move": "Move",
+    "movedToast": "Moved {{count}} note(s)",
+    "selectAll": "Select All",
+    "selectedCount": "{{count}} selected",
+    "taggedToast": "Added tags to {{count}} note(s)",
+    "tagsAlreadyPresent": "Selected notes already have these tags",
+    "tagsPlaceholder": "Tags (comma-separated)",
+    "targetCategory": "Target category",
+    "toggleMode": "Bulk select"
   },
   "tile": {
     "empty": "Empty"
