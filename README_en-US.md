@@ -24,8 +24,8 @@ Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepa
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Rust](https://img.shields.io/badge/Rust-1.96-orange?logo=rust)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
-![Rust Tests](https://img.shields.io/badge/Rust_Tests-185_passed-green)
-![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-175_passed-green)
+![Rust Tests](https://img.shields.io/badge/Rust_Tests-209_passed-green)
+![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-247_passed-green)
 
 </div>
 
@@ -63,10 +63,11 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 ### ✍️ Writing & Organizing
 
 - **Edit / Split / Preview modes**: GFM, task lists, tables, math formulas, code blocks and more, with upgraded bidirectional split scroll sync; check task boxes directly in Preview and Desktop Tiles to write back to Markdown.
+- **In-Note Find & Replace & WebP Image Compression**: `Ctrl+F` / `Ctrl+H` with case sensitivity, regex, live editor/preview match highlights, and undo-safe replacements; pasted/dropped images auto-convert to WebP (configurable quality, skips small files & animated formats).
 - **Command Palette**: press `Ctrl+K` (customizable in Settings) inside the main window for instant local filtering, debounced FTS5 snippets, `>` workspace commands, and quick note creation.
 - **Templates & Daily Note**: save reusable templates; the daily note opens in your local timezone, so it is never "yesterday's" note at midnight.
 - **Version History**: keep the last 20 revisions per note with blake3 deduplication; restore any revision with one click.
-- **Categories, Tags & Pinning**: organize, filter, and create a new note directly from a category header.
+- **Categories, Tags, Pinning & Bulk Actions**: organize, filter, create notes directly inside a category header, or switch the sidebar to "Select" mode to batch-move, tag, export Markdown, or delete with confirmation.
 - **Enhanced Search**: supports `tag:label`, `in:category`, `pinned` and `unpinned` queries.
 - **Todo Aggregation**: collect unfinished tasks from all notes; checking a box writes back to the source Markdown.
 - **External Files**: safely open external Markdown/TXT with UTF-8 BOM, UTF-16 BOM and GBK detection; relative images are served through a whitelist.
@@ -80,9 +81,8 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 
 ### 🔗 Connecting Notes
 
-- **Internal links**: `[[Note Title]]` jumps directly from the preview when the title is unique.
-- **Stable links**: `[[note:noteID|display text]]` never guesses the wrong target, even with duplicate titles; copy with one click.
-- **Backlinks**: see which notes mention the current note.
+- **Wiki-link Autocomplete & Navigation**: type `[[` in the editor for live completion (`↑↓`, `Enter`/`Tab`, `Esc`, IME-safe); supports `[[Note Title]]` and stable `[[note:noteID|display text]]`, clickable directly in Preview or via `Ctrl+Click` (`Cmd+Click`) in the editor.
+- **Backlinks & Local Related Notes**: see notes mentioning the current one alongside local BM25 + tag similarity recommendations with one-click link insertion.
 - **Navigation history**: step back and forth between notes with `Alt+←` / `Alt+→`.
 
 ### 🕸️ Knowledge Discovery
@@ -104,8 +104,9 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 
 - **FTS5 full-text search**: SQLite FTS5 incremental index with trigram tokenizer for mixed Chinese/English search — far faster than full scans.
 - **Deduplicated storage**: blake3 hashing avoids re-storing unchanged versions, saving 80%+ disk space.
-- **CLI**: `--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export` for scripting and piping.
-- **Built-in MCP Server**: `--mcp` exposes a native Rust stdio JSON-RPC 2.0 server (14 tools) so AI agents can read/write notes, todos, reminders, and pin desktop tiles.
+- **CLI**: `--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export` (including `--ttl` / `--persist` tile lifetimes) for scripting and piping.
+- **Built-in MCP Server**: `--mcp` exposes a native Rust stdio JSON-RPC 2.0 server (14 tools + 4 read-only `floral://` resources/templates), with one-click client config presets and an external activity log in Settings.
+- **Opt-in Cross-Device Sync**: disabled by default; optionally enable WebDAV or Git sync in Settings with credentials stored in your OS keyring and automatic conflict backups.
 - **Cross-process safety & live GUI reload**: CLI/MCP and GUI writes are serialized by cross-process file locks, with automatic GUI hot-reload on external edits (protecting unsaved editor buffers).
 
 ### 🛡️ Data Safety & Unsaved-Content Protection

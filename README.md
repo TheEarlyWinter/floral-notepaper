@@ -24,8 +24,8 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Rust](https://img.shields.io/badge/Rust-1.96-orange?logo=rust)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
-![Rust Tests](https://img.shields.io/badge/Rust_Tests-185_passed-green)
-![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-175_passed-green)
+![Rust Tests](https://img.shields.io/badge/Rust_Tests-209_passed-green)
+![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-247_passed-green)
 
 </div>
 
@@ -63,10 +63,11 @@
 ### ✍️ 写作与整理
 
 - **Markdown 编辑、预览与分栏模式**：支持 GFM、任务列表、表格、数学公式、代码块等常用格式，分栏支持高精度双向同步滚动；预览区与桌面磁贴支持直接点击勾选任务列表并回写源码。
+- **笔记内查找替换与图片压缩**：支持 `Ctrl+F` / `Ctrl+H` 正则查找、编辑/预览双区命中高亮与原生撤销栈替换；粘贴/拖入图片自动转 WebP（支持质量调节，自动跳过小图与动图）。
 - **命令面板**：主窗口内通过 `Ctrl+K`（可在设置中自定义录制）一键呼出，融合本地过滤、FTS5 全文检索摘要、`>` 命令模式与快速新建笔记。
 - **模板与每日便笺**：保存常用笔记模板，一键套用；每日便笺按本地时区打开，凌晨也不会开错「昨天」。
 - **版本历史**：自动保留最近 20 份正文版本，blake3 哈希去重，内容未变不重复存储，可按需一键恢复。
-- **分类、标签与置顶**：归类、加标签、置顶，支持组合筛选；从分类标题可直接在指定分类中新建笔记。
+- **分类、标签、置顶与批量管理**：归类、加标签、置顶，支持组合筛选与侧栏「多选」模式（一键批量移分类、加标签、导出或二次确认删除）；从分类标题可直接在指定分类中新建笔记。
 - **增强搜索**：支持 `tag:标签`、`in:分类`、`pinned` 与 `unpinned` 查询。
 - **待办聚合**：从所有笔记汇总未完成任务，面板中勾选后直接回写原 Markdown。
 - **外部文件支持**：安全打开外部 Markdown 与 TXT 文件，识别 UTF-8 BOM、UTF-16 BOM 与 GBK 编码；相对图片按白名单安全显示。
@@ -80,9 +81,8 @@
 
 ### 🔗 笔记之间的连接
 
-- **内部链接**：在正文输入 `[[笔记标题]]`，标题唯一时从预览直接跳转。
-- **稳定链接**：支持 `[[note:笔记ID|显示文字]]`，即使标题重复也不会猜错目标；工具栏一键复制。
-- **反向链接**：查看哪些笔记提到了当前笔记，回顾上下文。
+- **内部链接与 `[[` 补全**：编辑正文输入 `[[` 弹出候选列表实时插入链接；支持 `[[笔记标题]]` 与 `[[note:笔记ID|显示文字]]`，预览直接点击或编辑区 `Ctrl+点击` 直达目标笔记。
+- **反向链接与本地相关笔记**：查看哪些笔记提到了当前笔记，并在同一面板结合本地 BM25 与标签相似度推荐相关笔记，一键插入关联。
 - **导航历史**：笔记间跳转后可通过 `Alt+←` / `Alt+→` 轻松回溯。
 
 ### 🕸️ 知识发现
@@ -104,8 +104,9 @@
 
 - **FTS5 全文搜索**：SQLite FTS5 增量索引，trigram tokenizer 支持中英文混合搜索，速度远超旧版全量遍历。
 - **版本去重存储**：blake3 哈希去重，内容未变时不重复存储，节省 80%+ 磁盘空间。
-- **CLI 命令行接口**：`--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export`，方便脚本批量操作与管道集成。
-- **内置 MCP Server**：`--mcp` 提供原生 Rust stdio JSON-RPC 2.0 接口（14 个工具），可直接接入各类 AI Agent 读写笔记、待办、提醒并向桌面弹出磁贴。
+- **CLI 命令行接口**：`--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export`（支持 `--ttl` / `--persist` 桌面磁贴超时控制），方便脚本批量操作与管道集成。
+- **内置 MCP Server**：`--mcp` 提供原生 Rust stdio JSON-RPC 2.0 接口（14 个工具 + 4 个 `floral://` 只读资源/模板），设置页自带客户端预设配置一键复制与最近外部活动日志。
+- **可选跨设备云同步**：默认关闭，可在设置中按需开启 WebDAV 或 Git 同步（凭据安全存入系统钥匙串、自动冲突备份）。
 - **双进程安全与 GUI 热刷新**：CLI/MCP 与图形界面并发写入由跨进程文件锁串行，外部写入后 GUI 自动热刷新（未保存内容受保护不被覆盖）。
 
 ### 🛡️ 数据安全与未保存保护
