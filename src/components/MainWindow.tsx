@@ -1,486 +1,74 @@
 import {
+  Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
   useRef,
   useState,
-  Suspense,
-  lazy,
 } from "react";
-import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import type { TFunction } from "i18next";
+import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { save } from "@tauri-apps/plugin-dialog";
-import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
-import { exportMarkdownPdf, pdfFileName } from "../features/importExport/pdf";
-import { MarkdownPreviewLazy as MarkdownPreview } from "../features/markdown/MarkdownPreviewLazy";
-import { canRenderRawHtml } from "../features/markdown/renderPolicy";
 import { extractOutlineHeadings } from "../features/markdown/outlineUtils";
-import { OutlinePanel } from "./OutlinePanel";
-import { showToast } from "./Toast";
-import {
-  createScrollSyncMap,
-  interpolateScrollOffset,
-  measureBlockOffsets,
-  measurePreviewBlockOffsets,
-  tagPreviewBlocks,
-  type ScrollSyncMap,
-} from "../features/markdown/scrollSync";
-import {
-  chooseDataDirectory,
-  getConfig,
-  migrateDataDir,
-  normalizeViewMode,
-  saveConfig,
-} from "../features/settings/api";
-import type { AppConfig, NoteTemplate, ViewMode } from "../features/settings/types";
-import { normalizeTileColor } from "../features/settings/tileColor";
-import {
-  DEFAULT_SIDEBAR_ACTION_ORDER,
-  moveOrderItem,
-  normalizeOrder,
-  type SidebarActionId,
-} from "../features/settings/sidebarOrder";
-import { getUpdateStatus, reportInstallPreparation } from "../features/update/api";
-import {
-  ABOUT_UPDATE_LABEL_DURATION_MS,
-  applyAboutUpdateStatus,
-  createAboutUpdateReminderState,
-  dismissAboutUpdateReminderText,
-  type AboutUpdateReminderState,
-} from "../features/update/presentation";
-import type {
-  UpdateErrorPayload,
-  UpdateInstallPrepareRequest,
-  UpdateState,
-} from "../features/update/types";
 import { BackgroundLayer } from "./BackgroundLayer";
-import { POPUP_VIEWPORT_MARGIN, useViewportPopupPosition } from "./popupPosition";
-import { SlidingButtonGroup } from "./SlidingButtonGroup";
-import { TodoPanel } from "./TodoPanel";
-import { NoteHistoryPanel } from "./NoteHistoryPanel";
-import { BacklinksPanel } from "./BacklinksPanel";
-import { KnowledgeGraphPanel } from "./KnowledgeGraphPanel";
-import { ReminderPanel } from "./ReminderPanel";
-import { NotesWorkspacePanel, type NotesWorkspaceMode } from "./NotesWorkspacePanel";
-import { LibraryPanel } from "./LibraryPanel";
-import {
-  createNote,
-  createCategory,
-  deleteCategory,
-  openDailyNote,
-  prepareExternalFileImages,
-  restoreNoteVersion,
-  deleteNote,
-  getErrorMessage,
-  getFileModifiedTime,
-  getNote,
-  listCategories,
-  listNotes,
-  mergeNotes,
-  moveNoteCategory,
-  readExternalFile,
-  renameCategory,
-  saveExternalFile,
-  updateNote,
-  listReminders,
-  ackReminder,
-} from "../features/notes/api";
-import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
-import { INBOX_CATEGORY } from "../features/notes/insights";
-import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
+import { showToast } from "./Toast";
+import type { NotesWorkspaceMode } from "./NotesWorkspacePanel";
+import { getErrorMessage } from "../features/notes/api";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
-import type { ExternalFile, Note, NoteMetadata, Reminder } from "../features/notes/types";
+import { useImagePaste } from "../features/images/useImagePaste";
+import { INBOX_CATEGORY } from "../features/notes/insights";
+import { getNoteContextMenuItems } from "../features/notes/noteContextMenu";
 import {
-  collectAllTags,
   countNoteChars,
   filterNotesByTag,
-  formatShortDate,
-  formatTime,
   getDisplayTitle,
   groupNotesByCategory,
-  metadataFromNote,
 } from "../features/notes/noteUtils";
-import type { CategoryGroup } from "../features/notes/noteUtils";
-import {
-  filterNotesWithSearchSyntax,
-  parseNoteSearchQuery,
-  toggleTodoInContent,
-  type TodoItem,
-} from "../features/notes/todoUtils";
-import { resolveWikiLink, wikiLinkSyntax } from "../features/notes/wikiLinks";
-import { useExternalSync } from "../features/notes/useExternalSync";
+import { filterNotesWithSearchSyntax, parseNoteSearchQuery } from "../features/notes/todoUtils";
 import { useNavigationHistory } from "../features/notes/useNavigationHistory";
-import {
-  getNoteContextMenuItems,
-  type NoteContextMenuAction,
-} from "../features/notes/noteContextMenu";
+import { normalizeViewMode } from "../features/settings/api";
+import type { AppConfig, ViewMode } from "../features/settings/types";
 import {
   openNotepadWindow,
   openQuickCaptureWindow,
   takeStartupFile,
-  toggleTileWindow,
 } from "../features/windows/api";
-import { CommandPalette, type PaletteCommand } from "./CommandPalette";
 import {
   closeCurrentWindow,
-  hideCurrentWindow,
-  minimizeCurrentWindow,
-  toggleMaximizeCurrentWindow,
   isCurrentWindowMaximized,
+  minimizeCurrentWindow,
   startCurrentWindowDrag,
+  toggleMaximizeCurrentWindow,
 } from "../features/windows/controls";
-import {
-  TILE_WINDOW_CLOSED_EVENT,
-  TILE_WINDOW_UNPINNED_EVENT,
-  syncPinnedTileIds,
-} from "../features/windows/tileWindowEvents";
+import { buildPaletteCommands } from "../features/mainWindow/buildPaletteCommands";
+import { getToolbarButtons } from "../features/mainWindow/editorFormatting";
+import { EditorPane } from "../features/mainWindow/EditorPane";
+import { EditorToolbar } from "../features/mainWindow/EditorToolbar";
+import { CommandPalette } from "../features/mainWindow/lazyPanels";
+import { MainSidebar } from "../features/mainWindow/MainSidebar";
+import { MainWindowSidePanels } from "../features/mainWindow/MainWindowSidePanels";
+import { NoteHeader } from "../features/mainWindow/NoteHeader";
+import { SidebarContextMenus } from "../features/mainWindow/SidebarContextMenus";
+import { StatusBar } from "../features/mainWindow/StatusBar";
+import { BUILT_IN_TEMPLATES } from "../features/mainWindow/templates";
+import { TitleBar } from "../features/mainWindow/TitleBar";
+import type { SaveState, SidePanelMode } from "../features/mainWindow/types";
+import { useCategoryManagement } from "../features/mainWindow/useCategoryManagement";
+import { useColumnResize } from "../features/mainWindow/useColumnResize";
+import { useEditorActions } from "../features/mainWindow/useEditorActions";
+import { useMainWindowShortcuts } from "../features/mainWindow/useMainWindowShortcuts";
+import { useMainWindowSync } from "../features/mainWindow/useMainWindowSync";
+import { useNoteOperations } from "../features/mainWindow/useNoteOperations";
+import { useNoteSaveQueue } from "../features/mainWindow/useNoteSaveQueue";
+import { useNoteState } from "../features/mainWindow/useNoteState";
+import { useSettingsManagement } from "../features/mainWindow/useSettingsManagement";
+import { useSidebarMenus } from "../features/mainWindow/useSidebarMenus";
+import { useSidebarPointerDrag } from "../features/mainWindow/useSidebarPointerDrag";
+import { useSplitScrollSync } from "../features/mainWindow/useSplitScrollSync";
+import { useUpdateStatusSync } from "../features/mainWindow/useUpdateStatusSync";
 
-/** 解析 "Ctrl+W"、"Alt+F4" 等快捷键字符串并匹配键盘事件 */
-function matchShortcut(event: KeyboardEvent, shortcut: string): boolean {
-  if (!shortcut) return false;
-  const parts = shortcut.split("+").map((s) => s.trim().toLowerCase());
-  const hasCtrl = parts.includes("ctrl") || parts.includes("control");
-  const hasAlt = parts.includes("alt") || parts.includes("option");
-  const hasShift = parts.includes("shift");
-  const hasMeta = parts.includes("meta") || parts.includes("cmd") || parts.includes("command");
-  const keyPart = parts.find(
-    (p) => !["ctrl", "control", "alt", "option", "shift", "meta", "cmd", "command"].includes(p),
-  );
-  if (!keyPart) return false;
-  // Ctrl 和 Meta 互认：Mac 上用 Cmd(Meta) 等价于 Windows 的 Ctrl
-  const hasModKey = hasCtrl || hasMeta;
-  const eventHasModKey = event.ctrlKey || event.metaKey;
-  if (eventHasModKey !== hasModKey) return false;
-  if (event.altKey !== hasAlt) return false;
-  if (event.shiftKey !== hasShift) return false;
-  const eventKey = event.key === " " ? "space" : event.key.toLowerCase();
-  return eventKey === keyPart;
-}
-
-type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
-type SidePanelMode =
-  | "about"
-  | "settings"
-  | "todos"
-  | "history"
-  | "backlinks"
-  | "reminders"
-  | "library"
-  | "workspace"
-  | "outline"
-  | "knowledgeGraph";
-
-type SidebarSortKind = "action" | "category";
-type SidebarPointerDragKind = SidebarSortKind | "note";
-
-interface SidebarPointerDragState {
-  kind: SidebarSortKind;
-  sourceId: string;
-  targetId: string | null;
-}
-
-interface SidebarPointerDrag {
-  kind: SidebarPointerDragKind;
-  sourceId: string;
-  sourceCategory?: string;
-  targetId: string | null;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  isDragging: boolean;
-}
-
-interface SidebarPointerDropTarget {
-  kind: SidebarSortKind;
-  id: string;
-}
-
-const SIDEBAR_POINTER_DRAG_THRESHOLD = 6;
-const SIDEBAR_POINTER_SCROLL_EDGE = 40;
-const SIDEBAR_POINTER_SCROLL_SPEED = 12;
-
-function isSidebarActionId(value: string): value is SidebarActionId {
-  return (DEFAULT_SIDEBAR_ACTION_ORDER as readonly string[]).includes(value);
-}
-
-function getSidebarSortTarget(clientX: number, clientY: number): SidebarPointerDropTarget | null {
-  const element = document
-    .elementFromPoint(clientX, clientY)
-    ?.closest<HTMLElement>("[data-sidebar-sort-kind][data-sidebar-sort-id]");
-  const kind = element?.dataset.sidebarSortKind;
-  const id = element?.dataset.sidebarSortId;
-  if ((kind !== "action" && kind !== "category") || !id) return null;
-  return { kind, id };
-}
-
-function getSidebarNoteDropTarget(clientX: number, clientY: number): string | null {
-  const element = document
-    .elementFromPoint(clientX, clientY)
-    ?.closest<HTMLElement>("[data-sidebar-note-drop-category]");
-  return element?.dataset.sidebarNoteDropCategory ?? null;
-}
-
-const BUILT_IN_TEMPLATES: NoteTemplate[] = [
-  { id: "daily", name: "今日计划", content: "# {{date}}\n\n## 待办\n- [ ] \n\n## 随手记\n" },
-  {
-    id: "reading",
-    name: "阅读笔记",
-    content: "# 书名 / 文章\n\n## 摘录\n\n## 想法\n\n## 行动\n- [ ] ",
-  },
-  {
-    id: "meeting",
-    name: "会议记录",
-    content: "# 会议主题\n\n时间：{{date}}\n\n## 结论\n\n## 待办\n- [ ] ",
-  },
-];
-
-function renderTemplateContent(content: string): string {
-  const date = new Intl.DateTimeFormat("zh-CN", { dateStyle: "full" }).format(new Date());
-  return content.replace(/\{\{date\}\}/g, date);
-}
-
-// 侧面板只在用户主动打开时挂载，懒加载可把关于面板（贡献者数据、更新设置）
-// 和设置面板从首屏 bundle 中拆出
-const AboutPanel = lazy(() =>
-  import("./AboutPanel").then((module) => ({ default: module.AboutPanel })),
-);
-const SettingsPanel = lazy(() =>
-  import("./SettingsPanel").then((module) => ({ default: module.SettingsPanel })),
-);
-
-interface NoteMenuState {
-  x: number;
-  y: number;
-  noteId: string;
-}
-
-interface CategoryMenuState {
-  x: number;
-  y: number;
-  category: string;
-}
-
-type FormatAction =
-  | "bold"
-  | "italic"
-  | "heading"
-  | "hr"
-  | "ul"
-  | "ol"
-  | "code"
-  | "quote"
-  | "inlineMath"
-  | "blockMath";
-
-export function applyFormat(
-  textarea: HTMLTextAreaElement,
-  action: FormatAction,
-  translate: TFunction,
-  setContent: (v: string) => void,
-  markDirty: () => void,
-) {
-  const { selectionStart: start, selectionEnd: end, value, scrollTop, scrollLeft } = textarea;
-  const selected = value.slice(start, end);
-  const before = value.slice(0, start);
-  const after = value.slice(end);
-
-  const lineStart = before.lastIndexOf("\n") + 1;
-  const currentLine = before.slice(lineStart);
-
-  let result: string;
-  let cursorStart: number;
-  let cursorEnd: number;
-
-  switch (action) {
-    case "bold": {
-      const fallback = translate("main.formatSample.boldText", { defaultValue: "粗体文本" });
-      const wrapped = `**${selected || fallback}**`;
-      result = before + wrapped + after;
-      cursorStart = start + 2;
-      cursorEnd = cursorStart + (selected || fallback).length;
-      break;
-    }
-    case "italic": {
-      const fallback = translate("main.formatSample.italicText", { defaultValue: "斜体文本" });
-      const wrapped = `*${selected || fallback}*`;
-      result = before + wrapped + after;
-      cursorStart = start + 1;
-      cursorEnd = cursorStart + (selected || fallback).length;
-      break;
-    }
-    case "heading": {
-      const prefix = currentLine.match(/^(#{1,5})\s/);
-      if (prefix) {
-        const newLevel = prefix[1].length < 5 ? "#".repeat(prefix[1].length + 1) : "#";
-        const beforeLine = value.slice(0, lineStart);
-        const afterPrefix = value.slice(lineStart + prefix[0].length);
-        result = beforeLine + newLevel + " " + afterPrefix;
-        const offset = newLevel.length + 1 - prefix[0].length;
-        cursorStart = start + offset;
-        cursorEnd = end + offset;
-      } else if (currentLine.length > 0 && start === end) {
-        result = value.slice(0, lineStart) + "## " + value.slice(lineStart);
-        cursorStart = start + 3;
-        cursorEnd = cursorStart;
-      } else if (selected) {
-        result = before + `## ${selected}` + after;
-        cursorStart = start + 3;
-        cursorEnd = cursorStart + selected.length;
-      } else {
-        result =
-          before +
-          `## ${translate("main.formatSample.headingText", { defaultValue: "标题" })}` +
-          after;
-        cursorStart = start + 3;
-        cursorEnd = cursorStart + 2;
-      }
-      break;
-    }
-    case "hr": {
-      const newlineBefore = before.endsWith("\n") || before === "" ? "" : "\n";
-      const newlineAfter = after.startsWith("\n") || after === "" ? "" : "\n";
-      result = before + `${newlineBefore}---${newlineAfter}` + after;
-      cursorStart = cursorEnd = before.length + newlineBefore.length + 3;
-      break;
-    }
-    case "ul": {
-      if (selected.includes("\n")) {
-        const lines = selected
-          .split("\n")
-          .map((l) => `- ${l}`)
-          .join("\n");
-        result = before + lines + after;
-        cursorStart = start;
-        cursorEnd = start + lines.length;
-      } else {
-        const fallback = translate("main.formatSample.listItem", { defaultValue: "列表项" });
-        const item = `- ${selected || fallback}`;
-        result = before + item + after;
-        cursorStart = start + 2;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "ol": {
-      if (selected.includes("\n")) {
-        const lines = selected
-          .split("\n")
-          .map((l, i) => `${i + 1}. ${l}`)
-          .join("\n");
-        result = before + lines + after;
-        cursorStart = start;
-        cursorEnd = start + lines.length;
-      } else {
-        const fallback = translate("main.formatSample.listItem", { defaultValue: "列表项" });
-        const item = `1. ${selected || fallback}`;
-        result = before + item + after;
-        cursorStart = start + 3;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "code": {
-      if (selected.includes("\n")) {
-        const wrapped = "```\n" + selected + "\n```";
-        result = before + wrapped + after;
-        cursorStart = start + 4;
-        cursorEnd = cursorStart + selected.length;
-      } else {
-        const fallback = translate("main.formatSample.codeText", { defaultValue: "代码" });
-        const wrapped = `\`${selected || fallback}\``;
-        result = before + wrapped + after;
-        cursorStart = start + 1;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "quote": {
-      if (selected.includes("\n")) {
-        const lines = selected
-          .split("\n")
-          .map((l) => `> ${l}`)
-          .join("\n");
-        result = before + lines + after;
-        cursorStart = start;
-        cursorEnd = start + lines.length;
-      } else {
-        const fallback = translate("main.formatSample.quoteText", { defaultValue: "引用文本" });
-        const item = `> ${selected || fallback}`;
-        result = before + item + after;
-        cursorStart = start + 2;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "inlineMath": {
-      const wrapped = `$${selected || "E=mc^2"}$`;
-      result = before + wrapped + after;
-      cursorStart = start + 1;
-      cursorEnd = cursorStart + (selected || "E=mc^2").length;
-      break;
-    }
-    case "blockMath": {
-      const wrapped = `\n$$\n${selected || "x^2 + y^2 = r^2"}\n$$\n`;
-      result = before + wrapped + after;
-      cursorStart = start + 4;
-      cursorEnd = cursorStart + (selected || "x^2 + y^2 = r^2").length;
-      break;
-    }
-  }
-
-  textarea.focus();
-  // 只替换 textarea 当前内容，不走已废弃的 execCommand("insertText")。
-  // setRangeText 仍保留原生输入控件的编辑语义，React state 同步后再恢复光标。
-  textarea.setRangeText(result, 0, value.length, "preserve");
-  setContent(result);
-  markDirty();
-  requestAnimationFrame(() => {
-    textarea.setSelectionRange(cursorStart, cursorEnd);
-    // React's controlled-value reconciliation or selection restoration can scroll a
-    // textarea back to the beginning. Put the viewport back after both operations.
-    textarea.scrollTop = scrollTop;
-    textarea.scrollLeft = scrollLeft;
-  });
-}
-
-function runEditorCommand(textarea: HTMLTextAreaElement | null, command: "undo" | "redo"): boolean {
-  if (!textarea || textarea.disabled) return false;
-  textarea.focus();
-  return document.execCommand(command);
-}
-
-export function pinTileButtonTitle(isPinned: boolean): string {
-  return isPinned ? "取消钉屏" : "钉到屏幕";
-}
-
-interface LoadEpoch {
-  // 开始一次新的异步加载，返回本次 epoch token；之后用 isCurrent 校验是否仍然有效
-  bump: () => number;
-  // 只读取当前 epoch 而不自增：用于"记录事件到达瞬间的代次，期间若发生切换则过期"
-  peek: () => number;
-  // 异步完成后调用：仅当期间未发生新的 bump（用户未切换/重载）时为 true
-  isCurrent: (token: number) => boolean;
-}
-
-// 统一封装"加载竞态守卫"：每次切换/加载笔记自增 epoch，异步结果回来后用
-// isCurrent 判断是否过期。集中此处后，新增异步加载路径只需 bump/isCurrent 两步，
-// 避免裸 ref 在多处内联导致的"忘记连线 → stale 结果覆盖新选中"竞态回归
-function useLoadEpoch(): LoadEpoch {
-  const ref = useRef(0);
-  return useMemo<LoadEpoch>(
-    () => ({
-      bump: () => (ref.current += 1),
-      peek: () => ref.current,
-      isCurrent: (token: number) => ref.current === token,
-    }),
-    [],
-  );
-}
+export { applyFormat } from "../features/mainWindow/editorFormatting";
+export { pinTileButtonTitle } from "../features/mainWindow/EditorToolbar";
 
 interface MainWindowProps {
   initialSettingsOpen?: boolean;
@@ -492,29 +80,22 @@ export function MainWindow({
   initialConfig = undefined,
 }: MainWindowProps = {}) {
   const { t } = useTranslation();
-  const [notes, setNotes] = useState<NoteMetadata[]>([]);
-  const [externalFiles, setExternalFiles] = useState<ExternalFile[]>([]);
-  const [externalImageBaseDir, setExternalImageBaseDir] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [noteTags, setNoteTags] = useState<string[]>([]);
-  const [isPinned, setIsPinned] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(
     normalizeViewMode(initialConfig?.defaultViewMode ?? "split"),
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
-  const [content, setContent] = useState("");
-  const [title, setTitle] = useState("");
-  const [saveState, setSaveState] = useState<SaveState>("idle");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [noteMenu, setNoteMenu] = useState<NoteMenuState | null>(null);
-  const [noteMenuClosing, setNoteMenuClosing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
+  const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(initialConfig ?? null);
+  const [savedDataDir, setSavedDataDir] = useState<string | null>(initialConfig?.dataDir ?? null);
+  const [settingsOverlay, setSettingsOverlay] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 1080 : true,
+  );
   const [aboutOpen, setAboutOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -525,130 +106,111 @@ export function MainWindow({
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(initialConfig?.showOutline ?? false);
   const [focusMode, setFocusMode] = useState(false);
-  const navHistory = useNavigationHistory();
-  const handleSelectNoteRef = useRef<(id: string) => Promise<boolean>>(async () => false);
-  const handleSelectExternalFileRef = useRef<(id: string) => Promise<boolean>>(async () => false);
   const [readingMode, setReadingMode] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const paletteOpenRef = useRef(false);
-  paletteOpenRef.current = paletteOpen;
-  const palettePreviousFocusRef = useRef<HTMLElement | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<NotesWorkspaceMode | null>(null);
-  const [mountedSidePanel, setMountedSidePanel] = useState<SidePanelMode | null>(
-    initialSettingsOpen && initialConfig ? "settings" : null,
-  );
-  const [sidePanelContentVisible, setSidePanelContentVisible] = useState(
-    Boolean(initialSettingsOpen && initialConfig),
-  );
-  const [aboutUpdateReminder, setAboutUpdateReminder] = useState<AboutUpdateReminderState>(() =>
-    createAboutUpdateReminderState(null),
-  );
-  const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(initialConfig ?? null);
-  const [savedDataDir, setSavedDataDir] = useState<string | null>(initialConfig?.dataDir ?? null);
-  const [noteTransitionKey, setNoteTransitionKey] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteExiting, setDeleteExiting] = useState(false);
   const [pinnedTileIds, setPinnedTileIds] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<string[]>([]);
-  const sidebarPointerDragRef = useRef<SidebarPointerDrag | null>(null);
-  const [activeSidebarPointerDrag, setActiveSidebarPointerDrag] =
-    useState<SidebarPointerDragState | null>(null);
-  const sidebarScrollRef = useRef<HTMLDivElement>(null);
-  const sidebarAutoScrollFrameRef = useRef<number | null>(null);
-  const sidebarAutoScrollDirectionRef = useRef<-1 | 0 | 1>(0);
-  const handleMoveNoteRef = useRef<(noteId: string, targetCategory: string) => void>(() => {});
-  const suppressNextSidebarClickRef = useRef(false);
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
-  const [activeCategory, setActiveCategory] = useState<string>("");
-  const [showCategoryInput, setShowCategoryInput] = useState(false);
-  const [categoryInputValue, setCategoryInputValue] = useState("");
-  const [noteMenuMode, setNoteMenuMode] = useState<"main" | "move">("main");
-  const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
-  const [renameCategoryValue, setRenameCategoryValue] = useState("");
-  const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
-  const [settingsOverlay, setSettingsOverlay] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 1080 : true,
-  );
   const [sidebarWidth, setSidebarWidth] = useState(280);
-  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [splitRatio, setSplitRatio] = useState(0.5);
-  const [isResizingSplit, setIsResizingSplit] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  const navHistory = useNavigationHistory();
+  const handleSelectNoteRef = useRef<(id: string) => Promise<boolean>>(async () => false);
+  const handleSelectExternalFileRef = useRef<(id: string) => Promise<boolean>>(async () => false);
+  const paletteOpenRef = useRef(false);
+  paletteOpenRef.current = paletteOpen;
+  const palettePreviousFocusRef = useRef<HTMLElement | null>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
-  const [categoryMenu, setCategoryMenu] = useState<CategoryMenuState | null>(null);
-  const [categoryMenuClosing, setCategoryMenuClosing] = useState(false);
-  const [categoryMenuConfirmDelete, setCategoryMenuConfirmDelete] = useState(false);
-  const [categoryMenuHoverSuppressed, setCategoryMenuHoverSuppressed] = useState(false);
-  const { popupRef: noteMenuRef, popupPosition: noteMenuPosition } = useViewportPopupPosition(
-    noteMenu,
-    `${noteMenuMode}:${categories.length}`,
-  );
-  const { popupRef: categoryMenuRef, popupPosition: categoryMenuPosition } =
-    useViewportPopupPosition(categoryMenu, categoryMenuConfirmDelete);
   const contentRef = useRef<HTMLTextAreaElement>(null);
-  const windowLabelRef = useRef("main");
   const previewScrollRef = useRef<HTMLDivElement>(null);
-  const scrollMaps = useRef<{
-    editorToPreview: ScrollSyncMap;
-    previewToEditor: ScrollSyncMap;
-  } | null>(null);
-  const scrollSource = useRef<"editor" | "preview" | null>(null);
-  const scrollSyncRafRef = useRef<number>(0);
-  const scrollReleaseRafRef = useRef<number>(0);
-  const measureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const measureRafRef = useRef<number>(0);
-  const measureControllerRef = useRef<AbortController | null>(null);
-  const prevSelectedIdRef = useRef(selectedId);
-  const externalFileMtimeRef = useRef<number>(0);
-  const lastExternalSaveRef = useRef<number>(0);
+  const windowLabelRef = useRef("main");
   const { dir: imageBaseDir, refresh: refreshImageBaseDir } = useImageBaseDir();
-  const saveStateRef = useRef(saveState);
-  // 每次用户编辑都会递增；保存完成时用它判断保存期间是否又产生了新修改，
-  // 避免标签/置顶等不在正文里的修改被旧保存结果误标为“已保存”。
-  const editRevisionRef = useRef(0);
+
   const isMacOS = useMemo(() => {
     return (
       typeof navigator !== "undefined" &&
       (/Mac|iPhone|iPad/.test(navigator.platform) || navigator.userAgent.includes("Mac"))
     );
   }, []);
-  saveStateRef.current = saveState;
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
-  const contentValueRef = useRef(content);
-  contentValueRef.current = content;
-  const titleValueRef = useRef(title);
-  titleValueRef.current = title;
-  const tagsValueRef = useRef(noteTags);
-  tagsValueRef.current = noteTags;
-  const pinnedValueRef = useRef(isPinned);
-  pinnedValueRef.current = isPinned;
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
-  const externalFilesRef = useRef(externalFiles);
-  externalFilesRef.current = externalFiles;
-  // 每次"应用/切换当前笔记"都会自增；异步加载完成后若 epoch 已变化，说明用户
-  // 已切换到别处，该次结果直接丢弃，避免旧的加载结果覆盖新选中的笔记
-  const loadEpoch = useLoadEpoch();
-  // 串行化所有保存请求，避免自动保存与切换触发的保存并发写同一篇笔记
-  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
-  const selectedNote = useMemo(
-    () => notes.find((note) => note.id === selectedId) ?? null,
-    [notes, selectedId],
-  );
-  const selectedNoteRef = useRef(selectedNote);
-  selectedNoteRef.current = selectedNote;
+  const noteState = useNoteState({
+    settingsConfig,
+    setCategories,
+    navPush: navHistory.push,
+  });
 
-  const selectedExternalFile = useMemo(
-    () => externalFiles.find((f) => f.id === selectedId) ?? null,
-    [externalFiles, selectedId],
-  );
-  const updateStatusHydratedRef = useRef(false);
+  const {
+    notes,
+    setNotes,
+    externalFiles,
+    setExternalFiles,
+    externalImageBaseDir,
+    setExternalImageBaseDir,
+    selectedId,
+    setSelectedId,
+    noteTags,
+    setNoteTags,
+    isPinned,
+    setIsPinned,
+    content,
+    setContent,
+    title,
+    setTitle,
+    saveState,
+    setSaveState,
+    isLoading,
+    setIsLoading,
+    noteTransitionKey,
+    setNoteTransitionKey,
+    loadEpoch,
+    externalFileMtimeRef,
+    lastExternalSaveRef,
+    editRevisionRef,
+    saveStateRef,
+    selectedIdRef,
+    contentValueRef,
+    titleValueRef,
+    tagsValueRef,
+    pinnedValueRef,
+    notesRef,
+    externalFilesRef,
+    selectedNote,
+    selectedNoteRef,
+    selectedExternalFile,
+    isExternal,
+    allowRawHtml,
+    isExternalRef,
+    applyNote,
+    replaceNoteMetadata,
+    loadNote,
+    refreshNotes,
+    clearCurrentNote,
+    loadExternalFile,
+  } = noteState;
 
-  const isExternal = selectedExternalFile !== null;
-  const allowRawHtml = canRenderRawHtml(isExternal, settingsConfig?.renderHtmlMarkdown ?? false);
-  const isExternalRef = useRef(isExternal);
-  isExternalRef.current = isExternal;
+  const { aboutUpdateReminder, dismissUpdateReminderText } = useUpdateStatusSync();
+  const {
+    noteMenu,
+    noteMenuClosing,
+    setNoteMenuClosing,
+    noteMenuMode,
+    setNoteMenuMode,
+    noteMenuRef,
+    noteMenuPosition,
+    openNoteMenu,
+    categoryMenu,
+    categoryMenuClosing,
+    setCategoryMenuClosing,
+    categoryMenuConfirmDelete,
+    categoryMenuHoverSuppressed,
+    categoryMenuRef,
+    categoryMenuPosition,
+    switchCategoryMenuPanel,
+    openCategoryMenu,
+  } = useSidebarMenus(categories.length);
 
   const noteMenuTarget = useMemo(
     () => notes.find((note) => note.id === noteMenu?.noteId) ?? null,
@@ -665,73 +227,7 @@ export function MainWindow({
     }),
     [t],
   );
-  const toolbarButtons = useMemo<
-    { label: string; title: string; style: string; action: FormatAction }[]
-  >(
-    () => [
-      {
-        label: "B",
-        title: t("main.toolbar.bold", { defaultValue: "粗体" }),
-        style: "font-bold",
-        action: "bold",
-      },
-      {
-        label: "I",
-        title: t("main.toolbar.italic", { defaultValue: "斜体" }),
-        style: "italic",
-        action: "italic",
-      },
-      {
-        label: "H",
-        title: t("main.toolbar.heading", { defaultValue: "标题" }),
-        style: "font-bold",
-        action: "heading",
-      },
-      {
-        label: "—",
-        title: t("main.toolbar.hr", { defaultValue: "分割线" }),
-        style: "",
-        action: "hr",
-      },
-      {
-        label: "•",
-        title: t("main.toolbar.ul", { defaultValue: "无序列表" }),
-        style: "",
-        action: "ul",
-      },
-      {
-        label: "1.",
-        title: t("main.toolbar.ol", { defaultValue: "有序列表" }),
-        style: "font-mono text-[9px]",
-        action: "ol",
-      },
-      {
-        label: "<>",
-        title: t("main.toolbar.code", { defaultValue: "代码" }),
-        style: "font-mono text-[9px]",
-        action: "code",
-      },
-      {
-        label: "❝",
-        title: t("main.toolbar.quote", { defaultValue: "引用" }),
-        style: "",
-        action: "quote",
-      },
-      {
-        label: "∑",
-        title: t("main.toolbar.inlineMath", { defaultValue: "行内公式" }),
-        style: "font-mono text-[11px]",
-        action: "inlineMath",
-      },
-      {
-        label: "∫",
-        title: t("main.toolbar.blockMath", { defaultValue: "块级公式" }),
-        style: "font-mono text-[11px]",
-        action: "blockMath",
-      },
-    ],
-    [t],
-  );
+  const toolbarButtons = useMemo(() => getToolbarButtons(t), [t]);
   const viewModeOptions = useMemo(
     () => [
       {
@@ -749,18 +245,7 @@ export function MainWindow({
     ],
     [t],
   );
-  const syncUpdateStatus = useCallback((nextStatus: UpdateState) => {
-    const shouldHydrate = !updateStatusHydratedRef.current;
-    if (shouldHydrate) {
-      updateStatusHydratedRef.current = true;
-    }
 
-    setAboutUpdateReminder((current) =>
-      shouldHydrate
-        ? createAboutUpdateReminderState(nextStatus)
-        : applyAboutUpdateStatus(current, nextStatus),
-    );
-  }, []);
   const visibleSidePanel: SidePanelMode | null = aboutOpen
     ? "about"
     : workspaceMode
@@ -780,8 +265,8 @@ export function MainWindow({
                   : settingsOpen && settingsConfig
                     ? "settings"
                     : null;
-  const sidePanelExpanded = visibleSidePanel !== null;
   const effectiveViewMode: ViewMode = readingMode ? "preview" : viewMode;
+
   const closeAllSidePanels = useCallback(() => {
     setSettingsOpen(false);
     setAboutOpen(false);
@@ -824,11 +309,12 @@ export function MainWindow({
     setKnowledgeGraphOpen(false);
     setWorkspaceMode(mode);
   }, []);
+
   const openAboutPanel = useCallback(() => {
     setSettingsOpen(false);
     setAboutOpen(true);
-    setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
-  }, []);
+    dismissUpdateReminderText();
+  }, [dismissUpdateReminderText]);
 
   const templates = useMemo(
     () => [...BUILT_IN_TEMPLATES, ...(settingsConfig?.templates ?? [])],
@@ -848,7 +334,6 @@ export function MainWindow({
       ),
     [notes, searchQuery, tagFilter, t],
   );
-
   const searchText = useMemo(() => parseNoteSearchQuery(searchQuery).text, [searchQuery]);
 
   useEffect(() => {
@@ -859,18 +344,93 @@ export function MainWindow({
     }
   }, [searchText, workspaceMode]);
 
-  const sidebarActionOrder = useMemo(
-    () => normalizeOrder(settingsConfig?.sidebarItemOrder, DEFAULT_SIDEBAR_ACTION_ORDER),
-    [settingsConfig?.sidebarItemOrder],
+  // 打字时输入框优先响应：预览渲染与字数/字节统计使用延迟值
+  const deferredContent = useDeferredValue(content);
+  // 大纲与预览必须消费同一份延迟内容，避免快速输入标题时点到尚未渲染的锚点。
+  const headings = useMemo(() => extractOutlineHeadings(deferredContent), [deferredContent]);
+  const lineCount = useMemo(() => deferredContent.split("\n").length, [deferredContent]);
+  const byteSize = useMemo(
+    () => (new TextEncoder().encode(deferredContent).length / 1024).toFixed(1),
+    [deferredContent],
   );
-  const sidebarCategoryOrder = useMemo(
-    () =>
-      normalizeOrder(
-        settingsConfig?.sidebarCategoryOrder,
-        categories.filter((category) => category !== INBOX_CATEGORY),
-      ),
-    [categories, settingsConfig?.sidebarCategoryOrder],
-  );
+  const charCount = useMemo(() => countNoteChars(deferredContent), [deferredContent]);
+
+  const { saveQueueRef, markDirty, saveCurrentNote } = useNoteSaveQueue({
+    selectedId,
+    content,
+    title,
+    isExternal,
+    saveState,
+    setSaveState,
+    settingsConfig,
+    selectedIdRef,
+    titleValueRef,
+    contentValueRef,
+    tagsValueRef,
+    pinnedValueRef,
+    notesRef,
+    externalFilesRef,
+    saveStateRef,
+    editRevisionRef,
+    externalFileMtimeRef,
+    lastExternalSaveRef,
+    isExternalRef,
+    windowLabelRef,
+    replaceNoteMetadata,
+    t,
+  });
+
+  const {
+    collapsedCategories,
+    setCollapsedCategories,
+    activeCategory,
+    setActiveCategory,
+    showCategoryInput,
+    setShowCategoryInput,
+    categoryInputValue,
+    setCategoryInputValue,
+    renamingCategory,
+    setRenamingCategory,
+    renameCategoryValue,
+    setRenameCategoryValue,
+    expandCategory,
+    handleCreateCategory,
+    handleRenameCategory,
+    handleDeleteCategory,
+    toggleCategoryCollapse,
+  } = useCategoryManagement(refreshNotes, setCategories);
+
+  const {
+    sidebarActionOrder,
+    sidebarCategoryOrder,
+    handleOpenSettings,
+    handleCloseSettings,
+    openSettingsFromPalette,
+    handleMigrateDataDir,
+    handleSettingsChange,
+    reorderSidebarAction,
+    reorderSidebarCategory,
+  } = useSettingsManagement({
+    t,
+    settingsOpen,
+    setSettingsOpen,
+    settingsConfig,
+    setSettingsConfig,
+    savedDataDir,
+    setSavedDataDir,
+    categories,
+    editRevisionRef,
+    setViewMode,
+    setIsLoading,
+    saveCurrentNote,
+    refreshImageBaseDir,
+    refreshNotes,
+    loadNote,
+    clearCurrentNote,
+    closeAllSidePanels,
+    setAboutOpen,
+  });
+
   const categoryGroups = useMemo(() => {
     const groups = groupNotesByCategory(
       filteredNotes.filter((note) => note.category !== INBOX_CATEGORY),
@@ -891,1440 +451,69 @@ export function MainWindow({
     [notes],
   );
 
-  // 打字时输入框优先响应：预览渲染与字数/字节统计使用延迟值，
-  // 连续输入期间 React 会自动合并这些重计算，停顿时再追上
-  const deferredContent = useDeferredValue(content);
-  // 大纲与预览必须消费同一份延迟内容，避免快速输入标题时点到尚未渲染的锚点。
-  const headings = useMemo(() => extractOutlineHeadings(deferredContent), [deferredContent]);
-
-  const lineCount = useMemo(() => deferredContent.split("\n").length, [deferredContent]);
-  const byteSize = useMemo(
-    () => (new TextEncoder().encode(deferredContent).length / 1024).toFixed(1),
-    [deferredContent],
-  );
-  const charCount = useMemo(() => countNoteChars(deferredContent), [deferredContent]);
-
-  const applyNote = useCallback(
-    (note: Note) => {
-      loadEpoch.bump();
-      const isSameNote =
-        selectedIdRef.current === note.id &&
-        titleValueRef.current === note.title &&
-        contentValueRef.current === note.content;
-      if (isSameNote) {
-        // 内容未变化的回环（如保存完成后的 notes-changed 事件）：
-        // 不重置编辑器，保留光标位置与 undo 历史栈，只同步元数据
-        const nextTags = note.tags || [];
-        const nextPinned = note.pinned || false;
-        tagsValueRef.current = nextTags;
-        pinnedValueRef.current = nextPinned;
-        setNoteTags(nextTags);
-        setIsPinned(nextPinned);
-        setExternalImageBaseDir(null);
-        return;
-      }
-      editRevisionRef.current += 1;
-      selectedIdRef.current = note.id;
-      titleValueRef.current = note.title;
-      contentValueRef.current = note.content;
-      saveStateRef.current = "saved";
-      setSelectedId(note.id);
-      setTitle(note.title);
-      setContent(note.content);
-      setSaveState("saved");
-      setNoteTransitionKey((k) => k + 1);
-      const nextTags = note.tags || [];
-      const nextPinned = note.pinned || false;
-      tagsValueRef.current = nextTags;
-      pinnedValueRef.current = nextPinned;
-      setNoteTags(nextTags);
-      setIsPinned(nextPinned);
-      setExternalImageBaseDir(null);
-    },
-    [loadEpoch],
-  );
-
-  const replaceNoteMetadata = useCallback((note: Note) => {
-    const metadata = metadataFromNote(note);
-    setNotes((current) => {
-      const exists = current.some((item) => item.id === metadata.id);
-      const next = exists
-        ? current.map((item) => (item.id === metadata.id ? metadata : item))
-        : [metadata, ...current];
-      return [...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    });
-  }, []);
-
-  const loadNote = useCallback(
-    async (id: string): Promise<boolean> => {
-      const epoch = loadEpoch.bump();
-      const note = await getNote(id);
-      // 加载期间用户又切换/加载了别的笔记，丢弃本次结果
-      if (!loadEpoch.isCurrent(epoch)) return false;
-      applyNote(note);
-      replaceNoteMetadata(note);
-      return true;
-    },
-    [applyNote, replaceNoteMetadata, loadEpoch],
-  );
-
-  const refreshNotes = useCallback(async () => {
-    const [loadedNotes, loadedCategories] = await Promise.all([listNotes(), listCategories()]);
-    setNotes(loadedNotes);
-    setCategories(loadedCategories);
-    return loadedNotes;
-  }, []);
-
-  const clearCurrentNote = useCallback(() => {
-    loadEpoch.bump();
-    editRevisionRef.current += 1;
-    selectedIdRef.current = null;
-    titleValueRef.current = "";
-    contentValueRef.current = "";
-    tagsValueRef.current = [];
-    pinnedValueRef.current = false;
-    saveStateRef.current = "idle";
-    setSelectedId(null);
-    setTitle("");
-    setContent("");
-    setNoteTags([]);
-    setIsPinned(false);
-    setExternalImageBaseDir(null);
-    setSaveState("idle");
-  }, [loadEpoch]);
-
-  const loadExternalFile = useCallback(
-    async (filePath: string) => {
-      const epoch = loadEpoch.bump();
-      try {
-        const [fileContent, mtime, externalImageDir] = await Promise.all([
-          readExternalFile(filePath),
-          getFileModifiedTime(filePath),
-          prepareExternalFileImages(filePath).catch(() => null),
-        ]);
-        const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
-        const displayTitle = fileName.replace(/\.(md|markdown|txt)$/i, "");
-
-        setExternalFiles((current) => {
-          if (current.some((f) => f.id === filePath)) {
-            return current;
-          }
-          return [
-            ...current,
-            {
-              id: filePath,
-              title: displayTitle,
-              filePath,
-            },
-          ];
-        });
-
-        if (!loadEpoch.isCurrent(epoch)) return;
-        editRevisionRef.current += 1;
-        selectedIdRef.current = filePath;
-        titleValueRef.current = displayTitle;
-        contentValueRef.current = fileContent;
-        saveStateRef.current = "saved";
-        setSelectedId(filePath);
-        setTitle(displayTitle);
-        setContent(fileContent);
-        setNoteTags([]);
-        setIsPinned(false);
-        setExternalImageBaseDir(externalImageDir);
-        tagsValueRef.current = [];
-        pinnedValueRef.current = false;
-        setSaveState("saved");
-        setNoteTransitionKey((k) => k + 1);
-        externalFileMtimeRef.current = mtime;
-        navHistory.push(filePath, displayTitle || "无标题文件");
-      } catch (error) {
-        showToast(getErrorMessage(error));
-      }
-    },
-    [loadEpoch, navHistory.push],
-  );
-
-  useEffect(() => {
-    try {
-      windowLabelRef.current = getCurrentWindow().label;
-    } catch {
-      windowLabelRef.current = "main";
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function bootstrap() {
-      setIsLoading(true);
-      try {
-        const [loadedConfig, loadedNotes, loadedCategories] = await Promise.all([
-          getConfig(),
-          listNotes(),
-          listCategories(),
-        ]);
-        if (cancelled) return;
-        setSettingsConfig(loadedConfig);
-        setSavedDataDir(loadedConfig.dataDir);
-        setViewMode(normalizeViewMode(loadedConfig.defaultViewMode));
-        setNotes(loadedNotes);
-        setCategories(loadedCategories);
-        setCollapsedCategories(new Set(loadedCategories));
-        if (loadedNotes[0]) {
-          const note = await getNote(loadedNotes[0].id);
-          if (!cancelled) {
-            applyNote(note);
-            navHistory.push(note.id, note.title || "无标题笔记");
-          }
-        } else {
-          clearCurrentNote();
-        }
-
-        if (!cancelled) {
-          const startupFile = await takeStartupFile();
-          if (!cancelled && startupFile) {
-            await loadExternalFile(startupFile);
-          }
-        }
-      } catch (error) {
-        if (!cancelled) showToast(getErrorMessage(error));
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [applyNote, clearCurrentNote, navHistory.push]);
-
-  useEffect(() => {
-    let active = true;
-
-    void getUpdateStatus()
-      .then((status) => {
-        if (!active) return;
-        syncUpdateStatus(status);
-      })
-      .catch((error) => {
-        console.error("failed to load update status", error);
-      });
-
-    const bindEvents = async () => {
-      const unlistenFns: UnlistenFn[] = [];
-      const disposeAll = () => {
-        for (const unlisten of unlistenFns.splice(0)) {
-          unlisten();
-        }
-      };
-
-      try {
-        unlistenFns.push(
-          await listen<UpdateState>("update://checking", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateState>("update://checked", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateState>("update://download-finished", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateState>("update://install-finished", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen("update://error", () => {
-            if (!active) return;
-            void getUpdateStatus()
-              .then((status) => {
-                if (!active) return;
-                syncUpdateStatus(status);
-              })
-              .catch((error) => {
-                console.error("failed to refresh update status after error event", error);
-              });
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateErrorPayload>("update://auto-check-error", (event) => {
-            if (!active) return;
-            console.error("automatic update check failed", event.payload);
-            void getUpdateStatus()
-              .then((status) => {
-                if (!active) return;
-                syncUpdateStatus(status);
-              })
-              .catch((error) => {
-                console.error("failed to refresh update status after automatic check error", error);
-              });
-          }),
-        );
-
-        return disposeAll;
-      } catch (error) {
-        disposeAll();
-        console.error("failed to bind update event listeners", error);
-        return () => undefined;
-      }
-    };
-
-    const promise = bindEvents();
-
-    return () => {
-      active = false;
-      void promise
-        .then((dispose) => dispose())
-        .catch((error) => {
-          console.error("failed to dispose update event listeners", error);
-        });
-    };
-  }, [syncUpdateStatus]);
-
-  useEffect(() => {
-    if (!aboutUpdateReminder.showText) return;
-    const timer = window.setTimeout(() => {
-      setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
-    }, ABOUT_UPDATE_LABEL_DURATION_MS);
-    return () => window.clearTimeout(timer);
-  }, [aboutUpdateReminder.showText]);
-  useEffect(() => {
-    if (visibleSidePanel) {
-      setMountedSidePanel(visibleSidePanel);
-      setSidePanelContentVisible(false);
-
-      const frame = window.requestAnimationFrame(() => {
-        setSidePanelContentVisible(true);
-      });
-
-      return () => window.cancelAnimationFrame(frame);
-    }
-
-    setSidePanelContentVisible(false);
-    if (!mountedSidePanel) return;
-
-    const timer = window.setTimeout(() => {
-      setMountedSidePanel((current) => (current === mountedSidePanel ? null : current));
-    }, 320);
-
-    return () => window.clearTimeout(timer);
-  }, [mountedSidePanel, visibleSidePanel]);
-
-  useEffect(() => {
-    const unlisten = listen("notes-changed", () => {
-      // 记录事件到达时的 epoch；其间用户一旦切换/加载了笔记，本次同步即过期，
-      // 不再用过期的列表快照去改选中或回填内容，避免把选中"拉回"刚保存的旧笔记
-      const epochAtEvent = loadEpoch.peek();
-      const isStale = () => !loadEpoch.isCurrent(epochAtEvent);
-      void refreshNotes()
-        .then((loaded) => {
-          if (isStale()) return;
-          const currentId = selectedIdRef.current;
-          if (!currentId) return;
-          const stillExists = loaded.some((n) => n.id === currentId);
-          if (stillExists) {
-            void saveQueueRef.current.then(() => {
-              if (isStale()) return;
-              if (selectedIdRef.current !== currentId) return;
-              if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
-                void getNote(currentId)
-                  .then((note) => {
-                    if (isStale()) return;
-                    if (selectedIdRef.current !== currentId) return;
-                    if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
-                      return;
-                    }
-                    applyNote(note);
-                    replaceNoteMetadata(note);
-                    navHistory.replaceCurrent(note.id, note.title || "无标题笔记");
-                  })
-                  .catch(() => undefined);
-              }
-            });
-          } else if (selectedNoteRef.current) {
-            if (loaded[0]) {
-              void loadNote(loaded[0].id);
-            } else {
-              clearCurrentNote();
-            }
-          }
-        })
-        .catch(() => undefined);
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [
-    refreshNotes,
-    loadNote,
-    clearCurrentNote,
+  const {
+    handleNewNote,
+    handleToggleTodo,
+    handleOpenDailyNote,
+    handleRestoreNoteVersion,
+    handleImportNote,
+    handleSelectNote,
+    handleSelectExternalFile,
+    handleRemoveExternalFile,
+    handleDeleteNote,
+    handleMoveNote,
+    handleMergeNotes,
+    handleOpenWorkspaceNote,
+    handleCreateNoteWithTitle,
+    ensureNoteSaved,
+  } = useNoteOperations({
+    t,
     loadEpoch,
+    selectedId,
+    title,
+    content,
+    isExternal,
+    saveState,
+    notes,
+    externalFiles,
+    templates,
+    selectedTemplateId,
+    activeCategory,
+    searchText,
+    contentRef,
+    selectedIdRef,
+    titleValueRef,
+    contentValueRef,
+    tagsValueRef,
+    pinnedValueRef,
+    saveStateRef,
+    editRevisionRef,
+    externalFileMtimeRef,
+    setExternalFiles,
+    setIsLoading,
+    setSelectedId,
+    setTitle,
+    setContent,
+    setNoteTags,
+    setIsPinned,
+    setExternalImageBaseDir,
+    setSaveState,
+    setNoteTransitionKey,
+    setDeleteConfirm,
+    setActiveCategory,
+    setNoteMenuClosing,
+    expandCategory,
     applyNote,
     replaceNoteMetadata,
-    navHistory.replaceCurrent,
-  ]);
-
-  useExternalSync({
+    loadNote,
     refreshNotes,
-    getActiveNoteId: () => (!isExternalRef.current ? selectedIdRef.current : null),
-    isDirty: () =>
-      saveStateRef.current === "dirty" ||
-      saveStateRef.current === "error" ||
-      saveStateRef.current === "saving",
-    getSyncEpoch: () => loadEpoch.peek(),
-    onApplyNote: (note) => {
-      applyNote(note);
-      replaceNoteMetadata(note);
-      navHistory.replaceCurrent(
-        note.id,
-        note.title || t("common.untitledNote", { defaultValue: "无标题笔记" }),
-      );
-    },
-    onActiveNoteDeleted: (loaded) => {
-      if (!selectedNoteRef.current) return;
-      if (loaded[0]) {
-        void loadNote(loaded[0].id);
-      } else {
-        clearCurrentNote();
-      }
-    },
-    onDirtyConflict: () => {
-      showToast(
-        t("main.externalSync.dirtyConflict", {
-          defaultValue: "检测到外部笔记更改，已保留当前未保存的本地编辑",
-        }),
-        "warning",
-      );
-    },
-    onRefreshReminders: async () => {
-      setRemindersRefreshKey((key) => key + 1);
-      await listReminders();
-    },
+    clearCurrentNote,
+    saveCurrentNote,
+    navPush: navHistory.push,
+    navRemove: navHistory.remove,
   });
 
-  useEffect(() => {
-    function handleFocus() {
-      void refreshNotes();
-    }
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [refreshNotes]);
-
-  useEffect(() => {
-    const onResize = () => setSettingsOverlay(window.innerWidth < 1080);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen<string>("open-external-file", (event) => {
-      void loadExternalFile(event.payload);
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [loadExternalFile]);
-
-  useEffect(() => {
-    const TEXT_RE = /\.(md|markdown|txt)$/i;
-    const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
-
-    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
-      if (event.payload.type !== "drop") return;
-      const textPaths: string[] = [];
-      const imagePaths: string[] = [];
-
-      for (const p of event.payload.paths) {
-        if (TEXT_RE.test(p)) textPaths.push(p);
-        else if (IMAGE_RE.test(p)) imagePaths.push(p);
-      }
-
-      for (const p of textPaths) {
-        void loadExternalFile(p);
-      }
-
-      if (imagePaths.length > 0 && selectedIdRef.current && !isExternalRef.current) {
-        const noteId = selectedIdRef.current;
-        void (async () => {
-          const textarea = contentRef.current;
-          if (!textarea) return;
-          try {
-            const rels = await Promise.all(imagePaths.map((p) => saveImageFromPath(noteId, p)));
-            const markdown = rels.map((rel) => `![](${rel})`).join("\n");
-            insertTextAtCursor(textarea, setContent, markdown);
-            saveStateRef.current = "dirty";
-            setSaveState("dirty");
-          } catch (error) {
-            showToast(getErrorMessage(error));
-          }
-        })();
-      }
-    });
-
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [loadExternalFile, setContent]);
-
-  useEffect(() => {
-    const unlisten = listen<string>("open-note", (event) => {
-      // 从便签/图谱等窗口打开笔记同样必须经过保存队列；直接 loadNote 会
-      // 覆盖主窗口当前未落盘的内容。
-      void handleSelectNoteRef.current(event.payload);
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen("open-about-panel", () => {
-      openAboutPanel();
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [openAboutPanel]);
-
-  useEffect(() => {
-    const unlisten = listen<string>("shortcut-register-failed", (event) => {
-      showToast(event.payload, "warning");
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen<string>("app://quit-save-failed", (event) => {
-      showToast(event.payload);
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen<string>(TILE_WINDOW_CLOSED_EVENT, (event) => {
-      setPinnedTileIds((previous) => syncPinnedTileIds(previous, event.payload, false));
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen<string>(TILE_WINDOW_UNPINNED_EVENT, (event) => {
-      setPinnedTileIds((previous) => syncPinnedTileIds(previous, event.payload, false));
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!selectedExternalFile) return;
-
-    const interval = window.setInterval(async () => {
-      // 窗口隐藏（托盘/最小化）时跳过探测，恢复可见后 1s 内自动追上
-      if (document.visibilityState === "hidden") return;
-      if (Date.now() - lastExternalSaveRef.current < 2000) return;
-      try {
-        const mtime = await getFileModifiedTime(selectedExternalFile.filePath);
-        if (selectedIdRef.current !== selectedExternalFile.id) return;
-        if (saveStateRef.current !== "saved") return;
-        if (mtime !== externalFileMtimeRef.current) {
-          externalFileMtimeRef.current = mtime;
-          const fileContent = await readExternalFile(selectedExternalFile.filePath);
-          if (selectedIdRef.current !== selectedExternalFile.id) return;
-          editRevisionRef.current += 1;
-          contentValueRef.current = fileContent;
-          saveStateRef.current = "saved";
-          setContent(fileContent);
-          setSaveState("saved");
-        }
-      } catch {
-        // file may have been deleted or become inaccessible
-      }
-    }, 1000);
-
-    return () => window.clearInterval(interval);
-  }, [selectedExternalFile]);
-
-  useEffect(() => {
-    function closeMenus() {
-      setNoteMenuClosing(true);
-      setCategoryMenuClosing(true);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") closeMenus();
-    }
-
-    document.addEventListener("mousedown", closeMenus);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", closeMenus);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!noteMenuClosing || !noteMenu) return;
-    const timer = window.setTimeout(() => {
-      setNoteMenu(null);
-      setNoteMenuClosing(false);
-      setNoteMenuMode("main");
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [noteMenuClosing, noteMenu]);
-
-  useEffect(() => {
-    if (!categoryMenuClosing || !categoryMenu) return;
-    const timer = window.setTimeout(() => {
-      setCategoryMenu(null);
-      setCategoryMenuClosing(false);
-      setCategoryMenuConfirmDelete(false);
-      setCategoryMenuHoverSuppressed(false);
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [categoryMenuClosing, categoryMenu]);
-
-  useEffect(() => {
-    if (!categoryMenuHoverSuppressed || !categoryMenu) return;
-    const releaseHover = () => setCategoryMenuHoverSuppressed(false);
-    window.addEventListener("mousemove", releaseHover, { once: true });
-    window.addEventListener("mousedown", releaseHover, { once: true });
-    return () => {
-      window.removeEventListener("mousemove", releaseHover);
-      window.removeEventListener("mousedown", releaseHover);
-    };
-  }, [categoryMenuHoverSuppressed, categoryMenu]);
-
-  const switchCategoryMenuPanel = useCallback((confirmDelete: boolean) => {
-    setCategoryMenuHoverSuppressed(true);
-    setCategoryMenuConfirmDelete(confirmDelete);
-    (document.activeElement as HTMLElement | null)?.blur();
-  }, []);
-
-  const performSave = useCallback(
-    async (force: boolean): Promise<boolean> => {
-      // 非强制保存（自动保存、切换前保存）在没有未保存修改时直接视为成功；
-      // 上次保存失败（error）也需要重新尝试，不能误报成功
-      if (!force && saveStateRef.current !== "dirty" && saveStateRef.current !== "error") {
-        return true;
-      }
-      const id = selectedIdRef.current;
-      if (!id) return false;
-
-      // 在保存瞬间对当前笔记做快照；之后用户切换笔记不影响本次写入的内容，
-      // 保存完成后也只在"仍停留在这篇笔记"时才更新保存状态
-      const titleSnapshot = titleValueRef.current;
-      const contentSnapshot = contentValueRef.current;
-      const tagsSnapshot = tagsValueRef.current;
-      const pinnedSnapshot = pinnedValueRef.current;
-      const editRevisionSnapshot = editRevisionRef.current;
-      const stillCurrent = () => selectedIdRef.current === id;
-      const settleSaveState = (state: SaveState) => {
-        if (!stillCurrent()) return;
-        if (state !== "saving" && editRevisionRef.current !== editRevisionSnapshot) {
-          saveStateRef.current = "dirty";
-          setSaveState("dirty");
-          return;
-        }
-        saveStateRef.current = state;
-        setSaveState(state);
-      };
-
-      const externalFile = externalFilesRef.current.find((file) => file.id === id) ?? null;
-
-      settleSaveState("saving");
-      try {
-        if (externalFile) {
-          await saveExternalFile(externalFile.filePath, contentSnapshot);
-          lastExternalSaveRef.current = Date.now();
-          const mtime = await getFileModifiedTime(externalFile.filePath);
-          if (stillCurrent()) {
-            externalFileMtimeRef.current = mtime;
-          }
-          settleSaveState("saved");
-        } else {
-          const category = notesRef.current.find((note) => note.id === id)?.category ?? "";
-          const note = await updateNote(id, {
-            title: titleSnapshot,
-            content: contentSnapshot,
-            category,
-            tags: tagsSnapshot,
-            pinned: pinnedSnapshot,
-          });
-          if (!stillCurrent() || editRevisionRef.current === editRevisionSnapshot) {
-            replaceNoteMetadata(note);
-          }
-          settleSaveState("saved");
-        }
-        return true;
-      } catch (error) {
-        settleSaveState("error");
-        showToast(getErrorMessage(error));
-        return false;
-      }
-    },
-    [replaceNoteMetadata],
-  );
-
-  const saveCurrentNote = useCallback(
-    (force = false): Promise<boolean> => {
-      const requestedId = selectedIdRef.current;
-      const run = saveQueueRef.current.then(async () => {
-        let saved = await performSave(force);
-        // 用户可能在前一次异步写入期间继续编辑。切换笔记、打开每日便笺等
-        // 需要等到同一篇笔记的最新 revision 也真正落盘，不能只等待旧请求。
-        // 加最小间隔与次数上限：持续输入时不会高频自旋写盘
-        let attempts = 0;
-        while (
-          saved &&
-          attempts < 10 &&
-          selectedIdRef.current === requestedId &&
-          requestedId !== null &&
-          saveStateRef.current === "dirty"
-        ) {
-          attempts += 1;
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          saved = await performSave(true);
-        }
-        // 达到上限仍 dirty（输入速度超过保存速度）：不报告成功，
-        // 调用方（关闭/切换/新建）应保留当前上下文，避免最新修改丢失
-        return saved && saveStateRef.current !== "dirty";
-      });
-      saveQueueRef.current = run.catch(() => undefined);
-      return run;
-    },
-    [performSave],
-  );
-
-  useEffect(() => {
-    function handleBlur() {
-      if (saveStateRef.current !== "dirty") return;
-      const autoSaveEnabled = isExternalRef.current
-        ? settingsConfig?.externalFileAutoSave
-        : settingsConfig?.noteAutoSave;
-      if (autoSaveEnabled) {
-        void saveCurrentNote();
-      }
-    }
-    window.addEventListener("blur", handleBlur);
-    return () => window.removeEventListener("blur", handleBlur);
-  }, [saveCurrentNote, settingsConfig?.externalFileAutoSave, settingsConfig?.noteAutoSave]);
-
-  useEffect(() => {
-    const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
-      const respond = async () => {
-        const windowLabel = windowLabelRef.current;
-        // 无未保存修改时直接上报就绪：避免排进 saveQueueRef，被正在执行的
-        // 防抖自动保存拖住、不必要地延迟安装准备响应
-        if (
-          saveStateRef.current !== "dirty" &&
-          saveStateRef.current !== "error" &&
-          saveStateRef.current !== "saving"
-        ) {
-          await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
-          return;
-        }
-        // dirty、保存中或上次保存失败：等待保存队列完成后再上报，避免未落盘内容在安装/退出时丢失
-        const saved = await saveCurrentNote(true);
-        await reportInstallPreparation(
-          event.payload.requestId,
-          windowLabel,
-          saved ? "ready" : "failed",
-          saved
-            ? undefined
-            : t("settings.update.error.installSaveFailed", {
-                defaultValue: "安装前自动保存失败，请先处理当前笔记后重试",
-              }),
-        );
-      };
-
-      void respond().catch(async (error) => {
-        await reportInstallPreparation(
-          event.payload.requestId,
-          windowLabelRef.current,
-          "failed",
-          error instanceof Error
-            ? error.message
-            : t("settings.update.error.installSaveFailed", {
-                defaultValue: "安装前自动保存失败，请先处理当前笔记后重试",
-              }),
-        ).catch(() => undefined);
-      });
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [saveCurrentNote, t]);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      const paletteShortcut = (settingsConfig?.commandPaletteShortcut ?? "Ctrl+K").trim();
-      if (paletteShortcut && matchShortcut(event, paletteShortcut)) {
-        if (document.querySelector('[data-shortcut-recording="true"]')) return;
-        event.preventDefault();
-        if (paletteOpenRef.current) {
-          closeCommandPalette({ restoreFocus: true });
-        } else {
-          openCommandPalette();
-        }
-        return;
-      }
-
-      if (paletteOpenRef.current) return;
-
-      if ((event.ctrlKey || event.metaKey) && event.key === "s") {
-        event.preventDefault();
-        void saveCurrentNote(true);
-      }
-      // 可配置的关闭标签快捷键
-      const shortcut = (settingsConfig?.closeTabShortcut || "Ctrl+W").trim();
-      if (shortcut && matchShortcut(event, shortcut)) {
-        event.preventDefault();
-        void (async () => {
-          // 关闭标签前先落盘：防抖窗口内的输入不能静默丢弃，保存失败则保留编辑器。
-          // dirty 与 error（上次保存失败）都需要强制重试保存
-          const needsSave = saveStateRef.current === "dirty" || saveStateRef.current === "error";
-          const saved = needsSave ? await saveCurrentNote(true) : true;
-          if (saved) clearCurrentNote();
-        })();
-      }
-      if (event.altKey && event.key === "ArrowLeft") {
-        event.preventDefault();
-        const noteId = navHistory.goBack();
-        if (noteId) void handleSelectNoteRef.current(noteId);
-      }
-      if (event.altKey && event.key === "ArrowRight") {
-        event.preventDefault();
-        const noteId = navHistory.goForward();
-        if (noteId) void handleSelectNoteRef.current(noteId);
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [
-    saveCurrentNote,
-    navHistory,
-    openCommandPalette,
-    closeCommandPalette,
-    settingsConfig?.commandPaletteShortcut,
-    settingsConfig?.closeTabShortcut,
-  ]);
-
-  useEffect(() => {
-    // error（上次保存失败）也触发自动重试，避免失败后永远不再保存
-    if (!selectedId || (saveState !== "dirty" && saveState !== "error")) return undefined;
-    if (isExternal) {
-      if (!settingsConfig?.externalFileAutoSave) return undefined;
-    } else {
-      if (!settingsConfig?.noteAutoSave) return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      void saveCurrentNote();
-    }, 900);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    // content 与 title 用于在持续输入时不断重置防抖计时器
-    content,
-    title,
-    isExternal,
-    saveCurrentNote,
-    saveState,
-    selectedId,
-    settingsConfig?.noteAutoSave,
-    settingsConfig?.externalFileAutoSave,
-  ]);
-
-  const handleNewNote = async (category?: string) => {
-    // 保存失败不离开当前编辑上下文，避免旧内容被新笔记覆盖
-    const saved = await saveCurrentNote();
-    if (!saved) return;
-    try {
-      const targetCategory = category ?? activeCategory;
-      const template = templates.find((item) => item.id === selectedTemplateId);
-      const note = await createNote({
-        title: "",
-        content: template ? renderTemplateContent(template.content) : "",
-        category: targetCategory,
-      });
-      replaceNoteMetadata(note);
-      applyNote(note);
-      setActiveCategory(targetCategory);
-      if (targetCategory) {
-        setCollapsedCategories((current) => {
-          const next = new Set(current);
-          next.delete(targetCategory);
-          return next;
-        });
-      }
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleOpenSettings = async () => {
-    if (settingsOpen) {
-      setSettingsOpen(false);
-      return;
-    }
-    setSettingsOpen(true);
-    setAboutOpen(false);
-    if (settingsConfig) return;
-    try {
-      const config = await getConfig();
-      setSettingsConfig(config);
-      setSavedDataDir(config.dataDir);
-      setViewMode(normalizeViewMode(config.defaultViewMode));
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleMigrateDataDir = async () => {
-    if (!settingsConfig) return;
-    try {
-      const dir = await chooseDataDirectory();
-      if (!dir) return;
-      // 后端会在所选目录下创建 floral 子目录存放数据；先告知用户，
-      // 避免其在文件管理器打开所选目录看到"空文件夹"而误判数据丢失
-      const confirmed = window.confirm(
-        t("settings.dataDir.confirmSubdir", {
-          dir,
-          defaultValue: "数据将存放在「{{dir}}」下的 floral 子文件夹中，是否继续？",
-        }),
-      );
-      if (!confirmed) return;
-
-      // 迁移会切换后端数据目录并立即重载笔记；先把当前编辑内容落盘，
-      // 否则迁移后的 loadNote 会直接覆盖尚未保存的内存状态。
-      const saved = await saveCurrentNote(true);
-      if (!saved) return;
-      const revisionAfterSave = editRevisionRef.current;
-
-      setIsLoading(true);
-      try {
-        const savedConfig = await migrateDataDir(dir);
-        const editedDuringMigration = editRevisionRef.current !== revisionAfterSave;
-        setSettingsConfig(savedConfig);
-        setSavedDataDir(savedConfig.dataDir);
-        // 数据目录已变：刷新图片基准目录，否则已有笔记图片仍指向旧路径
-        refreshImageBaseDir();
-
-        if (editedDuringMigration) {
-          // 后端已经切到新目录，必须把迁移期间的新输入写入新目录；此时重载会
-          // 覆盖编辑器内的最新内容，所以只刷新侧栏元数据。
-          await saveCurrentNote(true);
-          // 保存失败也刷新侧栏，让列表与后端新目录一致，避免点旧列表报错。
-          await refreshNotes();
-          return;
-        }
-
-        const loadedNotes = await refreshNotes();
-        if (loadedNotes[0]) {
-          await loadNote(loadedNotes[0].id);
-        } else {
-          clearCurrentNote();
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const settingsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const persistSettings = useCallback(
-    (nextConfig: AppConfig) => {
-      if (settingsSaveTimer.current) {
-        clearTimeout(settingsSaveTimer.current);
-      }
-      settingsSaveTimer.current = setTimeout(async () => {
-        const previousDataDir = savedDataDir ?? nextConfig.dataDir;
-        const normalizedConfig = {
-          ...nextConfig,
-          defaultViewMode: normalizeViewMode(nextConfig.defaultViewMode),
-          tileColor: normalizeTileColor(nextConfig.tileColor),
-        };
-        try {
-          const savedConfig = await saveConfig(normalizedConfig);
-          setSettingsConfig(savedConfig);
-          setSavedDataDir(savedConfig.dataDir);
-          setViewMode(normalizeViewMode(savedConfig.defaultViewMode));
-
-          if (savedConfig.dataDir !== previousDataDir) {
-            const loadedNotes = await refreshNotes();
-            if (loadedNotes[0]) {
-              await loadNote(loadedNotes[0].id);
-            } else {
-              clearCurrentNote();
-            }
-          }
-        } catch (error) {
-          showToast(getErrorMessage(error));
-        }
-      }, 300);
-    },
-    [savedDataDir, refreshNotes, loadNote, clearCurrentNote],
-  );
-
-  const handleSettingsChange = useCallback(
-    (nextConfig: AppConfig) => {
-      setSettingsConfig(nextConfig);
-      void emit("config-changed", nextConfig);
-      persistSettings(nextConfig);
-    },
-    [persistSettings],
-  );
-
-  const reorderSidebarAction = useCallback(
-    (source: SidebarActionId, target: SidebarActionId) => {
-      if (source === target || !settingsConfig) return;
-      const nextOrder = moveOrderItem(sidebarActionOrder, source, target);
-      handleSettingsChange({ ...settingsConfig, sidebarItemOrder: nextOrder });
-    },
-    [handleSettingsChange, settingsConfig, sidebarActionOrder],
-  );
-
-  const reorderSidebarCategory = useCallback(
-    (source: string, target: string) => {
-      if (source === target || !settingsConfig) return;
-      const nextOrder = moveOrderItem(sidebarCategoryOrder, source, target);
-      handleSettingsChange({ ...settingsConfig, sidebarCategoryOrder: nextOrder });
-    },
-    [handleSettingsChange, settingsConfig, sidebarCategoryOrder],
-  );
-
-  const suppressNextSidebarClick = useCallback(() => {
-    suppressNextSidebarClickRef.current = true;
-    window.setTimeout(() => {
-      suppressNextSidebarClickRef.current = false;
-    }, 0);
-  }, []);
-
-  const consumeSidebarPointerClick = useCallback(() => {
-    if (!suppressNextSidebarClickRef.current) return false;
-    suppressNextSidebarClickRef.current = false;
-    return true;
-  }, []);
-
-  const beginSidebarPointerDrag = useCallback(
-    (event: ReactPointerEvent<HTMLElement>, kind: SidebarSortKind, sourceId: string) => {
-      if (event.button !== 0 || !event.isPrimary) return;
-      if (kind === "category" && (event.target as Element).closest("button, input, select")) {
-        return;
-      }
-      event.currentTarget.setPointerCapture(event.pointerId);
-      sidebarPointerDragRef.current = {
-        kind,
-        sourceId,
-        targetId: null,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        isDragging: false,
-      };
-    },
-    [],
-  );
-
-  // Windows native file drops can suppress DOM HTML5 DnD, so note relocation shares the Pointer path.
-  const beginSidebarNotePointerDrag = useCallback(
-    (event: ReactPointerEvent<HTMLElement>, noteId: string, sourceCategory: string) => {
-      if (event.button !== 0 || !event.isPrimary) return;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      sidebarPointerDragRef.current = {
-        kind: "note",
-        sourceId: noteId,
-        sourceCategory,
-        targetId: null,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        isDragging: false,
-      };
-    },
-    [],
-  );
-
-  const sidebarActionDragClass = (action: SidebarActionId) => {
-    if (activeSidebarPointerDrag?.kind !== "action") return "";
-    if (activeSidebarPointerDrag.sourceId === action) return "opacity-50";
-    return activeSidebarPointerDrag.targetId === action ? "bg-bamboo/15 ring-1 ring-bamboo/20" : "";
-  };
-
-  useEffect(() => {
-    const stopSidebarAutoScroll = () => {
-      sidebarAutoScrollDirectionRef.current = 0;
-      if (sidebarAutoScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(sidebarAutoScrollFrameRef.current);
-        sidebarAutoScrollFrameRef.current = null;
-      }
-    };
-
-    const startSidebarAutoScroll = () => {
-      if (sidebarAutoScrollFrameRef.current !== null) return;
-      const tick = () => {
-        const scrollContainer = sidebarScrollRef.current;
-        const direction = sidebarAutoScrollDirectionRef.current;
-        if (!scrollContainer || direction === 0) {
-          sidebarAutoScrollFrameRef.current = null;
-          return;
-        }
-        scrollContainer.scrollTop += direction * SIDEBAR_POINTER_SCROLL_SPEED;
-        sidebarAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
-      };
-      sidebarAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
-    };
-
-    const updateSidebarAutoScroll = (event: PointerEvent) => {
-      const scrollContainer = sidebarScrollRef.current;
-      if (!scrollContainer) return;
-      const { top, bottom } = scrollContainer.getBoundingClientRect();
-      const nextDirection: -1 | 0 | 1 =
-        event.clientY < top + SIDEBAR_POINTER_SCROLL_EDGE
-          ? -1
-          : event.clientY > bottom - SIDEBAR_POINTER_SCROLL_EDGE
-            ? 1
-            : 0;
-      if (nextDirection === sidebarAutoScrollDirectionRef.current) return;
-      sidebarAutoScrollDirectionRef.current = nextDirection;
-      if (nextDirection === 0) stopSidebarAutoScroll();
-      else startSidebarAutoScroll();
-    };
-
-    const cancelPointerDrag = () => {
-      sidebarPointerDragRef.current = null;
-      setActiveSidebarPointerDrag(null);
-      setDragOverCategory(null);
-      stopSidebarAutoScroll();
-    };
-
-    const onPointerMove = (event: PointerEvent) => {
-      const drag = sidebarPointerDragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      if ((event.buttons & 1) === 0) {
-        cancelPointerDrag();
-        return;
-      }
-
-      if (!drag.isDragging) {
-        const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-        if (distance < SIDEBAR_POINTER_DRAG_THRESHOLD) return;
-        drag.isDragging = true;
-      }
-
-      updateSidebarAutoScroll(event);
-      if (drag.kind === "note") {
-        const targetCategory = getSidebarNoteDropTarget(event.clientX, event.clientY);
-        if (targetCategory === drag.targetId) {
-          event.preventDefault();
-          return;
-        }
-        drag.targetId = targetCategory;
-        setDragOverCategory(targetCategory);
-        event.preventDefault();
-        return;
-      }
-
-      const target = getSidebarSortTarget(event.clientX, event.clientY);
-      const targetId = target?.kind === drag.kind ? target.id : null;
-      if (targetId === drag.targetId) {
-        event.preventDefault();
-        return;
-      }
-      drag.targetId = targetId;
-      setActiveSidebarPointerDrag({
-        kind: drag.kind,
-        sourceId: drag.sourceId,
-        targetId,
-      });
-      event.preventDefault();
-    };
-
-    const finishPointerDrag = (event: PointerEvent, cancelled = false) => {
-      const drag = sidebarPointerDragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      sidebarPointerDragRef.current = null;
-      setActiveSidebarPointerDrag(null);
-      setDragOverCategory(null);
-      stopSidebarAutoScroll();
-      if (!drag.isDragging) return;
-
-      event.preventDefault();
-      suppressNextSidebarClick();
-      if (cancelled) return;
-
-      if (drag.kind === "note") {
-        const targetCategory = getSidebarNoteDropTarget(event.clientX, event.clientY);
-        if (targetCategory !== null && targetCategory !== drag.sourceCategory) {
-          handleMoveNoteRef.current(drag.sourceId, targetCategory);
-        }
-        return;
-      }
-
-      const target = getSidebarSortTarget(event.clientX, event.clientY);
-      if (!target || target.kind !== drag.kind || target.id === drag.sourceId) return;
-      if (
-        drag.kind === "action" &&
-        isSidebarActionId(drag.sourceId) &&
-        isSidebarActionId(target.id)
-      ) {
-        reorderSidebarAction(drag.sourceId, target.id);
-      } else if (drag.kind === "category") {
-        reorderSidebarCategory(drag.sourceId, target.id);
-      }
-    };
-
-    const onPointerCancel = (event: PointerEvent) => finishPointerDrag(event, true);
-    const onWindowBlur = () => cancelPointerDrag();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") cancelPointerDrag();
-    };
-
-    window.addEventListener("pointermove", onPointerMove, { passive: false });
-    window.addEventListener("pointerup", finishPointerDrag, { passive: false });
-    window.addEventListener("pointercancel", onPointerCancel, { passive: false });
-    window.addEventListener("blur", onWindowBlur);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      stopSidebarAutoScroll();
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", finishPointerDrag);
-      window.removeEventListener("pointercancel", onPointerCancel);
-      window.removeEventListener("blur", onWindowBlur);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [reorderSidebarAction, reorderSidebarCategory, suppressNextSidebarClick]);
-
-  const handleCloseSettings = useCallback(() => {
-    setSettingsOpen(false);
-  }, []);
-
-  const handleOpenAbout = useCallback(() => {
-    setAboutOpen((open) => {
-      const nextOpen = !open;
-      if (nextOpen) {
-        setSettingsOpen(false);
-        setKnowledgeGraphOpen(false);
-        setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
-      }
-      return nextOpen;
-    });
-  }, []);
-
-  const handleCloseAbout = useCallback(() => {
-    setAboutOpen(false);
-  }, []);
-
-  const handleToggleTodos = useCallback(() => {
-    setTodosOpen((open) => {
-      const nextOpen = !open;
-      if (nextOpen) {
-        setSettingsOpen(false);
-        setAboutOpen(false);
-        setHistoryOpen(false);
-        setBacklinksOpen(false);
-        setKnowledgeGraphOpen(false);
-      }
-      return nextOpen;
-    });
-  }, []);
-
-  const handleToggleTodo = useCallback(
-    async (note: Note, item: TodoItem, completed: boolean) => {
-      // 待办面板读取的是独立快照；当前笔记可能还有编辑器中的未保存修改。
-      // 先等待当前保存队列，再重新读取权威正文，避免用旧快照覆盖用户输入。
-      if (selectedIdRef.current === note.id) {
-        const saved = await saveCurrentNote();
-        if (!saved) return;
-      }
-
-      const latest = await getNote(note.id);
-      const nextContent = toggleTodoInContent(latest.content, item.line, completed);
-      if (nextContent === latest.content) return;
-
-      const updated = await updateNote(latest.id, {
-        title: latest.title,
-        content: nextContent,
-        category: latest.category,
-        tags: latest.tags,
-        pinned: latest.pinned,
-      });
-      replaceNoteMetadata(updated);
-      if (selectedIdRef.current === note.id) applyNote(updated);
-    },
-    [applyNote, getNote, replaceNoteMetadata, saveCurrentNote],
-  );
-
-  const handleSaveAsTemplate = useCallback(() => {
-    if (isExternal || !settingsConfig || !content.trim()) return;
-    const name = window.prompt("模板名称", title.trim() || "未命名模板")?.trim();
-    if (!name) return;
-
-    const template: NoteTemplate = {
-      id: globalThis.crypto?.randomUUID?.() ?? `template-${Date.now()}`,
-      name,
-      content,
-    };
-    handleSettingsChange({
-      ...settingsConfig,
-      templates: [...(settingsConfig.templates ?? []), template],
-    });
-    setSelectedTemplateId(template.id);
-    showToast("已存为模板");
-  }, [content, handleSettingsChange, isExternal, settingsConfig, title]);
-
-  const handleToggleLibrary = useCallback(() => {
-    setSettingsOpen(false);
-    setAboutOpen(false);
-    setTodosOpen(false);
-    setHistoryOpen(false);
-    setBacklinksOpen(false);
-    setRemindersOpen(false);
-    setKnowledgeGraphOpen(false);
-    setWorkspaceMode(null);
-    setLibraryOpen((open) => !open);
-  }, []);
-
-  const handleOpenDailyNote = useCallback(async () => {
-    try {
-      const saved = await saveCurrentNote();
-      if (!saved) return;
-      const note = await openDailyNote();
-      replaceNoteMetadata(note);
-      applyNote(note);
-      setActiveCategory(note.category);
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  }, [applyNote, replaceNoteMetadata, saveCurrentNote]);
-
-  const handleRestoreNoteVersion = useCallback(
-    async (versionId: string) => {
-      if (!selectedId || isExternal) return;
-      const saved = await saveCurrentNote();
-      if (!saved) return;
-      const note = await restoreNoteVersion(selectedId, versionId);
-      replaceNoteMetadata(note);
-      applyNote(note);
-      showToast("已恢复历史版本");
-    },
-    [applyNote, isExternal, replaceNoteMetadata, saveCurrentNote, selectedId],
-  );
-
-  const handleImportNote = async () => {
-    try {
-      const saved = await saveCurrentNote();
-      if (!saved) return;
-
-      const note = await importMarkdownNote(activeCategory);
-      if (!note) return;
-
-      replaceNoteMetadata(note);
-      applyNote(note);
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleExportHtml = async () => {
-    if (!selectedId) return;
-    try {
-      const saved = await saveCurrentNote(true);
-      if (!saved) return;
-      const filePath = await save({
-        defaultPath: `${title || "未命名"}.html`,
-        filters: [{ name: "HTML", extensions: ["html"] }],
-      });
-      if (!filePath) return;
-      const html = wrapHtml(title || "未命名", content);
-      await saveExternalFile(filePath, html);
-      showToast(t("main.export.htmlSaved", { defaultValue: "HTML 已导出" }));
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleExportPdf = async () => {
-    if (!selectedId) return;
-    try {
-      const saved = await saveCurrentNote(true);
-      if (!saved) return;
-      const exportTitle = titleValueRef.current || "未命名";
-      const filePath = await save({
-        defaultPath: pdfFileName(exportTitle),
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
-      });
-      if (!filePath) return;
-
-      await exportMarkdownPdf({
-        path: filePath,
-        title: exportTitle,
-        markdown: contentValueRef.current,
-        fontSize: settingsConfig?.fontSize ?? 14,
-        renderHtml: allowRawHtml,
-        imageBaseDir: isExternal ? undefined : (imageBaseDir ?? undefined),
-        externalImageBaseDir: isExternal ? (externalImageBaseDir ?? undefined) : undefined,
-        externalFilePath: selectedExternalFile?.filePath,
-      });
-      showToast(t("main.export.pdfSaved", { defaultValue: "PDF 已导出" }), "info");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleSelectNote = async (id: string): Promise<boolean> => {
-    if (id === selectedId) return true;
-    setDeleteConfirm(false);
-    // 排队保存：等待可能在途的自动保存，并把尚未落盘的修改一并存掉；
-    // 保存失败则不切换，避免旧编辑内容被新笔记覆盖
-    const saved = await saveCurrentNote();
-    if (!saved) return false;
-
-    setIsLoading(true);
-    try {
-      // 只有本次加载真正生效（未被更新的切换打断）才推入导航历史
-      const loaded = await loadNote(id);
-      if (!loaded) return false;
-      // 推入导航历史
-      const noteMeta = notes.find((n) => n.id === id);
-      if (noteMeta) {
-        navHistory.push(id, noteMeta.title || "无标题笔记");
-      }
-      return true;
-    } catch (error) {
-      showToast(getErrorMessage(error));
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  handleSelectExternalFileRef.current = handleSelectExternalFile;
   handleSelectNoteRef.current = async (id: string) => {
     if (externalFilesRef.current.some((file) => file.id === id)) {
       return handleSelectExternalFileRef.current(id);
@@ -2332,333 +521,114 @@ export function MainWindow({
     return handleSelectNote(id);
   };
 
-  useEffect(() => {
-    // 送达确认制：收到事件 → 展示并打开笔记 → ack 后才算送达。
-    // ack 失败或窗口/页面未就绪时错过的事件，由调度器下轮重投 +
-    // 下方补偿拉取兜底，提醒不会被静默丢弃。
-    const ackedIds = new Set<string>();
-    const handleDue = async (reminder: Reminder) => {
-      if (ackedIds.has(reminder.id)) return;
-      ackedIds.add(reminder.id);
-      showToast(`提醒：${reminder.message}`, "warning");
-      const opened = reminder.noteId ? await handleSelectNoteRef.current(reminder.noteId) : true;
-      if (!opened) {
-        // 当前笔记保存失败或目标笔记无法打开时，不确认送达；下轮会重投。
-        ackedIds.delete(reminder.id);
-        return;
-      }
-      try {
-        await ackReminder(reminder.id);
-      } catch {
-        // ack 失败保持未确认，调度器下轮会重新投递
-        ackedIds.delete(reminder.id);
-      }
-    };
-    const unlisten = listen<Reminder>("reminder://due", (event) => {
-      void handleDue(event.payload);
-    });
-    // 补偿拉取：页面挂载后补齐窗口/页面未就绪时错过的事件
-    void (async () => {
-      try {
-        const now = Date.now();
-        const due = (await listReminders()).filter(
-          (reminder) => !reminder.notified && new Date(reminder.remindAt).getTime() <= now,
-        );
-        for (const reminder of due) {
-          await handleDue(reminder);
-        }
-      } catch {
-        // 拉取失败静默：调度器仍会持续投递，不阻塞启动
-      }
-    })();
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
+  useMainWindowSync({
+    t,
+    loadEpoch,
+    saveQueueRef,
+    saveStateRef,
+    selectedIdRef,
+    selectedNoteRef,
+    isExternalRef,
+    contentValueRef,
+    editRevisionRef,
+    externalFileMtimeRef,
+    lastExternalSaveRef,
+    windowLabelRef,
+    contentRef,
+    handleSelectNoteRef,
+    selectedExternalFile,
+    setIsLoading,
+    setSettingsConfig,
+    setSavedDataDir,
+    setViewMode,
+    setNotes,
+    setCategories,
+    setCollapsedCategories,
+    setContent,
+    setSaveState,
+    setSettingsOverlay,
+    setPinnedTileIds,
+    setRemindersRefreshKey,
+    setIsMaximized,
+    applyNote,
+    replaceNoteMetadata,
+    loadNote,
+    refreshNotes,
+    clearCurrentNote,
+    loadExternalFile,
+    openAboutPanel,
+    navPush: navHistory.push,
+    navReplaceCurrent: navHistory.replaceCurrent,
+    takeStartupFile,
+  });
 
-  const handleSelectExternalFile = async (id: string): Promise<boolean> => {
-    if (id === selectedId) return true;
-    setDeleteConfirm(false);
-    // 保存失败不切换外部文件，避免旧编辑内容被新文件覆盖
-    const saved = await saveCurrentNote();
-    if (!saved) return false;
-
-    const file = externalFiles.find((f) => f.id === id);
-    if (!file) return false;
-
-    setIsLoading(true);
-    const epoch = loadEpoch.bump();
-    try {
-      const [fileContent, mtime, externalImageDir] = await Promise.all([
-        readExternalFile(file.filePath),
-        getFileModifiedTime(file.filePath),
-        prepareExternalFileImages(file.filePath).catch(() => null),
-      ]);
-      if (!loadEpoch.isCurrent(epoch)) return false;
-      editRevisionRef.current += 1;
-      selectedIdRef.current = id;
-      titleValueRef.current = file.title;
-      contentValueRef.current = fileContent;
-      saveStateRef.current = "saved";
-      setSelectedId(id);
-      setTitle(file.title);
-      setContent(fileContent);
-      setNoteTags([]);
-      setIsPinned(false);
-      setExternalImageBaseDir(externalImageDir);
-      tagsValueRef.current = [];
-      pinnedValueRef.current = false;
-      setSaveState("saved");
-      setNoteTransitionKey((k) => k + 1);
-      externalFileMtimeRef.current = mtime;
-      navHistory.push(id, file.title || "无标题文件");
-      return true;
-    } catch (error) {
-      showToast(getErrorMessage(error));
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  handleSelectExternalFileRef.current = handleSelectExternalFile;
-
-  const handleRemoveExternalFile = async (id: string) => {
-    if (selectedId === id && saveState === "dirty") {
-      const shouldSave = window.confirm(
-        t("main.confirm.unsavedExternalFile", {
-          title: title || t("common.untitledFile", { defaultValue: "未命名文件" }),
-          defaultValue: "「{{title}}」有未保存的更改，是否保存到原文件？",
-        }),
-      );
-      if (shouldSave) {
-        const saved = await saveCurrentNote();
-        if (!saved) return;
-      }
-    }
-    navHistory.remove(id);
-    setExternalFiles((current) => current.filter((f) => f.id !== id));
-    if (selectedId === id) {
-      clearCurrentNote();
-    }
-  };
-
-  const handleDeleteNote = async (noteId = selectedId) => {
-    if (!noteId) return;
-
-    setDeleteConfirm(false);
-    try {
-      // 删除当前笔记前先落盘未保存修改：保存失败则取消删除，
-      // 避免未保存内容随笔记一起丢失
-      if (selectedIdRef.current === noteId) {
+  useMainWindowShortcuts({
+    commandPaletteShortcut: settingsConfig?.commandPaletteShortcut,
+    closeTabShortcut: settingsConfig?.closeTabShortcut,
+    paletteOpenRef,
+    openCommandPalette,
+    closeCommandPalette,
+    onSave: () => {
+      void saveCurrentNote(true);
+    },
+    onCloseTab: () => {
+      void (async () => {
+        // 关闭标签前先落盘：防抖窗口内的输入不能静默丢弃，保存失败则保留编辑器。
+        // dirty 与 error（上次保存失败）都需要强制重试保存
         const needsSave = saveStateRef.current === "dirty" || saveStateRef.current === "error";
         const saved = needsSave ? await saveCurrentNote(true) : true;
-        if (!saved) return;
-      }
-      await deleteNote(noteId);
-      navHistory.remove(noteId);
-      const remaining = await refreshNotes();
-      if (noteId === selectedId && remaining[0]) {
-        await loadNote(remaining[0].id);
-      } else if (noteId === selectedId) {
-        clearCurrentNote();
-      }
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
+        if (saved) clearCurrentNote();
+      })();
+    },
+    onGoBack: () => {
+      const noteId = navHistory.goBack();
+      if (noteId) void handleSelectNoteRef.current(noteId);
+    },
+    onGoForward: () => {
+      const noteId = navHistory.goForward();
+      if (noteId) void handleSelectNoteRef.current(noteId);
+    },
+  });
 
-  const handleOpenNoteMenu = (event: MouseEvent<HTMLElement>, noteId: string) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const [isResizingSidebar, setIsResizingSidebar] = useColumnResize((event) => {
+    setSidebarWidth(Math.min(Math.max(event.clientX, 180), 500));
+  });
+  const [isResizingSplit, setIsResizingSplit] = useColumnResize((event) => {
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    setSplitRatio(Math.min(Math.max(ratio, 0.2), 0.8));
+  });
 
-    setNoteMenuClosing(false);
-    setHoveredId(noteId);
-    setNoteMenu({
-      x: event.clientX,
-      y: event.clientY,
-      noteId,
-    });
-  };
+  const { handleEditorScroll, handlePreviewScroll } = useSplitScrollSync({
+    contentRef,
+    previewScrollRef,
+    splitContainerRef,
+    effectiveViewMode,
+    scrollSyncEnabled: settingsConfig?.splitScrollSync ?? true,
+    deferredContent,
+    selectedId,
+    fontSize: settingsConfig?.fontSize,
+    renderHtmlMarkdown: settingsConfig?.renderHtmlMarkdown,
+    splitRatio,
+  });
 
-  const handleExportNote = async (note: NoteMetadata) => {
-    try {
-      if (note.id === selectedId) {
-        const saved = await saveCurrentNote();
-        if (!saved) return;
-      }
-
-      await exportMarkdownNote({
-        id: note.id,
-        title: note.id === selectedId ? title : note.title,
-      });
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleNoteMenuAction = (action: NoteContextMenuAction) => {
-    const note = noteMenuTarget;
-    if (!note) return;
-
-    if (action === "export") {
-      setNoteMenuClosing(true);
-      void handleExportNote(note);
-      return;
-    }
-
-    if (action === "move") {
-      setNoteMenuMode("move");
-      return;
-    }
-
-    if (action === "delete") {
-      // 删除前确认：误点右键菜单直接删笔记不可恢复
-      const confirmed = window.confirm(
-        t("main.noteMenu.confirmDelete", {
-          noteTitle: note.title.trim() || "无标题笔记",
-          defaultValue: "确定删除「{{noteTitle}}」吗？",
-        }),
-      );
-      if (!confirmed) return;
-    }
-
-    setNoteMenuClosing(true);
-    void handleDeleteNote(note.id);
-  };
-
-  const handleMoveNote = async (noteId: string, targetCategory: string) => {
-    try {
-      // Moving can relocate the backing file, so flush the active editor before changing metadata.
-      if (noteId === selectedIdRef.current) {
-        const saved = await saveCurrentNote(true);
-        if (!saved) return;
-      }
-      setNoteMenuClosing(true);
-      await moveNoteCategory(noteId, targetCategory);
-      await refreshNotes();
-      showToast(targetCategory ? "已整理到分类" : "已移至未分类");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  handleMoveNoteRef.current = (noteId, targetCategory) => {
-    void handleMoveNote(noteId, targetCategory);
-  };
-
-  const handleMergeNotes = async (targetId: string, sourceId: string) => {
-    try {
-      // 强制保存当前编辑并确认落盘，再基于权威数据合并
-      const saved = await saveCurrentNote(true);
-      if (!saved) return;
-      const merged = await mergeNotes({ targetId, sourceId });
-      await refreshNotes();
-      if (selectedIdRef.current === targetId || selectedIdRef.current === sourceId) {
-        applyNote(merged);
-      }
-      showToast("笔记已合并，原笔记已移入回收站");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleOpenWorkspaceNote = async (
-    noteId: string,
-    hitOffset?: number,
-    hitLength?: number,
-  ) => {
-    const opened = await handleSelectNote(noteId);
-    if (!opened || hitOffset == null || hitOffset < 0) return;
-    window.requestAnimationFrame(() => {
-      const textarea = contentRef.current;
-      if (!textarea) return;
-      // 优先用后端返回的真实命中词长度；搜索框文字已变化时回退到当前查询长度
-      const matchedLength =
-        hitLength != null && hitLength > 0 ? hitLength : Math.max(1, searchText.length);
-      const end = Math.min(textarea.value.length, hitOffset + matchedLength);
-      textarea.focus();
-      textarea.setSelectionRange(hitOffset, end);
-      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 22;
-      const line = textarea.value.slice(0, hitOffset).split("\n").length - 1;
-      textarea.scrollTop = Math.max(0, line * lineHeight - textarea.clientHeight / 3);
-    });
-  };
-
-  const handleCreateCategory = async () => {
-    const name = categoryInputValue.trim();
-    if (!name) {
-      setShowCategoryInput(false);
-      return;
-    }
-    try {
-      await createCategory(name);
-      setCategories((prev) => [...prev, name].sort());
-      setShowCategoryInput(false);
-      setCategoryInputValue("");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleRenameCategory = async (oldName: string) => {
-    const newName = renameCategoryValue.trim();
-    if (!newName || newName === oldName) {
-      setRenamingCategory(null);
-      return;
-    }
-
-    try {
-      await renameCategory(oldName, newName);
-      await refreshNotes();
-      setRenamingCategory(null);
-      setRenameCategoryValue("");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleDeleteCategory = async (name: string) => {
-    try {
-      await deleteCategory(name);
-      await refreshNotes();
-      if (activeCategory === name) {
-        setActiveCategory("");
-      }
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const toggleCategoryCollapse = (category: string) => {
-    setCollapsedCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(category)) {
-        next.delete(category);
-      } else {
-        next.add(category);
-      }
-      return next;
-    });
-  };
-
-  const markDirty = () => {
-    if (!selectedId) return;
-    editRevisionRef.current += 1;
-    saveStateRef.current = "dirty";
-    setSaveState("dirty");
-  };
-
-  const ensureNoteSaved = useCallback(async (): Promise<string | null> => {
-    if (selectedId) return selectedId;
-    try {
-      const note = await createNote({ title, content, category: activeCategory });
-      replaceNoteMetadata(note);
-      applyNote(note);
-      return note.id;
-    } catch {
-      return null;
-    }
-  }, [selectedId, title, content, activeCategory, replaceNoteMetadata, applyNote]);
+  const {
+    sidebarScrollRef,
+    activeSidebarPointerDrag,
+    dragOverCategory,
+    consumeSidebarPointerClick,
+    beginSidebarPointerDrag,
+    beginSidebarNotePointerDrag,
+    sidebarActionDragClass,
+  } = useSidebarPointerDrag({
+    onReorderAction: reorderSidebarAction,
+    onReorderCategory: reorderSidebarCategory,
+    onMoveNote: (noteId, targetCategory) => {
+      void handleMoveNote(noteId, targetCategory);
+    },
+  });
 
   const {
     handlePaste: imagePasteHandler,
@@ -2675,374 +645,90 @@ export function MainWindow({
     t,
   });
 
-  const handleCleanUnusedImages = async () => {
-    if (!selectedId || isExternal) return;
-    try {
-      const removed = await cleanUnusedImages(selectedId, content);
-      if (removed.length > 0) {
-        showToast(
-          t("main.images.cleaned", {
-            count: removed.length,
-            defaultValue: "已清理 {{count}} 张图片",
-          }),
-          "info",
-        );
-      } else {
-        showToast(t("main.images.cleanedNone", { defaultValue: "没有需要清理的图片" }), "info");
-      }
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const handleUndo = () => {
-    if (!selectedId) return;
-    const textarea = contentRef.current;
-    if (runEditorCommand(textarea, "undo")) {
-      setContent(textarea?.value ?? content);
-      markDirty();
-    }
-  };
-
-  const handleRedo = () => {
-    if (!selectedId) return;
-    const textarea = contentRef.current;
-    if (runEditorCommand(textarea, "redo")) {
-      setContent(textarea?.value ?? content);
-      markDirty();
-    }
-  };
-
-  const handleCopyStableLink = useCallback(async () => {
-    if (!selectedNote) return;
-    try {
-      await navigator.clipboard.writeText(wikiLinkSyntax(selectedNote));
-      showToast("已复制稳定关联链接", "info");
-    } catch {
-      showToast("复制失败，请检查剪贴板权限", "warning");
-    }
-  }, [selectedNote]);
-
-  const handleOpenWikiLink = useCallback(
-    (target: string) => {
-      const noteId = resolveWikiLink(target, notesRef.current);
-      if (!noteId) {
-        showToast("未找到唯一匹配的关联笔记，请使用 [[note:笔记ID|标题]]", "warning");
-        return;
-      }
-      void handleSelectNote(noteId);
-    },
-    [handleSelectNote],
-  );
-
-  const handleOpenNotepad = async () => {
-    try {
-      await openNotepadWindow();
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const [isMaximized, setIsMaximized] = useState(false);
-
-  useEffect(() => {
-    void isCurrentWindowMaximized().then(setIsMaximized);
-    const unlisten = getCurrentWindow().onResized(() => {
-      void isCurrentWindowMaximized().then(setIsMaximized);
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isResizingSidebar) return;
-
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-
-    const onMouseMove = (e: globalThis.MouseEvent) => {
-      const newWidth = Math.min(Math.max(e.clientX, 180), 500);
-      setSidebarWidth(newWidth);
-    };
-    const onMouseUp = () => setIsResizingSidebar(false);
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-  }, [isResizingSidebar]);
-
-  useEffect(() => {
-    if (!isResizingSplit) return;
-
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-
-    const onMouseMove = (e: globalThis.MouseEvent) => {
-      const container = splitContainerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      const ratio = (e.clientX - rect.left) / rect.width;
-      setSplitRatio(Math.min(Math.max(ratio, 0.2), 0.8));
-    };
-    const onMouseUp = () => setIsResizingSplit(false);
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-  }, [isResizingSplit]);
-
-  const cancelScrollMeasurement = useCallback(() => {
-    if (measureDebounceRef.current) clearTimeout(measureDebounceRef.current);
-    cancelAnimationFrame(measureRafRef.current);
-    measureControllerRef.current?.abort();
-  }, []);
-
-  const cancelScheduledScrollSync = useCallback(() => {
-    cancelAnimationFrame(scrollSyncRafRef.current);
-    cancelAnimationFrame(scrollReleaseRafRef.current);
-    scrollSyncRafRef.current = 0;
-    scrollReleaseRafRef.current = 0;
-    scrollSource.current = null;
-  }, []);
-
-  const scrollSyncEnabled = settingsConfig?.splitScrollSync ?? true;
-
-  const scheduleScrollMeasurement = useCallback(
-    (delayMs: number) => {
-      if (effectiveViewMode !== "split" || !scrollSyncEnabled) return;
-      if (!contentRef.current || !previewScrollRef.current) return;
-
-      // 布局和测量稳定前先清空旧偏移量
-      scrollMaps.current = null;
-      cancelScrollMeasurement();
-
-      const controller = new AbortController();
-      measureControllerRef.current = controller;
-
-      const measure = async () => {
-        const textarea = contentRef.current;
-        const preview = previewScrollRef.current;
-        if (!textarea || !preview) return;
-
-        // 用与预览一致的延迟内容测量，避免快速输入时测量与 DOM 错位
-        const editorOffsets = await measureBlockOffsets(
-          deferredContent,
-          textarea,
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-
-        tagPreviewBlocks(preview);
-        const previewOffsets = measurePreviewBlockOffsets(preview);
-        if (controller.signal.aborted) return;
-        const editorMaxScroll = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
-        const previewMaxScroll = Math.max(0, preview.scrollHeight - preview.clientHeight);
-        scrollMaps.current = {
-          editorToPreview: createScrollSyncMap(
-            editorOffsets,
-            previewOffsets,
-            editorMaxScroll,
-            previewMaxScroll,
-          ),
-          previewToEditor: createScrollSyncMap(
-            previewOffsets,
-            editorOffsets,
-            previewMaxScroll,
-            editorMaxScroll,
-          ),
-        };
-      };
-
-      const runAfterLayout = () => {
-        measureRafRef.current = requestAnimationFrame(() => {
-          void measure();
-        });
-      };
-
-      if (delayMs > 0) {
-        measureDebounceRef.current = setTimeout(runAfterLayout, delayMs);
-      } else {
-        runAfterLayout();
-      }
-    },
-    [cancelScrollMeasurement, deferredContent, effectiveViewMode, scrollSyncEnabled],
-  );
-
-  // 切换笔记时通过 rAF 测量（不阻塞首帧渲染），编辑时 debounce 避免频繁重排
-  useEffect(() => {
-    if (effectiveViewMode !== "split" || !scrollSyncEnabled) {
-      scrollMaps.current = null;
-      cancelScrollMeasurement();
-      cancelScheduledScrollSync();
-      return;
-    }
-
-    const isNoteSwitch = prevSelectedIdRef.current !== selectedId;
-    prevSelectedIdRef.current = selectedId;
-    scheduleScrollMeasurement(isNoteSwitch ? 0 : 250);
-
-    return () => {
-      cancelScrollMeasurement();
-    };
-  }, [
-    cancelScrollMeasurement,
-    cancelScheduledScrollSync,
-    deferredContent,
-    effectiveViewMode,
-    scrollSyncEnabled,
-    scheduleScrollMeasurement,
+  const {
+    handleSaveAsTemplate,
+    handleExportHtml,
+    handleExportPdf,
+    handleNoteMenuAction,
+    handleCleanUnusedImages,
+    handleUndo,
+    handleRedo,
+    handleCopyStableLink,
+    handleOpenWikiLink,
+    handlePinEntry,
+  } = useEditorActions({
+    t,
     selectedId,
-    settingsConfig?.fontSize,
-    settingsConfig?.renderHtmlMarkdown,
-    splitRatio,
-  ]);
+    title,
+    content,
+    isExternal,
+    selectedNote,
+    selectedExternalFile,
+    noteMenuTarget,
+    settingsConfig,
+    allowRawHtml,
+    imageBaseDir,
+    externalImageBaseDir,
+    activeCategory,
+    pinnedTileIds,
+    contentRef,
+    titleValueRef,
+    contentValueRef,
+    notesRef,
+    setContent,
+    setExternalFiles,
+    setPinnedTileIds,
+    setSelectedTemplateId,
+    setNoteMenuClosing,
+    setNoteMenuMode,
+    markDirty,
+    saveCurrentNote,
+    handleSettingsChange,
+    handleSelectNote,
+    handleDeleteNote,
+    applyNote,
+    replaceNoteMetadata,
+    navPush: navHistory.push,
+    navRemove: navHistory.remove,
+  });
 
-  useEffect(() => {
-    if (effectiveViewMode !== "split" || !scrollSyncEnabled) return;
-
-    const observedElements: Element[] = [];
-    if (splitContainerRef.current) observedElements.push(splitContainerRef.current);
-    if (contentRef.current) observedElements.push(contentRef.current);
-    const previewContainer = previewScrollRef.current;
-    if (previewContainer) observedElements.push(previewContainer);
-    const previewContent = previewContainer?.querySelector<HTMLElement>(".font-body");
-    if (previewContent) observedElements.push(previewContent);
-
-    if (typeof ResizeObserver === "undefined") {
-      const handleResize = () => scheduleScrollMeasurement(120);
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-
-    if (observedElements.length === 0) return;
-
-    const observer = new ResizeObserver(() => {
-      scheduleScrollMeasurement(120);
+  const handleOpenAbout = useCallback(() => {
+    setAboutOpen((open) => {
+      const nextOpen = !open;
+      if (nextOpen) {
+        setSettingsOpen(false);
+        setKnowledgeGraphOpen(false);
+        dismissUpdateReminderText();
+      }
+      return nextOpen;
     });
-    observedElements.forEach((element) => observer.observe(element));
+  }, [dismissUpdateReminderText]);
 
-    let mutationObserver: MutationObserver | undefined;
-    if (previewContainer && !previewContent && typeof MutationObserver !== "undefined") {
-      mutationObserver = new MutationObserver(() => {
-        const mountedPreview = previewContainer.querySelector<HTMLElement>(".font-body");
-        if (!mountedPreview) return;
-        observer.observe(mountedPreview);
-        mutationObserver?.disconnect();
-        scheduleScrollMeasurement(0);
-      });
-      mutationObserver.observe(previewContainer, { childList: true });
-    }
-
-    return () => {
-      mutationObserver?.disconnect();
-      observer.disconnect();
-    };
-  }, [effectiveViewMode, scheduleScrollMeasurement, scrollSyncEnabled]);
-
-  // Reset preview scroll on note switch
-  useEffect(() => {
-    cancelScheduledScrollSync();
-    if (previewScrollRef.current) {
-      previewScrollRef.current.scrollTop = 0;
-    }
-  }, [cancelScheduledScrollSync, selectedId]);
-
-  const releaseScrollSourceAfterPaint = useCallback((source: "editor" | "preview") => {
-    cancelAnimationFrame(scrollReleaseRafRef.current);
-    scrollReleaseRafRef.current = requestAnimationFrame(() => {
-      scrollReleaseRafRef.current = requestAnimationFrame(() => {
-        if (scrollSource.current === source) scrollSource.current = null;
-        scrollReleaseRafRef.current = 0;
-      });
+  const handleToggleTodos = useCallback(() => {
+    setTodosOpen((open) => {
+      const nextOpen = !open;
+      if (nextOpen) {
+        setSettingsOpen(false);
+        setAboutOpen(false);
+        setHistoryOpen(false);
+        setBacklinksOpen(false);
+        setKnowledgeGraphOpen(false);
+      }
+      return nextOpen;
     });
   }, []);
 
-  const scheduleSyncedScroll = useCallback(
-    (source: "editor" | "preview") => {
-      if (scrollSyncRafRef.current) return;
-      scrollSyncRafRef.current = requestAnimationFrame(() => {
-        scrollSyncRafRef.current = 0;
-        const textarea = contentRef.current;
-        const preview = previewScrollRef.current;
-        const maps = scrollMaps.current;
-        if (!textarea || !preview || !maps || scrollSource.current !== source) return;
-
-        if (source === "editor") {
-          preview.scrollTop = interpolateScrollOffset(maps.editorToPreview, textarea.scrollTop);
-        } else {
-          textarea.scrollTop = interpolateScrollOffset(maps.previewToEditor, preview.scrollTop);
-        }
-        releaseScrollSourceAfterPaint(source);
-      });
-    },
-    [releaseScrollSourceAfterPaint],
-  );
-
-  const handleEditorScroll = useCallback(() => {
-    if (effectiveViewMode !== "split" || !scrollSyncEnabled || !scrollMaps.current) return;
-    if (scrollSource.current === "preview") return;
-
-    scrollSource.current = "editor";
-    cancelAnimationFrame(scrollReleaseRafRef.current);
-    scrollReleaseRafRef.current = 0;
-    scheduleSyncedScroll("editor");
-  }, [effectiveViewMode, scheduleSyncedScroll, scrollSyncEnabled]);
-
-  const handlePreviewScroll = useCallback(() => {
-    if (effectiveViewMode !== "split" || !scrollSyncEnabled || !scrollMaps.current) return;
-    if (scrollSource.current === "editor") return;
-
-    scrollSource.current = "preview";
-    cancelAnimationFrame(scrollReleaseRafRef.current);
-    scrollReleaseRafRef.current = 0;
-    scheduleSyncedScroll("preview");
-  }, [effectiveViewMode, scheduleSyncedScroll, scrollSyncEnabled]);
-
-  useEffect(() => cancelScheduledScrollSync, [cancelScheduledScrollSync]);
-
-  const handlePinEntry = async () => {
-    if (!selectedId) return;
-    const currentId = selectedId;
-    const isPinned = pinnedTileIds.has(currentId);
-    if (!isPinned) {
-      const saved = await saveCurrentNote();
-      if (!saved) return;
-    }
-    try {
-      let tileNoteId = currentId;
-      if (selectedExternalFile) {
-        const imported = await createNote({
-          title: titleValueRef.current,
-          content: contentValueRef.current,
-          category: activeCategory,
-        });
-        tileNoteId = imported.id;
-        setExternalFiles((current) => current.filter((file) => file.id !== currentId));
-        navHistory.remove(currentId);
-        replaceNoteMetadata(imported);
-        applyNote(imported);
-        navHistory.push(imported.id, imported.title || "无标题笔记");
-      }
-
-      const pinned = await toggleTileWindow(tileNoteId);
-      setPinnedTileIds((previous) => syncPinnedTileIds(previous, tileNoteId, pinned));
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
-
-  const selectedTilePinned = selectedId ? pinnedTileIds.has(selectedId) : false;
+  const handleToggleLibrary = useCallback(() => {
+    setSettingsOpen(false);
+    setAboutOpen(false);
+    setTodosOpen(false);
+    setHistoryOpen(false);
+    setBacklinksOpen(false);
+    setRemindersOpen(false);
+    setKnowledgeGraphOpen(false);
+    setWorkspaceMode(null);
+    setLibraryOpen((open) => !open);
+  }, []);
 
   const toggleMaximize = () => {
     void toggleMaximizeCurrentWindow().then(() => isCurrentWindowMaximized().then(setIsMaximized));
@@ -3058,2659 +744,483 @@ export function MainWindow({
     void startCurrentWindowDrag().catch(() => undefined);
   };
 
-  const handleMinimize = () => {
-    void minimizeCurrentWindow();
-  };
-
-  const handleMaximize = () => {
-    toggleMaximize();
-  };
-
-  const handleClose = () => {
-    void closeCurrentWindow();
-  };
-  // 任意关闭途径（标题栏按钮 / 系统关闭 / Alt+F4）都会触发 onCloseRequested：
-  // 未落盘（dirty / 保存失败 error / 保存中 saving）时先拦截并保存，
-  // 保存成功再真正关闭；保存失败则留在窗口让用户处理。
-  const pendingCloseRef = useRef(false);
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void getCurrentWindow()
-      .onCloseRequested(async (event) => {
-        if (pendingCloseRef.current) return;
-        event.preventDefault();
-
-        const needsSave =
-          saveStateRef.current === "dirty" ||
-          saveStateRef.current === "error" ||
-          saveStateRef.current === "saving";
-        if (needsSave && !(await saveCurrentNote(true))) return;
-
-        try {
-          // The tray menu can change closeToTray without rerendering this window,
-          // so read the current persisted setting before deciding hide vs close.
-          const config = await getConfig();
-          if (config.closeToTray) {
-            await hideCurrentWindow();
-            return;
-          }
-
-          pendingCloseRef.current = true;
-          try {
-            // 不能在这里再次调用 window.close()：Tauri 对同一次关闭请求的重入
-            // 保护会吞掉它，窗口将永远关不掉。改为通知 Rust 销毁主窗口，
-            // 由 Destroyed 回调里的保存屏障收尾并退出。
-            await invoke("window_main_close_finished");
-          } finally {
-            pendingCloseRef.current = false;
-          }
-        } catch (error) {
-          showToast(getErrorMessage(error));
-        }
-      })
-      .then((fn) => {
-        unlisten = fn;
-      });
-    return () => {
-      unlisten?.();
-    };
-  }, [saveCurrentNote]);
-  const handleCreateNoteWithTitle = async (noteTitle: string) => {
-    const saved = await saveCurrentNote();
-    if (!saved) return;
-    try {
-      const note = await createNote({
-        title: noteTitle,
-        content: "",
-        category: activeCategory,
-      });
-      replaceNoteMetadata(note);
-      applyNote(note);
-      if (activeCategory) {
-        setCollapsedCategories((current) => {
-          const next = new Set(current);
-          next.delete(activeCategory);
-          return next;
-        });
-      }
-      requestAnimationFrame(() => {
-        contentRef.current?.focus();
-      });
-    } catch (error) {
-      showToast(getErrorMessage(error));
+  const handleToggleOutline = () => {
+    // 自动切到分栏模式 + 切换大纲
+    if (effectiveViewMode === "edit") {
+      setViewMode("split");
     }
+    setOutlineOpen((o) => {
+      const next = !o;
+      if (next && settingsConfig && !settingsConfig.showOutline) {
+        // 如果设置里没开，自动开启
+        handleSettingsChange({ ...settingsConfig, showOutline: true });
+      }
+      return next;
+    });
   };
 
-  const openSettingsFromPalette = () => {
-    closeAllSidePanels();
-    setSettingsOpen(true);
-    if (settingsConfig) return;
-    void getConfig()
-      .then((config) => {
-        setSettingsConfig(config);
-        setSavedDataDir(config.dataDir);
-        setViewMode(normalizeViewMode(config.defaultViewMode));
-      })
-      .catch((error) => {
+  const paletteCommands = buildPaletteCommands({
+    t,
+    selectedId,
+    isExternal,
+    quickCaptureShortcut: settingsConfig?.quickCaptureShortcut,
+    onNewNote: () => handleNewNote(),
+    onOpenDailyNote: () => handleOpenDailyNote(),
+    onOpenWorkspace: openWorkspace,
+    onOpenTodos: () => {
+      closeAllSidePanels();
+      setTodosOpen(true);
+    },
+    onOpenKnowledgeGraph: () => {
+      closeAllSidePanels();
+      setKnowledgeGraphOpen(true);
+    },
+    onToggleFocusMode: () => {
+      setReadingMode(false);
+      setFocusMode((active) => !active);
+    },
+    onToggleReadingMode: () => {
+      setFocusMode(false);
+      setReadingMode((active) => !active);
+    },
+    onOpenReminders: () => {
+      if (!selectedId || isExternal) return;
+      closeAllSidePanels();
+      setRemindersOpen(true);
+    },
+    onExportPdf: () => handleExportPdf(),
+    onOpenSettings: openSettingsFromPalette,
+    onOpenQuickCapture: async () => {
+      if (saveStateRef.current === "dirty") {
+        await saveCurrentNote();
+      }
+      await openQuickCaptureWindow().catch((error) => {
         showToast(getErrorMessage(error));
       });
-  };
-
-  const paletteCommands: PaletteCommand[] = [
-    {
-      id: "new-note",
-      label: t("commandPalette.commands.newNote", { defaultValue: "新建笔记" }),
-      description: t("commandPalette.commands.newNoteDesc", {
-        defaultValue: "在当前分类创建一篇空白笔记",
-      }),
-      keywords: ["new note", "create", "新建", "笔记"],
-      onExecute: () => handleNewNote(),
     },
-    {
-      id: "open-daily",
-      label: t("commandPalette.commands.openDaily", { defaultValue: "打开每日便笺" }),
-      description: t("commandPalette.commands.openDailyDesc", {
-        defaultValue: "打开或创建今天的每日便笺",
-      }),
-      keywords: ["daily", "today", "journal", "每日", "便笺", "日记"],
-      onExecute: () => handleOpenDailyNote(),
-    },
-    {
-      id: "open-inbox",
-      label: t("commandPalette.commands.openInbox", { defaultValue: "打开收件箱" }),
-      description: t("commandPalette.commands.openInboxDesc", {
-        defaultValue: "查看并整理快速记录的收件箱想法",
-      }),
-      keywords: ["inbox", "收件箱", "整理"],
-      onExecute: () => openWorkspace("inbox"),
-    },
-    {
-      id: "open-journal",
-      label: t("commandPalette.commands.openJournal", { defaultValue: "打开日记流" }),
-      description: t("commandPalette.commands.openJournalDesc", {
-        defaultValue: "按时间线浏览每日便笺",
-      }),
-      keywords: ["journal", "stream", "timeline", "日记流", "时间线"],
-      onExecute: () => openWorkspace("journal"),
-    },
-    {
-      id: "open-todos",
-      label: t("commandPalette.commands.openTodos", { defaultValue: "打开待办面板" }),
-      description: t("commandPalette.commands.openTodosDesc", {
-        defaultValue: "汇总全部笔记中的待办事项",
-      }),
-      keywords: ["todo", "tasks", "checklist", "待办", "任务"],
-      onExecute: () => {
-        closeAllSidePanels();
-        setTodosOpen(true);
-      },
-    },
-    {
-      id: "open-knowledge-graph",
-      label: t("commandPalette.commands.openKnowledgeGraph", { defaultValue: "打开知识图谱" }),
-      description: t("commandPalette.commands.openKnowledgeGraphDesc", {
-        defaultValue: "可视化查看笔记间的双向链接关系",
-      }),
-      keywords: ["graph", "knowledge", "links", "知识图谱", "双链"],
-      onExecute: () => {
-        closeAllSidePanels();
-        setKnowledgeGraphOpen(true);
-      },
-    },
-    {
-      id: "open-weekly-review",
-      label: t("commandPalette.commands.openWeeklyReview", { defaultValue: "打开本周回顾" }),
-      description: t("commandPalette.commands.openWeeklyReviewDesc", {
-        defaultValue: "打开仪表盘并查看或生成本周回顾",
-      }),
-      keywords: ["weekly", "review", "dashboard", "本周回顾", "仪表盘", "总结"],
-      onExecute: () => openWorkspace("dashboard"),
-    },
-    {
-      id: "toggle-focus-mode",
-      label: t("commandPalette.commands.toggleFocusMode", { defaultValue: "切换专注模式" }),
-      description: t("commandPalette.commands.toggleFocusModeDesc", {
-        defaultValue: "隐藏侧栏与工具栏，专注写作",
-      }),
-      keywords: ["focus", "zen", "专注", "写作"],
-      onExecute: () => {
-        setReadingMode(false);
-        setFocusMode((active) => !active);
-      },
-    },
-    {
-      id: "toggle-reading-mode",
-      label: t("commandPalette.commands.toggleReadingMode", { defaultValue: "切换沉浸阅读" }),
-      description: t("commandPalette.commands.toggleReadingModeDesc", {
-        defaultValue: "以纯预览模式沉浸阅读当前笔记",
-      }),
-      keywords: ["reading", "immersive", "preview", "阅读", "沉浸"],
-      onExecute: () => {
-        setFocusMode(false);
-        setReadingMode((active) => !active);
-      },
-    },
-    {
-      id: "open-reminders",
-      label: t("commandPalette.commands.openReminders", { defaultValue: "打开提醒" }),
-      description: t("commandPalette.commands.openRemindersDesc", {
-        defaultValue: "为当前笔记设置或查看定时提醒",
-      }),
-      keywords: ["reminder", "alarm", "提醒", "定时"],
-      disabled: !selectedId || isExternal,
-      onExecute: () => {
-        if (!selectedId || isExternal) return;
-        closeAllSidePanels();
-        setRemindersOpen(true);
-      },
-    },
-    {
-      id: "export-pdf",
-      label: t("commandPalette.commands.exportPdf", { defaultValue: "导出 PDF" }),
-      description: t("commandPalette.commands.exportPdfDesc", {
-        defaultValue: "将当前笔记导出为 PDF 文档",
-      }),
-      keywords: ["pdf", "export", "print", "导出"],
-      disabled: !selectedId || isExternal,
-      onExecute: () => handleExportPdf(),
-    },
-    {
-      id: "open-settings",
-      label: t("commandPalette.commands.openSettings", { defaultValue: "打开设置" }),
-      description: t("commandPalette.commands.openSettingsDesc", {
-        defaultValue: "打开应用偏好与快捷键设置",
-      }),
-      keywords: ["settings", "preferences", "config", "设置", "偏好"],
-      onExecute: openSettingsFromPalette,
-    },
-    {
-      id: "open-quick-capture",
-      label: t("commandPalette.commands.openQuickCapture", { defaultValue: "打开快速捕获" }),
-      description: t("commandPalette.commands.openQuickCaptureDesc", {
-        defaultValue: "呼出桌面浮动快速捕获框",
-      }),
-      keywords: ["quick capture", "capture", "快速捕获", "速记"],
-      shortcut: settingsConfig?.quickCaptureShortcut || undefined,
-      onExecute: async () => {
-        if (saveStateRef.current === "dirty") {
-          await saveCurrentNote();
-        }
-        await openQuickCaptureWindow().catch((error) => {
-          showToast(getErrorMessage(error));
-        });
-      },
-    },
-  ];
-
-  const aboutButtonLabel = t("settings.update.title", { defaultValue: "更新" });
-  const aboutButtonExpanded = aboutUpdateReminder.showText;
-  const aboutButtonTitle = aboutUpdateReminder.hasPendingUpdate
-    ? aboutButtonLabel
-    : t("main.window.about", { defaultValue: "关于" });
+  });
 
   return (
     <div className="w-full h-screen flex flex-col">
       <div className="relative noise-bg bg-cloud overflow-hidden flex flex-col flex-1">
         <BackgroundLayer config={settingsConfig} />
-        <div
-          className={`relative z-10 flex items-center justify-between h-11 bg-paper/55 backdrop-blur-[1px] border-b border-paper-deep/30 shrink-0 select-none cursor-default ${
-            isMacOS ? "pl-20 pr-5" : "pl-5 pr-0"
-          }`}
+        <TitleBar
+          t={t}
+          isMacOS={isMacOS}
+          isMaximized={isMaximized}
+          noteTitle={
+            title ||
+            selectedNote?.preview ||
+            t("common.untitledNote", { defaultValue: "无标题笔记" })
+          }
+          aboutUpdateReminder={aboutUpdateReminder}
           onMouseDown={handleTitleBarMouseDown}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="text-[15px] font-serif font-medium text-ink-soft tracking-wide leading-none">
-              花笺
-            </span>
-            <span className="text-[11px] text-ink-ghost font-body leading-none translate-y-px">
-              —
-            </span>
-            <span className="text-[11px] text-ink-faint font-body truncate max-w-[240px] leading-none translate-y-px">
-              {title ||
-                selectedNote?.preview ||
-                t("common.untitledNote", { defaultValue: "无标题笔记" })}
-            </span>
-          </div>
-          <div className="flex items-center">
-            <button
-              onClick={() => void handleOpenNotepad()}
-              className="w-10 h-11 flex items-center justify-center text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer"
-              title={t("main.window.quickNotepad", { defaultValue: "快捷便签" })}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M4 4h16v14H7l-3 3V4z" />
-                <path d="M8 9h8M8 13h5" />
-              </svg>
-            </button>
-            <button
-              onClick={() => void handleOpenSettings()}
-              className="w-10 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
-              title={t("main.window.settings", { defaultValue: "设置" })}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-            <button
-              onClick={handleOpenAbout}
-              className={`h-11 flex items-center justify-center overflow-hidden text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-[width,padding,gap,background-color,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
-                aboutButtonExpanded ? "w-[72px] gap-1.5 px-3" : "w-10 gap-0 px-0"
-              }`}
-              title={aboutButtonTitle}
-              aria-label={aboutButtonTitle}
-            >
-              {aboutUpdateReminder.hasPendingUpdate ? (
-                <svg
-                  data-testid="main-about-update-icon"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 16V8" />
-                  <path d="m8.5 11.5 3.5-3.5 3.5 3.5" />
-                </svg>
-              ) : (
-                <svg
-                  data-testid="main-about-info-icon"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 16v-4" />
-                  <path d="M12 8h.01" />
-                </svg>
-              )}
-              {aboutUpdateReminder.hasPendingUpdate ? (
-                <span
-                  data-testid="main-about-update-label"
-                  className={`overflow-hidden whitespace-nowrap text-[11px] font-body leading-none transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                    aboutButtonExpanded
-                      ? "max-w-[24px] translate-x-0 opacity-100"
-                      : "max-w-0 translate-x-1 opacity-0"
-                  }`}
-                >
-                  {aboutButtonLabel}
-                </span>
-              ) : null}
-            </button>
-
-            {!isMacOS && (
-              <>
-                <div className="w-px h-4 bg-paper-deep/30 mx-0.5" />
-
-                <button
-                  onClick={handleMinimize}
-                  className="w-11 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-soft hover:bg-paper-warm transition-all cursor-pointer"
-                  title={t("main.window.minimize", { defaultValue: "最小化" })}
-                >
-                  <svg width="12" height="12" viewBox="0 0 12 12">
-                    <rect x="1" y="5.5" width="10" height="1" fill="currentColor" rx="0.5" />
-                  </svg>
-                </button>
-                <button
-                  onClick={handleMaximize}
-                  className="w-11 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-soft hover:bg-paper-warm transition-all cursor-pointer"
-                  title={
-                    isMaximized
-                      ? t("main.window.restore", { defaultValue: "还原" })
-                      : t("main.window.maximize", { defaultValue: "最大化" })
-                  }
-                >
-                  {isMaximized ? (
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.2"
-                    >
-                      <rect x="3" y="3" width="7" height="7" rx="1" />
-                      <path d="M3 5H2V2a1 1 0 0 1 1-1h5v1" />
-                    </svg>
-                  ) : (
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.2"
-                    >
-                      <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" />
-                    </svg>
-                  )}
-                </button>
-                <button
-                  onClick={handleClose}
-                  className="w-11 h-11 flex items-center justify-center text-ink-ghost hover:text-red-500 hover:bg-danger-bg transition-all cursor-pointer"
-                  title={t("main.window.close", { defaultValue: "关闭" })}
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 12 12"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  >
-                    <path d="M2 2l8 8M10 2l-8 8" />
-                  </svg>
-                </button>
-              </>
-            )}
-          </div>
-        </div>
+          onOpenNotepad={() =>
+            void openNotepadWindow().catch((error) => showToast(getErrorMessage(error)))
+          }
+          onOpenSettings={() => void handleOpenSettings()}
+          onOpenAbout={handleOpenAbout}
+          onMinimize={() => void minimizeCurrentWindow()}
+          onMaximize={toggleMaximize}
+          onClose={() => void closeCurrentWindow()}
+        />
 
         <div className="relative z-10 flex flex-1 min-h-0 main-layout-row">
-          <div
-            className="border-r border-paper-deep/30 bg-paper/40 shrink-0 overflow-hidden transition-[width] duration-[600ms] main-sidebar"
-            style={{ width: sidebarCollapsed || focusMode ? 0 : sidebarWidth }}
-          >
-            <div className="flex flex-col h-full" style={{ width: `${sidebarWidth}px` }}>
-              <div className="px-3 pt-3 pb-2 shrink-0">
-                <div className="flex items-center gap-2 px-2.5 h-8 rounded-lg bg-paper-warm/80 border border-paper-deep/40 focus-within:border-bamboo/30 focus-within:bg-cloud transition-all">
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    className="text-ink-ghost shrink-0"
-                  >
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="m21 21-4.35-4.35" />
-                  </svg>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder={t("main.sidebar.searchPlaceholder", { defaultValue: "搜索笔记…" })}
-                    className="flex-1 text-[12px] font-body text-ink placeholder:text-ink-ghost/60 bg-transparent"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery("")}
-                      className="text-ink-ghost hover:text-ink-faint transition-colors cursor-pointer"
-                      title={t("main.sidebar.clearSearch", { defaultValue: "清空搜索" })}
-                    >
-                      <svg
-                        width="10"
-                        height="10"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                      >
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-                <TagFilterBar
-                  notes={notes}
-                  selectedTag={tagFilter}
-                  open={tagFilterOpen}
-                  onToggle={() => setTagFilterOpen((open) => !open)}
-                  onSelectTag={(tag) => setTagFilter(tag === tagFilter ? "" : tag)}
-                />
-              </div>
-
-              <div className="px-3 pb-2 shrink-0 flex flex-col gap-1">
-                <select
-                  value={selectedTemplateId}
-                  onChange={(event) => setSelectedTemplateId(event.target.value)}
-                  className="w-full h-7 px-2 rounded-lg border border-paper-deep/25 bg-paper-warm/45 text-[11px] text-ink-faint cursor-pointer"
-                  aria-label="新建笔记模板"
-                >
-                  <option value="">空白笔记</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="daily"
-                  style={{ order: sidebarActionOrder.indexOf("daily") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "daily")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    void handleOpenDailyNote();
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("daily")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="4" width="18" height="17" rx="2" />
-                    <path d="M8 2v4M16 2v4M7 10h10M8 14h3" />
-                  </svg>
-                  <span>每日便笺</span>
-                </button>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="inbox"
-                  style={{ order: sidebarActionOrder.indexOf("inbox") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "inbox")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    openWorkspace("inbox");
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("inbox")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.1"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M21 8v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8" />
-                    <path d="M1 3h22v5H1zM10 12h4" />
-                  </svg>
-                  <span>收件箱</span>
-                  {inboxCount > 0 ? (
-                    <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-bamboo-mist text-[9px] leading-4 text-bamboo text-center">
-                      {inboxCount}
-                    </span>
-                  ) : null}
-                </button>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="journal"
-                  style={{ order: sidebarActionOrder.indexOf("journal") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "journal")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    openWorkspace("journal");
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("journal")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.1"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="4" width="18" height="17" rx="2" />
-                    <path d="M8 2v4M16 2v4M7 10h10M8 14h8M8 17h5" />
-                  </svg>
-                  <span>日记流</span>
-                </button>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="dashboard"
-                  style={{ order: sidebarActionOrder.indexOf("dashboard") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "dashboard")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    openWorkspace("dashboard");
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer ${sidebarActionDragClass("dashboard")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.1"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="3" width="7" height="7" rx="1" />
-                    <rect x="14" y="3" width="7" height="7" rx="1" />
-                    <rect x="3" y="14" width="7" height="7" rx="1" />
-                    <rect x="14" y="14" width="7" height="7" rx="1" />
-                  </svg>
-                  <span>笔记仪表盘</span>
-                </button>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="new-note"
-                  style={{ order: sidebarActionOrder.indexOf("new-note") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "new-note")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    void handleNewNote();
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-bamboo hover:bg-bamboo-mist/60 transition-all cursor-pointer group ${sidebarActionDragClass("new-note")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    className="group-hover:rotate-90 transition-transform duration-200"
-                  >
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                  <span>{t("main.sidebar.newNote", { defaultValue: "新建笔记" })}</span>
-                </button>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="todos"
-                  style={{ order: sidebarActionOrder.indexOf("todos") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "todos")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    handleToggleTodos();
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group ${sidebarActionDragClass("todos")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m9 11 3 3L22 4" />
-                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                  </svg>
-                  <span>待办聚合</span>
-                </button>
-                <button
-                  data-sidebar-sort-kind="action"
-                  data-sidebar-sort-id="import"
-                  style={{ order: sidebarActionOrder.indexOf("import") }}
-                  onPointerDown={(event) => beginSidebarPointerDrag(event, "action", "import")}
-                  onClick={() => {
-                    if (consumeSidebarPointerClick()) return;
-                    void handleImportNote();
-                  }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group ${sidebarActionDragClass("import")}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3v12" />
-                    <path d="m7 10 5 5 5-5" />
-                    <path d="M5 21h14" />
-                  </svg>
-                  <span>{t("main.sidebar.importMarkdown", { defaultValue: "导入 Markdown" })}</span>
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between px-5 pb-1.5 shrink-0">
-                <span className="text-[10px] text-ink-ghost font-mono tracking-wider uppercase">
-                  {t("common.noteCount", {
-                    count: filteredNotes.length,
-                    defaultValue: "{{count}} 篇笔记",
-                  })}
-                  {externalFiles.length > 0
-                    ? ` · ${t("common.externalFileCount", {
-                        count: externalFiles.length,
-                        defaultValue: "{{count}} 个外部文件",
-                      })}`
-                    : ""}
-                </span>
-                <button
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    if (showCategoryInput && categoryInputValue.trim()) {
-                      void handleCreateCategory();
-                      return;
-                    }
-                    setShowCategoryInput(true);
-                  }}
-                  className="text-[10px] text-ink-ghost hover:text-bamboo transition-colors cursor-pointer"
-                  title={t("main.category.new", { defaultValue: "新建分类" })}
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  >
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
-              </div>
-
-              {showCategoryInput && (
-                <div className="px-3 pb-2 shrink-0">
-                  <input
-                    type="text"
-                    autoFocus
-                    value={categoryInputValue}
-                    onChange={(e) => setCategoryInputValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void handleCreateCategory();
-                      if (e.key === "Escape") {
-                        setShowCategoryInput(false);
-                        setCategoryInputValue("");
-                      }
-                    }}
-                    onBlur={() => void handleCreateCategory()}
-                    placeholder={t("main.category.placeholder", { defaultValue: "输入分类名…" })}
-                    className="w-full px-2.5 h-7 rounded-lg text-[12px] font-body text-ink bg-paper-warm/80 border border-paper-deep/40 focus:border-bamboo/30 placeholder:text-ink-ghost/60"
-                  />
-                </div>
-              )}
-
-              <div ref={sidebarScrollRef} className="flex-1 overflow-y-auto px-2 pb-2">
-                <div className="space-y-0.5">
-                  {externalFiles.length > 0 && (
-                    <>
-                      <div className="px-3 py-1.5 text-[10px] text-ink-ghost/50 font-mono tracking-wider uppercase">
-                        {t("main.externalFiles.title", { defaultValue: "外部文件" })}
-                      </div>
-                      {externalFiles.map((file) => {
-                        const isSelected = file.id === selectedId;
-                        const isHovered = file.id === hoveredId;
-
-                        return (
-                          <button
-                            key={file.id}
-                            onClick={() => void handleSelectExternalFile(file.id)}
-                            onMouseEnter={() => setHoveredId(file.id)}
-                            onMouseLeave={() => setHoveredId(null)}
-                            className={`w-full text-left rounded-xl px-3 py-2.5 transition-all duration-[600ms] cursor-pointer group relative ${
-                              isSelected
-                                ? "bg-bamboo-mist/70"
-                                : isHovered
-                                  ? "bg-paper-warm/70"
-                                  : "bg-transparent"
-                            }`}
-                          >
-                            <div
-                              className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-                                isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
-                              }`}
-                            />
-
-                            <div className="flex items-baseline justify-between mb-0.5">
-                              <span
-                                className={`text-[13px] font-display font-medium truncate pr-2 transition-colors flex items-center gap-1.5 ${
-                                  isSelected ? "text-bamboo" : "text-ink-soft"
-                                }`}
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  className="shrink-0 opacity-60"
-                                >
-                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                  <polyline points="14 2 14 8 20 8" />
-                                </svg>
-                                {file.title}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveExternalFile(file.id);
-                                }}
-                                className="opacity-0 group-hover:opacity-100 text-ink-ghost hover:text-red-400 transition-all p-0.5"
-                                title={t("main.externalFiles.remove", {
-                                  defaultValue: "从列表移除",
-                                })}
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                >
-                                  <line x1="18" y1="6" x2="6" y2="18" />
-                                  <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                              </button>
-                            </div>
-
-                            <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors pl-[18px]">
-                              {file.filePath}
-                            </p>
-                          </button>
-                        );
-                      })}
-                    </>
-                  )}
-
-                  {categoryGroups.map((group: CategoryGroup) => {
-                    if (!group.category) {
-                      return (
-                        <div
-                          key="__uncategorized__"
-                          data-sidebar-note-drop-category=""
-                          className={`rounded-lg transition-all duration-200 ${
-                            dragOverCategory === "" ? "bg-bamboo/10 ring-1 ring-bamboo/20" : ""
-                          }`}
-                        >
-                          {group.notes.map((note) => {
-                            const isSelected = note.id === selectedId;
-                            const isHovered = note.id === hoveredId;
-                            return (
-                              <div
-                                key={note.id}
-                                onPointerDown={(event) =>
-                                  beginSidebarNotePointerDrag(event, note.id, note.category)
-                                }
-                                onClick={() => {
-                                  if (consumeSidebarPointerClick()) return;
-                                  void handleSelectNote(note.id);
-                                }}
-                                onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
-                                onMouseEnter={() => setHoveredId(note.id)}
-                                onMouseLeave={() => setHoveredId(null)}
-                                className={`w-full text-left rounded-xl px-3 py-2.5 transition-all duration-[600ms] cursor-pointer group relative ${
-                                  isSelected
-                                    ? "bg-bamboo-mist/70"
-                                    : isHovered
-                                      ? "bg-paper-warm/70"
-                                      : "bg-transparent"
-                                }`}
-                              >
-                                <div
-                                  className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-                                    isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
-                                  }`}
-                                />
-                                <div className="flex items-baseline justify-between mb-0.5">
-                                  <span
-                                    className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
-                                      isSelected ? "text-bamboo" : "text-ink-soft"
-                                    }`}
-                                  >
-                                    {getDisplayTitle(note, t)}
-                                  </span>
-                                  <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
-                                    {formatShortDate(note.updatedAt)}
-                                  </span>
-                                </div>
-                                <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
-                                  {note.preview ||
-                                    t("common.blankNote", { defaultValue: "空白笔记" })}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-                                    {formatTime(note.updatedAt)}
-                                  </span>
-                                  <span className="text-[10px] text-ink-ghost/40">·</span>
-                                  <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-                                    {t("common.wordCount", {
-                                      count: note.wordCount,
-                                      defaultValue: "{{count}} 字",
-                                    })}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    }
-
-                    const isCollapsed = collapsedCategories.has(group.category);
-                    const isSidebarCategorySource =
-                      activeSidebarPointerDrag?.kind === "category" &&
-                      activeSidebarPointerDrag.sourceId === group.category;
-                    const isSidebarCategoryTarget =
-                      activeSidebarPointerDrag?.kind === "category" &&
-                      activeSidebarPointerDrag.targetId === group.category &&
-                      !isSidebarCategorySource;
-
-                    return (
-                      <div
-                        key={group.category}
-                        data-sidebar-note-drop-category={group.category}
-                        className="px-2 mb-0.5"
-                      >
-                        <div
-                          data-sidebar-sort-kind="category"
-                          data-sidebar-sort-id={group.category}
-                          onPointerDown={(event) =>
-                            beginSidebarPointerDrag(event, "category", group.category)
-                          }
-                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg group/cat cursor-pointer select-none transition-all duration-200 ${
-                            isSidebarCategoryTarget || dragOverCategory === group.category
-                              ? "bg-bamboo/15 border border-bamboo/40 ring-1 ring-bamboo/20"
-                              : isCollapsed
-                                ? "bg-transparent border border-bamboo/15"
-                                : "bg-bamboo/8 border border-bamboo/15 rounded-b-none"
-                          } ${isSidebarCategorySource ? "opacity-50" : ""}`}
-                          onClick={() => {
-                            if (consumeSidebarPointerClick()) return;
-                            toggleCategoryCollapse(group.category);
-                          }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setCategoryMenu({
-                              x: e.clientX,
-                              y: e.clientY,
-                              category: group.category,
-                            });
-                            setCategoryMenuClosing(false);
-                            setCategoryMenuConfirmDelete(false);
-                          }}
-                        >
-                          <svg
-                            width="10"
-                            height="10"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className={`text-bamboo/50 shrink-0 transition-transform duration-200 ${isCollapsed ? "" : "rotate-90"}`}
-                          >
-                            <polyline points="9 18 15 12 9 6" />
-                          </svg>
-                          <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="text-bamboo/50 shrink-0"
-                          >
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                          </svg>
-                          {renamingCategory === group.category ? (
-                            <input
-                              type="text"
-                              autoFocus
-                              value={renameCategoryValue}
-                              onChange={(e) => setRenameCategoryValue(e.target.value)}
-                              onKeyDown={(e) => {
-                                e.stopPropagation();
-                                if (e.key === "Enter") void handleRenameCategory(group.category);
-                                if (e.key === "Escape") setRenamingCategory(null);
-                              }}
-                              onBlur={() => void handleRenameCategory(group.category)}
-                              onClick={(e) => e.stopPropagation()}
-                              className="flex-1 min-w-0 px-1 text-[10px] font-mono text-ink bg-paper-warm/80 border border-bamboo/30 rounded"
-                            />
-                          ) : (
-                            <span className="text-[11px] text-bamboo/70 font-medium truncate">
-                              {group.category}
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleNewNote(group.category);
-                            }}
-                            className="ml-auto w-5 h-5 flex items-center justify-center rounded text-bamboo/45 hover:text-bamboo hover:bg-bamboo/10 transition-colors cursor-pointer"
-                            title={t("main.category.newNoteIn", {
-                              category: group.category,
-                              defaultValue: `在「${group.category}」中新建笔记`,
-                            })}
-                            aria-label={t("main.category.newNoteIn", {
-                              category: group.category,
-                              defaultValue: `在「${group.category}」中新建笔记`,
-                            })}
-                          >
-                            <svg
-                              width="11"
-                              height="11"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                            >
-                              <path d="M12 5v14M5 12h14" />
-                            </svg>
-                          </button>
-                          <span className="text-[9px] text-bamboo/40 font-mono shrink-0">
-                            {group.notes.length}
-                          </span>
-                        </div>
-
-                        <div className={`category-body ${isCollapsed ? "" : "expanded"}`}>
-                          <div className="category-body-inner bg-bamboo/[0.03] border border-t-0 border-bamboo/10 rounded-b-lg pb-1 pt-1">
-                            {group.notes.length === 0 ? (
-                              <div className="px-3 py-3 text-center text-[11px] text-ink-ghost/50">
-                                {t("main.category.emptyFolder", { defaultValue: "空文件夹" })}
-                              </div>
-                            ) : (
-                              group.notes.map((note) => {
-                                const isSelected = note.id === selectedId;
-                                const isHovered = note.id === hoveredId;
-
-                                return (
-                                  <div
-                                    key={note.id}
-                                    onPointerDown={(event) =>
-                                      beginSidebarNotePointerDrag(event, note.id, note.category)
-                                    }
-                                    onClick={() => {
-                                      if (consumeSidebarPointerClick()) return;
-                                      void handleSelectNote(note.id);
-                                    }}
-                                    onContextMenu={(event) => handleOpenNoteMenu(event, note.id)}
-                                    onMouseEnter={() => setHoveredId(note.id)}
-                                    onMouseLeave={() => setHoveredId(null)}
-                                    className={`w-full text-left rounded-lg mx-1 px-2.5 py-2 transition-all duration-[600ms] cursor-pointer group relative ${
-                                      isSelected
-                                        ? "bg-bamboo-mist/70"
-                                        : isHovered
-                                          ? "bg-paper-warm/70"
-                                          : "bg-transparent"
-                                    }`}
-                                    style={{ width: "calc(100% - 8px)" }}
-                                  >
-                                    <div
-                                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-                                        isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
-                                      }`}
-                                    />
-
-                                    <div className="flex items-baseline justify-between mb-0.5">
-                                      <span
-                                        className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
-                                          isSelected ? "text-bamboo" : "text-ink-soft"
-                                        }`}
-                                      >
-                                        {getDisplayTitle(note, t)}
-                                      </span>
-                                      <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
-                                        {formatShortDate(note.updatedAt)}
-                                      </span>
-                                    </div>
-
-                                    <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
-                                      {note.preview ||
-                                        t("common.blankNote", { defaultValue: "空白笔记" })}
-                                    </p>
-
-                                    <div className="flex items-center gap-2 mt-1">
-                                      <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-                                        {formatTime(note.updatedAt)}
-                                      </span>
-                                      <span className="text-[10px] text-ink-ghost/40">·</span>
-                                      <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-                                        {t("common.wordCount", {
-                                          count: note.wordCount,
-                                          defaultValue: "{{count}} 字",
-                                        })}
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {!isLoading && filteredNotes.length === 0 && externalFiles.length === 0 && (
-                    <div className="px-3 py-8 text-center text-[12px] text-ink-ghost leading-relaxed">
-                      {searchQuery
-                        ? t("main.search.noResults", { defaultValue: "没有匹配的笔记" })
-                        : t("main.search.empty", { defaultValue: "还没有笔记" })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {!sidebarCollapsed && (
-            <div
-              className={`w-1 shrink-0 cursor-col-resize group relative ${isResizingSidebar ? "bg-bamboo/30" : "hover:bg-bamboo/20"} transition-colors`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setIsResizingSidebar(true);
-              }}
-            >
-              <div
-                className={`absolute inset-y-0 -left-1 -right-1 ${isResizingSidebar ? "" : "group-hover:bg-bamboo/5"}`}
-              />
-            </div>
-          )}
+          <MainSidebar
+            t={t}
+            sidebarCollapsed={sidebarCollapsed}
+            focusMode={focusMode}
+            sidebarWidth={sidebarWidth}
+            isResizingSidebar={isResizingSidebar}
+            onStartResizeSidebar={() => setIsResizingSidebar(true)}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            notes={notes}
+            filteredNotes={filteredNotes}
+            externalFiles={externalFiles}
+            selectedId={selectedId}
+            hoveredId={hoveredId}
+            onHoverId={setHoveredId}
+            tagFilter={tagFilter}
+            tagFilterOpen={tagFilterOpen}
+            onToggleTagFilter={() => setTagFilterOpen((open) => !open)}
+            onSelectTagFilter={(tag) => setTagFilter(tag === tagFilter ? "" : tag)}
+            selectedTemplateId={selectedTemplateId}
+            onSelectTemplateId={setSelectedTemplateId}
+            templates={templates}
+            sidebarActionOrder={sidebarActionOrder}
+            inboxCount={inboxCount}
+            categoryGroups={categoryGroups}
+            collapsedCategories={collapsedCategories}
+            dragOverCategory={dragOverCategory}
+            activeSidebarPointerDrag={activeSidebarPointerDrag}
+            showCategoryInput={showCategoryInput}
+            categoryInputValue={categoryInputValue}
+            onCategoryInputValueChange={setCategoryInputValue}
+            onOpenCategoryInput={() => setShowCategoryInput(true)}
+            onCancelCategoryInput={() => {
+              setShowCategoryInput(false);
+              setCategoryInputValue("");
+            }}
+            onCreateCategory={() => void handleCreateCategory()}
+            renamingCategory={renamingCategory}
+            renameCategoryValue={renameCategoryValue}
+            onRenameCategoryValueChange={setRenameCategoryValue}
+            onCommitRenameCategory={(oldName) => void handleRenameCategory(oldName)}
+            onCancelRenameCategory={() => setRenamingCategory(null)}
+            isLoading={isLoading}
+            sidebarScrollRef={sidebarScrollRef}
+            consumeSidebarPointerClick={consumeSidebarPointerClick}
+            beginSidebarPointerDrag={beginSidebarPointerDrag}
+            beginSidebarNotePointerDrag={beginSidebarNotePointerDrag}
+            sidebarActionDragClass={sidebarActionDragClass}
+            onOpenDailyNote={() => void handleOpenDailyNote()}
+            onOpenWorkspace={openWorkspace}
+            onNewNote={(category) => void handleNewNote(category)}
+            onToggleTodos={handleToggleTodos}
+            onImportNote={() => void handleImportNote()}
+            onSelectExternalFile={(id) => void handleSelectExternalFile(id)}
+            onRemoveExternalFile={(id) => void handleRemoveExternalFile(id)}
+            onSelectNote={(id) => void handleSelectNote(id)}
+            onOpenNoteMenu={(event, noteId) => {
+              setHoveredId(noteId);
+              openNoteMenu(event, noteId);
+            }}
+            onToggleCategoryCollapse={toggleCategoryCollapse}
+            onOpenCategoryMenu={openCategoryMenu}
+          />
 
           <div className="flex-1 flex flex-col min-w-0">
-            <div
-              className={`flex items-center h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20 transition-all duration-200 ${
-                settingsOpen || aboutOpen || focusMode || toolbarCollapsed
-                  ? "justify-end px-2"
-                  : "justify-between px-4"
-              }`}
-            >
-              <div
-                className={`flex items-center gap-1.5 overflow-hidden transition-[max-width,opacity] duration-200 ${
-                  settingsOpen || aboutOpen || focusMode || toolbarCollapsed
-                    ? "max-w-0 opacity-0 pointer-events-none"
-                    : "max-w-[900px] opacity-100"
-                }`}
-              >
-                <button
-                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
-                  title={
-                    sidebarCollapsed
-                      ? t("main.window.expandSidebar", { defaultValue: "展开侧栏" })
-                      : t("main.window.collapseSidebar", { defaultValue: "收起侧栏" })
-                  }
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                    <line x1="9" y1="3" x2="9" y2="21" />
-                  </svg>
-                </button>
-
-                <div className="h-4 w-px bg-paper-deep/30 mx-1" />
-
-                <button
-                  onClick={() => {
-                    // 自动切到分栏模式 + 切换大纲
-                    if (effectiveViewMode === "edit") {
-                      setViewMode("split");
-                    }
-                    setOutlineOpen((o) => {
-                      const next = !o;
-                      if (next && settingsConfig && !settingsConfig.showOutline) {
-                        // 如果设置里没开，自动开启
-                        handleSettingsChange({ ...settingsConfig, showOutline: true });
-                      }
-                      return next;
-                    });
-                  }}
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
-                    outlineOpen &&
-                    (effectiveViewMode === "split" || effectiveViewMode === "preview")
-                      ? "text-bamboo bg-bamboo-mist/50"
-                      : "text-ink-ghost hover:text-ink-faint hover:bg-paper-warm"
-                  }`}
-                  title="目录大纲"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <line x1="8" y1="6" x2="21" y2="6" />
-                    <line x1="8" y1="12" x2="21" y2="12" />
-                    <line x1="8" y1="18" x2="21" y2="18" />
-                    <line x1="3" y1="6" x2="3.01" y2="6" />
-                    <line x1="3" y1="12" x2="3.01" y2="12" />
-                    <line x1="3" y1="18" x2="3.01" y2="18" />
-                  </svg>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setHistoryOpen((open) => {
-                      const nextOpen = !open;
-                      if (nextOpen) {
-                        setSettingsOpen(false);
-                        setAboutOpen(false);
-                        setTodosOpen(false);
-                        setBacklinksOpen(false);
-                        setKnowledgeGraphOpen(false);
-                      }
-                      return nextOpen;
-                    });
-                  }}
-                  disabled={!selectedId || isExternal}
-                  aria-label="版本历史"
-                  title="版本历史"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M3 12a9 9 0 1 0 3-6.7" />
-                    <path d="M3 4v5h5M12 7v5l3 2" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => {
-                    setBacklinksOpen((open) => {
-                      const nextOpen = !open;
-                      if (nextOpen) {
-                        setSettingsOpen(false);
-                        setAboutOpen(false);
-                        setTodosOpen(false);
-                        setHistoryOpen(false);
-                        setKnowledgeGraphOpen(false);
-                      }
-                      return nextOpen;
-                    });
-                  }}
-                  disabled={!selectedId || isExternal}
-                  aria-label="反向链接"
-                  title="反向链接"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15" />
-                    <path d="M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => {
-                    setKnowledgeGraphOpen((open) => {
-                      const nextOpen = !open;
-                      if (nextOpen) {
-                        setSettingsOpen(false);
-                        setAboutOpen(false);
-                        setTodosOpen(false);
-                        setHistoryOpen(false);
-                        setBacklinksOpen(false);
-                        setLibraryOpen(false);
-                        setRemindersOpen(false);
-                        setWorkspaceMode(null);
-                      }
-                      return nextOpen;
-                    });
-                  }}
-                  aria-label="知识图谱"
-                  title="知识图谱"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="6" cy="8" r="2.5" />
-                    <circle cx="17" cy="5" r="2" />
-                    <circle cx="12" cy="16" r="3" />
-                    <line x1="8" y1="9.2" x2="14.7" y2="6.3" />
-                    <line x1="10" y1="9" x2="11.2" y2="13.5" />
-                    <line x1="13.7" y1="7.2" x2="14.5" y2="13" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => void handleCopyStableLink()}
-                  disabled={!selectedNote || isExternal}
-                  aria-label="复制稳定链接"
-                  title="复制稳定链接"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="9" y="9" width="11" height="11" rx="2" />
-                    <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => {
-                    setRemindersOpen((open) => {
-                      const nextOpen = !open;
-                      if (nextOpen) {
-                        setSettingsOpen(false);
-                        setAboutOpen(false);
-                        setTodosOpen(false);
-                        setHistoryOpen(false);
-                        setBacklinksOpen(false);
-                        setKnowledgeGraphOpen(false);
-                      }
-                      return nextOpen;
-                    });
-                  }}
-                  disabled={!selectedId || isExternal}
-                  aria-label="添加提醒"
-                  title="添加提醒"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="13" r="8" />
-                    <path d="M12 9v4l2.5 1.5M9 3h6M12 3v2" />
-                  </svg>
-                </button>
-                <button
-                  onClick={handleToggleLibrary}
-                  aria-label="资料与备份"
-                  title="资料与备份"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M4 4h16v16H4z" />
-                    <path d="M8 4v16M11 9h5M11 13h5" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => {
-                    setReadingMode(false);
-                    setFocusMode((active) => !active);
-                  }}
-                  aria-label={focusMode ? "退出专注写作" : "专注写作"}
-                  title={focusMode ? "退出专注写作" : "专注写作"}
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${focusMode ? "text-bamboo bg-bamboo-mist" : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm"}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  >
-                    <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => {
-                    setFocusMode(false);
-                    setReadingMode((active) => !active);
-                  }}
-                  aria-label={readingMode ? "退出阅读模式" : "沉浸阅读"}
-                  title={readingMode ? "退出阅读模式" : "沉浸阅读"}
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${readingMode ? "text-bamboo bg-bamboo-mist" : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm"}`}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z" />
-                    <path d="M4 5.5v16M8 7h8M8 11h8M8 15h5" />
-                  </svg>
-                </button>
-                <button
-                  onClick={handleSaveAsTemplate}
-                  disabled={!selectedId || isExternal || !content.trim()}
-                  aria-label="存为模板"
-                  title="存为模板"
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3v12" />
-                    <path d="m7 10 5 5 5-5" />
-                    <path d="M5 21h14" />
-                  </svg>
-                </button>
-
-                {/* 星标置顶 */}
-                <button
-                  onClick={() => {
-                    const next = !isPinned;
-                    setIsPinned(next);
-                    pinnedValueRef.current = next;
-                    markDirty();
-                  }}
-                  disabled={!selectedId || isExternal}
-                  aria-label={
-                    isPinned
-                      ? t("main.editor.unpin", { defaultValue: "取消置顶" })
-                      : t("main.editor.pin", { defaultValue: "置顶" })
-                  }
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
-                    isPinned
-                      ? "text-yellow-500 bg-yellow-50/60 hover:text-yellow-600"
-                      : "text-ink-ghost hover:text-yellow-500 hover:bg-paper-warm"
-                  }`}
-                  title={
-                    isPinned
-                      ? t("main.editor.unpin", { defaultValue: "取消置顶" })
-                      : t("main.editor.pin", { defaultValue: "置顶" })
-                  }
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill={isPinned ? "currentColor" : "none"}
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                  </svg>
-                </button>
-
-                <button
-                  onClick={() => void handlePinEntry()}
-                  disabled={!selectedId}
-                  aria-label={pinTileButtonTitle(selectedTilePinned)}
-                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
-                    selectedTilePinned
-                      ? "text-bamboo bg-bamboo-mist/40 hover:text-red-400 hover:bg-danger-bg"
-                      : "text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50"
-                  }`}
-                  title={pinTileButtonTitle(selectedTilePinned)}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 17v5" />
-                    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z" />
-                  </svg>
-                </button>
-
-                <button
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={handleUndo}
-                  disabled={!selectedId}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                  title={t("main.editor.undo", { defaultValue: "撤销（Ctrl+Z）" })}
-                  aria-label={t("main.editor.undoLabel", { defaultValue: "撤销" })}
-                >
-                  <svg
-                    data-testid="main-editor-undo-icon"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M9 14 4 9l5-5" />
-                    <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
-                  </svg>
-                </button>
-
-                <button
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={handleRedo}
-                  disabled={!selectedId}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                  title={t("main.editor.redo", { defaultValue: "重做（Ctrl+Y）" })}
-                  aria-label={t("main.editor.redoLabel", { defaultValue: "重做" })}
-                >
-                  <svg
-                    data-testid="main-editor-redo-icon"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                    style={{ transform: "scaleX(-1)" }}
-                  >
-                    <path d="M9 14 4 9l5-5" />
-                    <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
-                  </svg>
-                </button>
-
-                <button
-                  onClick={() => void saveCurrentNote(true)}
-                  disabled={!selectedId || saveState === "saving"}
-                  className="px-3 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                  title={t("common.save", { defaultValue: "保存" })}
-                >
-                  {t("common.save", { defaultValue: "保存" })}
-                </button>
-
-                {/* 导出按钮 */}
-                {!isExternal && selectedId && (
-                  <>
-                    <div className="h-4 w-px bg-paper-deep/20" />
-                    <button
-                      onClick={() => void handleExportHtml()}
-                      disabled={!selectedId}
-                      className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={t("main.export.html", { defaultValue: "导出 HTML" })}
-                    >
-                      HTML
-                    </button>
-                    <button
-                      onClick={() => void handleExportPdf()}
-                      disabled={!selectedId}
-                      className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                      title={t("main.export.pdf", { defaultValue: "导出 PDF" })}
-                    >
-                      PDF
-                    </button>
-                  </>
-                )}
-
-                {deleteConfirm ? (
-                  <div
-                    className={`flex items-center gap-1 ml-1 ${deleteExiting ? "animate-delete-confirm-exit" : "animate-delete-confirm"}`}
-                  >
-                    <span className="text-[11px] text-red-400 whitespace-nowrap">
-                      {t("main.editor.confirmDelete", { defaultValue: "确认删除？" })}
-                    </span>
-                    <button
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setDeleteExiting(true);
-                        setTimeout(() => {
-                          setDeleteExiting(false);
-                          setDeleteConfirm(false);
-                          void handleDeleteNote();
-                        }, 150);
-                      }}
-                      className="px-2 h-6 rounded-md text-[11px] text-cloud bg-red-400 hover:bg-red-500 transition-colors cursor-pointer whitespace-nowrap outline-none"
-                    >
-                      {t("common.delete", { defaultValue: "删除" })}
-                    </button>
-                    <button
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setDeleteExiting(true);
-                        setTimeout(() => {
-                          setDeleteExiting(false);
-                          setDeleteConfirm(false);
-                        }, 150);
-                      }}
-                      className="px-2 h-6 rounded-md text-[11px] text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
-                    >
-                      {t("common.cancel", { defaultValue: "取消" })}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setDeleteConfirm(true)}
-                    disabled={!selectedId}
-                    className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-red-400 hover:bg-danger-bg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                    title={t("noteMenu.delete", { defaultValue: "删除笔记" })}
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="3,6 5,6 21,6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-
-              {!settingsOpen && !aboutOpen && !focusMode && !toolbarCollapsed && (
-                <SlidingButtonGroup
-                  options={viewModeOptions}
-                  value={viewMode}
-                  onChange={setViewMode}
-                  buttonClassName="px-3.5 py-1"
-                />
-              )}
-              {(toolbarCollapsed || settingsOpen || aboutOpen) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    // 收纳态可点击文字直接展开；设置/关于打开时保持只读提示
-                    if (toolbarCollapsed && !settingsOpen && !aboutOpen && !focusMode) {
-                      setToolbarCollapsed(false);
-                    }
-                  }}
-                  className={`px-2 text-[11px] font-body ${
-                    toolbarCollapsed && !settingsOpen && !aboutOpen && !focusMode
-                      ? "text-ink-ghost hover:text-ink-faint cursor-pointer"
-                      : "text-ink-ghost cursor-default"
-                  }`}
-                  title={
-                    toolbarCollapsed && !settingsOpen && !aboutOpen && !focusMode
-                      ? t("main.toolbar.expand", { defaultValue: "点击展开工具栏" })
-                      : undefined
-                  }
-                >
-                  {toolbarCollapsed
-                    ? t("main.toolbar.collapsedLabel", { defaultValue: "工具栏已收纳" })
-                    : settingsOpen
-                      ? "设置已打开"
-                      : "关于已打开"}
-                </button>
-              )}
-              {!settingsOpen && !aboutOpen && !focusMode && (
-                <button
-                  type="button"
-                  onClick={() => setToolbarCollapsed((collapsed) => !collapsed)}
-                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
-                  title={
-                    toolbarCollapsed
-                      ? t("main.toolbar.expand", { defaultValue: "展开工具栏" })
-                      : t("main.toolbar.collapse", { defaultValue: "收纳工具栏" })
-                  }
-                  aria-label={
-                    toolbarCollapsed
-                      ? t("main.toolbar.expand", { defaultValue: "展开工具栏" })
-                      : t("main.toolbar.collapse", { defaultValue: "收纳工具栏" })
-                  }
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    {toolbarCollapsed ? <path d="m6 9 6 6 6-6" /> : <path d="m6 15 6-6 6 6" />}
-                  </svg>
-                </button>
-              )}
-              {focusMode && (
-                <button
-                  type="button"
-                  onClick={() => setFocusMode(false)}
-                  className="px-2 text-[11px] text-bamboo cursor-pointer"
-                >
-                  退出专注
-                </button>
-              )}
-              {readingMode && (
-                <button
-                  type="button"
-                  onClick={() => setReadingMode(false)}
-                  className="px-2 text-[11px] text-bamboo cursor-pointer"
-                >
-                  退出阅读
-                </button>
-              )}
-            </div>
-
-            <div
-              key={noteTransitionKey}
-              className={`animate-note-enter px-6 pt-4 pb-2 shrink-0 border-b border-paper-deep/15 ${focusMode ? "hidden" : ""}`}
-            >
-              <input
-                type="text"
-                value={title}
-                onChange={(event) => {
-                  setTitle(event.target.value);
-                  markDirty();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    contentRef.current?.focus();
-                  }
-                }}
-                placeholder={t("common.untitledNote", { defaultValue: "无标题笔记" })}
-                disabled={!selectedId}
-                className="w-full text-[20px] font-display font-bold text-ink placeholder:text-ink-ghost/50 tracking-wide disabled:opacity-60"
-              />
-              {/* 标签编辑 */}
-              {!isExternal && selectedId && (
-                <TagEditor
-                  tags={noteTags}
-                  onChange={(newTags) => {
-                    setNoteTags(newTags);
-                    tagsValueRef.current = newTags;
-                    markDirty();
-                  }}
-                />
-              )}
-              <div className="flex items-center gap-3 mt-1.5">
-                <span className="text-[10px] text-ink-ghost font-mono tabular-nums truncate max-w-[200px]">
-                  {selectedExternalFile
-                    ? t("main.externalFile.label", {
-                        path: selectedExternalFile.filePath,
-                        defaultValue: "外部文件 · {{path}}",
-                      })
-                    : selectedNote
-                      ? `${formatShortDate(selectedNote.updatedAt)} ${formatTime(selectedNote.updatedAt)}`
-                      : "--"}
-                </span>
-                <span className="text-[10px] text-ink-ghost/40">·</span>
-                <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
-                  {t("common.wordCount", { count: charCount, defaultValue: "{{count}} 字" })}
-                </span>
-                <span className="text-[10px] text-ink-ghost/40">·</span>
-                <span
-                  key={saveState}
-                  className={`text-[10px] font-mono tabular-nums animate-status-fade ${
-                    saveState === "error"
-                      ? "text-red-400"
-                      : saveState === "dirty"
-                        ? "text-amber-500/70"
-                        : "text-bamboo/60"
-                  }`}
-                >
-                  {saveStateLabel[saveState]}
-                </span>
-              </div>
-            </div>
-
-            <div
-              key={effectiveViewMode}
-              ref={splitContainerRef}
-              className="flex-1 flex min-h-0 animate-view-fade"
-            >
-              {!selectedId && !isLoading ? (
-                <div className="flex-1 flex items-center justify-center text-[13px] text-ink-ghost">
-                  {t("main.editor.emptyHint", { defaultValue: "选择或新建一篇笔记" })}
-                </div>
-              ) : (
-                <>
-                  {(effectiveViewMode === "edit" || effectiveViewMode === "split") && (
-                    <div
-                      className="flex flex-col min-h-0 shrink-0"
-                      style={{
-                        width: effectiveViewMode === "split" ? `${splitRatio * 100}%` : "100%",
-                      }}
-                    >
-                      <div
-                        className={`flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0 ${focusMode || settingsOpen || aboutOpen ? "hidden" : ""}`}
-                      >
-                        {toolbarButtons.map((button) => (
-                          <button
-                            key={button.label}
-                            title={button.title}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              if (contentRef.current) {
-                                applyFormat(
-                                  contentRef.current,
-                                  button.action,
-                                  t,
-                                  setContent,
-                                  markDirty,
-                                );
-                              }
-                            }}
-                            className={`w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer ${button.style}`}
-                          >
-                            {button.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex-1 overflow-hidden px-5 pb-4">
-                        <textarea
-                          ref={contentRef}
-                          data-tab-indent="true"
-                          value={content}
-                          onChange={(event) => {
-                            setContent(event.target.value);
-                            markDirty();
-                          }}
-                          onPaste={imagePasteHandler}
-                          onDrop={imageDropHandler}
-                          onDragOver={imageDragOverHandler}
-                          onScroll={handleEditorScroll}
-                          className="w-full h-full text-ink-soft font-body placeholder:text-ink-ghost/40 editor-textarea"
-                          style={{
-                            fontSize: `${settingsConfig?.fontSize ?? 14}px`,
-                            tabSize: `var(--tab-indent-size, 2)`,
-                            fontFamily: `var(--editor-font-family)`,
-                            lineHeight: `var(--editor-line-height)`,
-                            maxWidth: `var(--editor-max-width)`,
-                            margin: "0 auto",
-                          }}
-                          placeholder={t("main.editor.contentPlaceholder", {
-                            defaultValue: "开始写作……",
-                          })}
-                          spellCheck={false}
-                          disabled={!selectedId}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {effectiveViewMode === "split" && (
-                    <div
-                      className={`w-1.5 shrink-0 cursor-col-resize group relative flex items-center justify-center ${isResizingSplit ? "bg-bamboo/30" : "hover:bg-bamboo/20"} transition-colors`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        setIsResizingSplit(true);
-                      }}
-                    >
-                      <div
-                        className={`absolute inset-y-0 -left-1.5 -right-1.5 ${isResizingSplit ? "" : "group-hover:bg-bamboo/5"}`}
-                      />
-                      {/* 拖拽手柄指示器 */}
-                      <div className="relative z-10 flex flex-col gap-[3px] opacity-0 group-hover:opacity-100 transition-opacity">
-                        <div className="w-[3px] h-[3px] rounded-full bg-ink-ghost/60" />
-                        <div className="w-[3px] h-[3px] rounded-full bg-ink-ghost/60" />
-                        <div className="w-[3px] h-[3px] rounded-full bg-ink-ghost/60" />
-                      </div>
-                    </div>
-                  )}
-
-                  {(effectiveViewMode === "preview" || effectiveViewMode === "split") && (
-                    <div className="flex flex-col min-h-0 min-w-0 flex-1">
-                      {(effectiveViewMode === "split" || (outlineOpen && headings.length > 0)) && (
-                        <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center justify-between">
-                          <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
-                            {t("main.editor.previewLabel", { defaultValue: "Preview" })}
-                          </span>
-                          {outlineOpen && headings.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setOutlineOpen((o) => !o)}
-                              className={`text-[10px] font-mono transition-colors cursor-pointer ${
-                                outlineOpen
-                                  ? "text-bamboo"
-                                  : "text-ink-ghost/50 hover:text-ink-ghost"
-                              }`}
-                              title={outlineOpen ? "隐藏目录" : "显示目录"}
-                            >
-                              {outlineOpen ? "目录 ▸" : "目录"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      <div
-                        ref={previewScrollRef}
-                        onScroll={handlePreviewScroll}
-                        className={`flex-1 overflow-y-auto px-6 pb-6 ${
-                          effectiveViewMode === "preview" ? "pt-3" : "pt-1"
-                        }`}
-                      >
-                        <MarkdownPreview
-                          content={deferredContent}
-                          onContentChange={
-                            selectedId
-                              ? (nextContent) => {
-                                  // 仅拦截过期预览的写入，不切换整组复选框的 disabled 状态，
-                                  // 避免延迟预览追上正文之前出现闪烁和键盘焦点丢失。
-                                  if (contentValueRef.current !== deferredContent) return;
-                                  contentValueRef.current = nextContent;
-                                  setContent(nextContent);
-                                  markDirty();
-                                }
-                              : undefined
-                          }
-                          fontSize={settingsConfig?.fontSize ?? 14}
-                          renderHtml={allowRawHtml}
-                          imageBaseDir={isExternal ? undefined : (imageBaseDir ?? undefined)}
-                          externalImageBaseDir={
-                            isExternal ? (externalImageBaseDir ?? undefined) : undefined
-                          }
-                          externalFilePath={selectedExternalFile?.filePath}
-                          onOpenWikiLink={handleOpenWikiLink}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {outlineOpen && headings.length > 0 && effectiveViewMode !== "edit" && (
-                    <OutlinePanel
-                      headings={headings}
-                      previewScrollRef={previewScrollRef}
-                      onClose={() => setOutlineOpen(false)}
-                    />
-                  )}
-                </>
-              )}
-            </div>
-
-            <div
-              className={`flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0 ${focusMode ? "hidden" : ""}`}
-            >
-              <div className="flex items-center gap-3">
-                {navHistory.canGoBack && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const noteId = navHistory.goBack();
-                      if (noteId) void handleSelectNoteRef.current(noteId);
-                    }}
-                    className="p-0.5 rounded text-ink-ghost hover:text-ink hover:bg-paper-warm transition-colors cursor-pointer"
-                    title="后退 (Alt+←)"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M7.5 2.5L4 6l3.5 3.5" />
-                    </svg>
-                  </button>
-                )}
-                {navHistory.canGoForward && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const noteId = navHistory.goForward();
-                      if (noteId) void handleSelectNoteRef.current(noteId);
-                    }}
-                    className="p-0.5 rounded text-ink-ghost hover:text-ink hover:bg-paper-warm transition-colors cursor-pointer"
-                    title="前进 (Alt+→)"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M4.5 2.5L8 6l-3.5 3.5" />
-                    </svg>
-                  </button>
-                )}
-                {(navHistory.canGoBack || navHistory.canGoForward) && (
-                  <span className="text-[10px] text-ink-ghost/30">|</span>
-                )}
-                <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
-                  {t("main.statusBar.lineNumber", {
-                    count: lineCount,
-                    defaultValue: "Ln {{count}}",
-                  })}
-                </span>
-                <span className="text-[10px] text-ink-ghost/40">|</span>
-                <span className="text-[10px] text-ink-ghost font-mono">
-                  {t("main.statusBar.format", { defaultValue: "Markdown + LaTeX" })}
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                {selectedId && !isExternal && content.includes("images/") && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleCleanUnusedImages()}
-                      className="text-[10px] text-ink-ghost hover:text-bamboo font-mono cursor-pointer transition-colors"
-                    >
-                      {t("main.images.cleanUnused", { defaultValue: "清理未使用图片" })}
-                    </button>
-                    <span className="text-[10px] text-ink-ghost/40">|</span>
-                  </>
-                )}
-                <span className="text-[10px] text-ink-ghost font-mono">
-                  {t("main.statusBar.encoding", { defaultValue: "UTF-8" })}
-                </span>
-                <span className="text-[10px] text-ink-ghost/40">|</span>
-                <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
-                  {t("main.statusBar.byteSize", { size: byteSize, defaultValue: "{{size}} KB" })}
-                </span>
-              </div>
-            </div>
-          </div>
-          {settingsConfig && settingsOpen && settingsOverlay && (
-            <div className="absolute inset-0 z-20" onClick={handleCloseSettings} />
-          )}
-          <div
-            className={`relative shrink-0 overflow-clip h-full transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-              sidePanelExpanded || mountedSidePanel ? "border-l border-paper-deep/20" : "border-l-0"
-            } ${
-              settingsOverlay
-                ? `absolute right-0 top-0 bottom-0 z-30 ${visibleSidePanel ? (visibleSidePanel === "knowledgeGraph" ? "w-[420px]" : "w-[360px]") + " shadow-xl" : "w-0"}`
-                : `${sidePanelExpanded ? (visibleSidePanel === "knowledgeGraph" ? "w-[420px]" : "w-[360px]") : "w-0"}`
-            }`}
-          >
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "about"
-                  ? sidePanelContentVisible && visibleSidePanel === "about"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "about" ? (
-                <Suspense fallback={null}>
-                  <AboutPanel onClose={handleCloseAbout} />
-                </Suspense>
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "history"
-                  ? sidePanelContentVisible && visibleSidePanel === "history"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "history" && selectedId && !isExternal ? (
-                <NoteHistoryPanel
-                  noteId={selectedId}
-                  onRestore={handleRestoreNoteVersion}
-                  onClose={() => setHistoryOpen(false)}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "backlinks"
-                  ? sidePanelContentVisible && visibleSidePanel === "backlinks"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "backlinks" && selectedId && !isExternal ? (
-                <BacklinksPanel
-                  noteId={selectedId}
-                  notes={notes}
-                  onOpenNote={(noteId) => {
-                    setBacklinksOpen(false);
-                    void handleSelectNote(noteId);
-                  }}
-                  onClose={() => setBacklinksOpen(false)}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "reminders"
-                  ? sidePanelContentVisible && visibleSidePanel === "reminders"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "reminders" && selectedId && !isExternal ? (
-                <ReminderPanel
-                  noteId={selectedId}
-                  noteTitle={title}
-                  refreshKey={remindersRefreshKey}
-                  onClose={() => setRemindersOpen(false)}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "library"
-                  ? sidePanelContentVisible && visibleSidePanel === "library"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "library" ? (
-                <LibraryPanel
-                  noteId={selectedId && !isExternal ? selectedId : null}
-                  noteTitle={title}
-                  onClose={() => setLibraryOpen(false)}
-                  onBeforeRestore={async () => {
-                    // 恢复会替换整个数据目录：先把当前编辑落盘，内容进入恢复前自动备份，
-                    // 即使恢复失败也能从保护备份找回，不会丢未保存的修改。
-                    // dirty 与 error 状态都需要强制重试保存
-                    const needsSave =
-                      saveStateRef.current === "dirty" || saveStateRef.current === "error";
-                    const saved = needsSave ? await saveCurrentNote(true) : true;
-                    if (!saved) {
-                      showToast("当前笔记保存失败，已取消恢复");
-                    }
-                    return saved;
-                  }}
-                  onRestored={() => {
-                    setLibraryOpen(false);
-                    void refreshNotes();
-                    clearCurrentNote();
-                  }}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "todos"
-                  ? sidePanelContentVisible && visibleSidePanel === "todos"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "todos" ? (
-                <TodoPanel
-                  notes={notes}
-                  onOpenNote={(noteId) => {
+            <EditorToolbar
+              t={t}
+              settingsOpen={settingsOpen}
+              aboutOpen={aboutOpen}
+              focusMode={focusMode}
+              readingMode={readingMode}
+              toolbarCollapsed={toolbarCollapsed}
+              sidebarCollapsed={sidebarCollapsed}
+              effectiveViewMode={effectiveViewMode}
+              outlineOpen={outlineOpen}
+              selectedId={selectedId}
+              isExternal={isExternal}
+              selectedNote={selectedNote}
+              content={content}
+              isPinned={isPinned}
+              selectedTilePinned={selectedId ? pinnedTileIds.has(selectedId) : false}
+              saveState={saveState}
+              deleteConfirm={deleteConfirm}
+              deleteExiting={deleteExiting}
+              viewMode={viewMode}
+              viewModeOptions={viewModeOptions}
+              onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+              onToggleOutline={handleToggleOutline}
+              onToggleHistory={() => {
+                setHistoryOpen((open) => {
+                  const nextOpen = !open;
+                  if (nextOpen) {
+                    setSettingsOpen(false);
+                    setAboutOpen(false);
                     setTodosOpen(false);
-                    void handleSelectNote(noteId);
-                  }}
-                  onToggleTodo={handleToggleTodo}
-                  onClose={() => setTodosOpen(false)}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "workspace"
-                  ? sidePanelContentVisible && visibleSidePanel === "workspace"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "workspace" && workspaceMode ? (
-                <NotesWorkspacePanel
-                  mode={workspaceMode}
-                  notes={notes}
-                  categories={categories}
-                  query={workspaceMode === "search" ? searchText : undefined}
-                  onOpenNote={(noteId, hit) => {
-                    if (workspaceMode !== "search") setWorkspaceMode(null);
-                    void handleOpenWorkspaceNote(noteId, hit?.matchStart, hit?.matchLength);
-                  }}
-                  onMoveNote={(noteId, category) => void handleMoveNote(noteId, category)}
-                  onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
-                  onWeeklyReviewCreated={(note) => {
-                    replaceNoteMetadata(note);
-                    applyNote(note);
-                    setWorkspaceMode(null);
-                  }}
-                  onClose={() => setWorkspaceMode(null)}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "knowledgeGraph"
-                  ? sidePanelContentVisible && visibleSidePanel === "knowledgeGraph"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-              style={{ width: mountedSidePanel === "knowledgeGraph" ? 420 : 360 }}
-            >
-              {mountedSidePanel === "knowledgeGraph" ? (
-                <KnowledgeGraphPanel
-                  notes={notes}
-                  onOpenNote={(noteId) => {
+                    setBacklinksOpen(false);
                     setKnowledgeGraphOpen(false);
-                    void handleSelectNoteRef.current(noteId);
-                  }}
-                  onClose={() => setKnowledgeGraphOpen(false)}
-                />
-              ) : null}
-            </div>
-            <div
-              className={`absolute inset-0 w-[360px] h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                mountedSidePanel === "settings"
-                  ? sidePanelContentVisible && visibleSidePanel === "settings"
-                    ? "translate-x-0 opacity-100"
-                    : "pointer-events-none translate-x-4 opacity-0"
-                  : "pointer-events-none translate-x-4 opacity-0"
-              }`}
-            >
-              {mountedSidePanel === "settings" && settingsConfig ? (
-                <Suspense fallback={null}>
-                  <SettingsPanel
-                    config={settingsConfig}
-                    onChange={handleSettingsChange}
-                    onMigrateDataDir={() => void handleMigrateDataDir()}
-                    onClose={handleCloseSettings}
-                  />
-                </Suspense>
-              ) : null}
-            </div>
+                  }
+                  return nextOpen;
+                });
+              }}
+              onToggleBacklinks={() => {
+                setBacklinksOpen((open) => {
+                  const nextOpen = !open;
+                  if (nextOpen) {
+                    setSettingsOpen(false);
+                    setAboutOpen(false);
+                    setTodosOpen(false);
+                    setHistoryOpen(false);
+                    setKnowledgeGraphOpen(false);
+                  }
+                  return nextOpen;
+                });
+              }}
+              onToggleKnowledgeGraph={() => {
+                setKnowledgeGraphOpen((open) => {
+                  const nextOpen = !open;
+                  if (nextOpen) {
+                    setSettingsOpen(false);
+                    setAboutOpen(false);
+                    setTodosOpen(false);
+                    setHistoryOpen(false);
+                    setBacklinksOpen(false);
+                    setLibraryOpen(false);
+                    setRemindersOpen(false);
+                    setWorkspaceMode(null);
+                  }
+                  return nextOpen;
+                });
+              }}
+              onCopyStableLink={() => void handleCopyStableLink()}
+              onToggleReminders={() => {
+                setRemindersOpen((open) => {
+                  const nextOpen = !open;
+                  if (nextOpen) {
+                    setSettingsOpen(false);
+                    setAboutOpen(false);
+                    setTodosOpen(false);
+                    setHistoryOpen(false);
+                    setBacklinksOpen(false);
+                    setKnowledgeGraphOpen(false);
+                  }
+                  return nextOpen;
+                });
+              }}
+              onToggleLibrary={handleToggleLibrary}
+              onToggleFocusMode={() => {
+                setReadingMode(false);
+                setFocusMode((active) => !active);
+              }}
+              onExitFocusMode={() => setFocusMode(false)}
+              onToggleReadingMode={() => {
+                setFocusMode(false);
+                setReadingMode((active) => !active);
+              }}
+              onExitReadingMode={() => setReadingMode(false)}
+              onSaveAsTemplate={handleSaveAsTemplate}
+              onTogglePinNote={() => {
+                const next = !isPinned;
+                setIsPinned(next);
+                pinnedValueRef.current = next;
+                markDirty();
+              }}
+              onPinEntry={() => void handlePinEntry()}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              onSave={() => void saveCurrentNote(true)}
+              onExportHtml={() => void handleExportHtml()}
+              onExportPdf={() => void handleExportPdf()}
+              onRequestDelete={() => setDeleteConfirm(true)}
+              onConfirmDelete={() => {
+                setDeleteExiting(true);
+                setTimeout(() => {
+                  setDeleteExiting(false);
+                  setDeleteConfirm(false);
+                  void handleDeleteNote();
+                }, 150);
+              }}
+              onCancelDelete={() => {
+                setDeleteExiting(true);
+                setTimeout(() => {
+                  setDeleteExiting(false);
+                  setDeleteConfirm(false);
+                }, 150);
+              }}
+              onViewModeChange={setViewMode}
+              onSetToolbarCollapsed={setToolbarCollapsed}
+              onToggleToolbarCollapsed={() => setToolbarCollapsed((collapsed) => !collapsed)}
+            />
+
+            <NoteHeader
+              t={t}
+              noteTransitionKey={noteTransitionKey}
+              focusMode={focusMode}
+              title={title}
+              selectedId={selectedId}
+              isExternal={isExternal}
+              noteTags={noteTags}
+              selectedExternalFile={selectedExternalFile}
+              selectedNote={selectedNote}
+              charCount={charCount}
+              saveState={saveState}
+              saveStateLabel={saveStateLabel}
+              contentRef={contentRef}
+              onTitleChange={(nextTitle) => {
+                setTitle(nextTitle);
+                markDirty();
+              }}
+              onTagsChange={(newTags) => {
+                setNoteTags(newTags);
+                tagsValueRef.current = newTags;
+                markDirty();
+              }}
+            />
+
+            <EditorPane
+              t={t}
+              effectiveViewMode={effectiveViewMode}
+              splitContainerRef={splitContainerRef}
+              contentRef={contentRef}
+              previewScrollRef={previewScrollRef}
+              selectedId={selectedId}
+              isLoading={isLoading}
+              isExternal={isExternal}
+              focusMode={focusMode}
+              settingsOpen={settingsOpen}
+              aboutOpen={aboutOpen}
+              splitRatio={splitRatio}
+              isResizingSplit={isResizingSplit}
+              onStartResizeSplit={() => setIsResizingSplit(true)}
+              toolbarButtons={toolbarButtons}
+              content={content}
+              deferredContent={deferredContent}
+              contentValueRef={contentValueRef}
+              onContentChange={(nextContent) => {
+                setContent(nextContent);
+                markDirty();
+              }}
+              setContent={setContent}
+              markDirty={markDirty}
+              fontSize={settingsConfig?.fontSize ?? 14}
+              allowRawHtml={allowRawHtml}
+              imageBaseDir={imageBaseDir}
+              externalImageBaseDir={externalImageBaseDir}
+              selectedExternalFile={selectedExternalFile}
+              outlineOpen={outlineOpen}
+              headings={headings}
+              onToggleOutline={() => setOutlineOpen((o) => !o)}
+              onCloseOutline={() => setOutlineOpen(false)}
+              onPaste={imagePasteHandler}
+              onDrop={imageDropHandler}
+              onDragOver={imageDragOverHandler}
+              onEditorScroll={handleEditorScroll}
+              onPreviewScroll={handlePreviewScroll}
+              onOpenWikiLink={handleOpenWikiLink}
+            />
+
+            <StatusBar
+              t={t}
+              focusMode={focusMode}
+              canGoBack={navHistory.canGoBack}
+              canGoForward={navHistory.canGoForward}
+              lineCount={lineCount}
+              byteSize={byteSize}
+              showCleanUnusedImages={Boolean(
+                selectedId && !isExternal && content.includes("images/"),
+              )}
+              onGoBack={() => {
+                const noteId = navHistory.goBack();
+                if (noteId) void handleSelectNoteRef.current(noteId);
+              }}
+              onGoForward={() => {
+                const noteId = navHistory.goForward();
+                if (noteId) void handleSelectNoteRef.current(noteId);
+              }}
+              onCleanUnusedImages={() => void handleCleanUnusedImages()}
+            />
           </div>
+
+          <MainWindowSidePanels
+            visibleSidePanel={visibleSidePanel}
+            initialMountedPanel={initialSettingsOpen && initialConfig ? "settings" : null}
+            settingsOpen={settingsOpen}
+            settingsOverlay={settingsOverlay}
+            settingsConfig={settingsConfig}
+            selectedId={selectedId}
+            isExternal={isExternal}
+            title={title}
+            notes={notes}
+            categories={categories}
+            workspaceMode={workspaceMode}
+            searchText={searchText}
+            remindersRefreshKey={remindersRefreshKey}
+            onCloseAbout={() => setAboutOpen(false)}
+            onCloseSettings={handleCloseSettings}
+            onSettingsChange={handleSettingsChange}
+            onMigrateDataDir={() => void handleMigrateDataDir()}
+            onCloseHistory={() => setHistoryOpen(false)}
+            onRestoreNoteVersion={handleRestoreNoteVersion}
+            onCloseBacklinks={() => setBacklinksOpen(false)}
+            onOpenBacklinkNote={(noteId) => {
+              setBacklinksOpen(false);
+              void handleSelectNote(noteId);
+            }}
+            onCloseReminders={() => setRemindersOpen(false)}
+            onCloseLibrary={() => setLibraryOpen(false)}
+            onBeforeRestoreBackup={async () => {
+              // 恢复会替换整个数据目录：先把当前编辑落盘，内容进入恢复前自动备份，
+              // 即使恢复失败也能从保护备份找回，不会丢未保存的修改。
+              // dirty 与 error 状态都需要强制重试保存
+              const needsSave =
+                saveStateRef.current === "dirty" || saveStateRef.current === "error";
+              const saved = needsSave ? await saveCurrentNote(true) : true;
+              if (!saved) {
+                showToast("当前笔记保存失败，已取消恢复");
+              }
+              return saved;
+            }}
+            onRestoredBackup={() => {
+              setLibraryOpen(false);
+              void refreshNotes();
+              clearCurrentNote();
+            }}
+            onCloseTodos={() => setTodosOpen(false)}
+            onOpenTodoNote={(noteId) => {
+              setTodosOpen(false);
+              void handleSelectNote(noteId);
+            }}
+            onToggleTodo={handleToggleTodo}
+            onCloseWorkspace={() => setWorkspaceMode(null)}
+            onOpenWorkspaceNote={(noteId, hit) => {
+              if (workspaceMode !== "search") setWorkspaceMode(null);
+              void handleOpenWorkspaceNote(noteId, hit?.matchStart, hit?.matchLength);
+            }}
+            onMoveNote={(noteId, category) => void handleMoveNote(noteId, category)}
+            onMergeNotes={(targetId, sourceId) => void handleMergeNotes(targetId, sourceId)}
+            onWeeklyReviewCreated={(note) => {
+              replaceNoteMetadata(note);
+              applyNote(note);
+              setWorkspaceMode(null);
+            }}
+            onCloseKnowledgeGraph={() => setKnowledgeGraphOpen(false)}
+            onOpenKnowledgeGraphNote={(noteId) => {
+              setKnowledgeGraphOpen(false);
+              void handleSelectNoteRef.current(noteId);
+            }}
+          />
         </div>
       </div>
-      {noteMenu && noteMenuTarget && (
-        <div
-          ref={noteMenuRef}
-          className={`popup-menu fixed z-[9999] min-w-[168px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-x-hidden overflow-y-auto select-none ${noteMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
-          style={{
-            left: noteMenuPosition?.x ?? noteMenu.x,
-            top: noteMenuPosition?.y ?? noteMenu.y,
-            maxWidth: `calc(100vw - ${POPUP_VIEWPORT_MARGIN * 2}px)`,
-            maxHeight: `calc(100vh - ${POPUP_VIEWPORT_MARGIN * 2}px)`,
-          }}
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          {noteMenuMode === "main" ? (
-            <div key="main" className="animate-menu-slide-right">
-              {noteContextMenuItems.map((item, index) => (
-                <button
-                  key={item.action}
-                  onClick={() => handleNoteMenuAction(item.action)}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 text-[12px] font-body transition-colors cursor-pointer ${
-                    item.tone === "danger"
-                      ? "text-red-400 hover:bg-danger-bg hover:text-red-500"
-                      : "text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo"
-                  } ${index > 0 ? "border-t border-paper-deep/20" : ""}`}
-                >
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div key="move" className="animate-menu-slide-left">
-              <button
-                onClick={() => setNoteMenuMode("main")}
-                className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-body text-ink-ghost hover:bg-paper-warm transition-colors cursor-pointer border-b border-paper-deep/20"
-              >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-                <span>{t("common.back", { defaultValue: "返回" })}</span>
-              </button>
-              <button
-                onClick={() => void handleMoveNote(noteMenuTarget.id, "")}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
-              >
-                {t("main.category.uncategorized", { defaultValue: "未分类" })}
-              </button>
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => void handleMoveNote(noteMenuTarget.id, cat)}
-                  className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
-      {categoryMenu && (
-        <div
-          ref={categoryMenuRef}
-          className={`popup-menu fixed z-[9999] min-w-[140px] py-1.5 bg-cloud/95 backdrop-blur-sm border border-paper-deep/50 rounded-lg overflow-x-hidden overflow-y-auto select-none ${categoryMenuClosing ? "animate-menu-exit" : "animate-menu-enter"}`}
-          data-hover-suppressed={categoryMenuHoverSuppressed ? "" : undefined}
-          style={{
-            left: categoryMenuPosition?.x ?? categoryMenu.x,
-            top: categoryMenuPosition?.y ?? categoryMenu.y,
-            maxWidth: `calc(100vw - ${POPUP_VIEWPORT_MARGIN * 2}px)`,
-            maxHeight: `calc(100vh - ${POPUP_VIEWPORT_MARGIN * 2}px)`,
-          }}
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          {categoryMenuConfirmDelete ? (
-            <div key="category-confirm" className="animate-menu-slide-left">
-              <div className="px-3 py-1.5 text-[11px] font-body text-ink-faint border-b border-paper-deep/20">
-                {t("main.category.confirmDelete", {
-                  category: categoryMenu.category,
-                  defaultValue: "确认删除「{{category}}」？",
-                })}
-              </div>
-              <button
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  void handleDeleteCategory(categoryMenu.category);
-                  setCategoryMenuClosing(true);
-                }}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-red-400 hover:bg-danger-bg hover:text-red-500 transition-colors cursor-pointer outline-none"
-              >
-                {t("main.category.confirmDeleteAction", { defaultValue: "确认删除" })}
-              </button>
-              <button
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => switchCategoryMenuPanel(false)}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer outline-none"
-              >
-                {t("common.cancel", { defaultValue: "取消" })}
-              </button>
-            </div>
-          ) : (
-            <div key="category-main" className="animate-menu-slide-right">
-              <button
-                onClick={() => {
-                  setCategoryMenuClosing(true);
-                  setRenamingCategory(categoryMenu.category);
-                  setRenameCategoryValue(categoryMenu.category);
-                }}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo transition-colors cursor-pointer"
-              >
-                {t("main.category.rename", { defaultValue: "重命名" })}
-              </button>
-              <button
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => switchCategoryMenuPanel(true)}
-                className="w-full text-left px-3 py-1.5 text-[12px] font-body text-red-400 hover:bg-danger-bg hover:text-red-500 transition-colors cursor-pointer border-t border-paper-deep/20 outline-none"
-              >
-                {t("main.category.delete", { defaultValue: "删除分类" })}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      <CommandPalette
-        open={paletteOpen}
-        notes={notes}
-        commands={paletteCommands}
-        onSelectNote={(noteId, matchStart, matchLength) => {
-          void handleOpenWorkspaceNote(noteId, matchStart, matchLength);
+      <SidebarContextMenus
+        t={t}
+        noteMenu={noteMenu}
+        noteMenuTarget={noteMenuTarget}
+        noteMenuClosing={noteMenuClosing}
+        noteMenuMode={noteMenuMode}
+        noteMenuRef={noteMenuRef}
+        noteMenuPosition={noteMenuPosition}
+        noteContextMenuItems={noteContextMenuItems}
+        categories={categories}
+        onSetNoteMenuMode={setNoteMenuMode}
+        onNoteMenuAction={handleNoteMenuAction}
+        onMoveNote={(noteId, targetCategory) => void handleMoveNote(noteId, targetCategory)}
+        categoryMenu={categoryMenu}
+        categoryMenuClosing={categoryMenuClosing}
+        categoryMenuConfirmDelete={categoryMenuConfirmDelete}
+        categoryMenuHoverSuppressed={categoryMenuHoverSuppressed}
+        categoryMenuRef={categoryMenuRef}
+        categoryMenuPosition={categoryMenuPosition}
+        onSwitchCategoryMenuPanel={switchCategoryMenuPanel}
+        onConfirmDeleteCategory={(category) => {
+          void handleDeleteCategory(category);
+          setCategoryMenuClosing(true);
         }}
-        onCreateNote={handleCreateNoteWithTitle}
-        onClose={closeCommandPalette}
+        onStartRenameCategory={(category) => {
+          setCategoryMenuClosing(true);
+          setRenamingCategory(category);
+          setRenameCategoryValue(category);
+        }}
       />
+
+      {paletteOpen ? (
+        <Suspense fallback={null}>
+          <CommandPalette
+            open={paletteOpen}
+            notes={notes}
+            commands={paletteCommands}
+            onSelectNote={(noteId, matchStart, matchLength) => {
+              void handleOpenWorkspaceNote(noteId, matchStart, matchLength);
+            }}
+            onCreateNote={handleCreateNoteWithTitle}
+            onClose={closeCommandPalette}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
-}
-
-/* ═══════════════════════════════════════════
-   标签筛选栏
-   ═══════════════════════════════════════════ */
-function TagFilterBar({
-  notes,
-  selectedTag,
-  open,
-  onToggle,
-  onSelectTag,
-}: {
-  notes: NoteMetadata[];
-  selectedTag: string;
-  open: boolean;
-  onToggle: () => void;
-  onSelectTag: (tag: string) => void;
-}) {
-  const allTags = useMemo(() => collectAllTags(notes), [notes]);
-
-  if (allTags.length === 0) return null;
-
-  return (
-    <div className="mt-2">
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`w-full h-7 flex items-center gap-2 px-2.5 rounded-lg text-[11px] font-body transition-colors cursor-pointer ${
-          open || selectedTag
-            ? "bg-bamboo-mist/45 text-bamboo"
-            : "text-ink-faint hover:text-bamboo hover:bg-paper-warm/70"
-        }`}
-        aria-expanded={open}
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`shrink-0 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
-        >
-          <path d="m9 18 6-6-6-6" />
-        </svg>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="shrink-0"
-        >
-          <path d="M20.59 13.41 11.41 22.59a2 2 0 0 1-2.82 0L1.41 15.41A2 2 0 0 1 .83 14V4a2 2 0 0 1 2-2h10a2 2 0 0 1 1.41.59l7.18 7.18a2 2 0 0 1 0 2.82Z" />
-          <circle cx="7" cy="7" r="1" />
-        </svg>
-        <span className="flex-1 text-left">标签</span>
-        {selectedTag ? (
-          <span className="max-w-[90px] truncate rounded-full bg-bamboo/10 px-1.5 py-0.5 text-[10px]">
-            #{selectedTag}
-          </span>
-        ) : (
-          <span className="text-[10px] text-ink-ghost">{allTags.length}</span>
-        )}
-      </button>
-
-      <div
-        className={`grid transition-[grid-template-rows,opacity] duration-200 ${
-          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-        }`}
-      >
-        <div className="min-h-0 overflow-hidden">
-          <div className="mt-1 ml-4 border-l border-paper-deep/50 pl-2 py-1 space-y-0.5">
-            {allTags.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => onSelectTag(tag)}
-                className={`w-full flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] font-body transition-colors cursor-pointer ${
-                  selectedTag === tag
-                    ? "bg-bamboo-mist text-bamboo"
-                    : "text-ink-faint hover:text-bamboo hover:bg-paper-warm/70"
-                }`}
-              >
-                <span className="text-ink-ghost">#</span>
-                <span className="truncate">{tag}</span>
-              </button>
-            ))}
-            {selectedTag && (
-              <button
-                type="button"
-                onClick={() => onSelectTag("")}
-                className="w-full rounded-md px-2 py-1 text-left text-[10px] text-red-400 hover:bg-danger-bg transition-colors cursor-pointer"
-              >
-                清除标签筛选
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════
-   标签编辑器
-   ═══════════════════════════════════════════ */
-function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
-  const [input, setInput] = useState("");
-
-  const addTag = () => {
-    const tag = input.trim();
-    if (!tag || tags.includes(tag)) {
-      setInput("");
-      return;
-    }
-    onChange([...tags, tag]);
-    setInput("");
-  };
-
-  const removeTag = (tag: string) => {
-    onChange(tags.filter((t) => t !== tag));
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bamboo-mist/60 border border-bamboo/20 text-[10px] text-bamboo"
-        >
-          #{tag}
-          <button
-            type="button"
-            onClick={() => removeTag(tag)}
-            className="w-3 h-3 flex items-center justify-center rounded-full hover:bg-bamboo/20 transition-colors cursor-pointer"
-          >
-            <svg
-              width="8"
-              height="8"
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <path d="M3 3l6 6M9 3l-6 6" />
-            </svg>
-          </button>
-        </span>
-      ))}
-      <div className="inline-flex items-center gap-1">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s")) {
-              e.preventDefault();
-              // 不 stopPropagation：Ctrl+S 加标签的同时，事件继续冒泡触发全局保存
-              addTag();
-            }
-            if (e.key === "Backspace" && !input && tags.length > 0)
-              removeTag(tags[tags.length - 1]);
-          }}
-          onBlur={addTag}
-          placeholder="添加标签…"
-          className="w-20 h-5 px-1.5 rounded text-[10px] font-body text-ink-soft placeholder:text-ink-ghost bg-transparent border border-transparent focus:border-paper-deep/40 focus:bg-paper-warm/50 outline-none transition-colors"
-        />
-      </div>
-    </div>
-  );
-}
-
-/** 将 Markdown 内容包装为完整 HTML 页面 */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function wrapHtml(title: string, markdown: string): string {
-  const escapedTitle = escapeHtml(title);
-  const escaped = escapeHtml(markdown);
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapedTitle}</title>
-<style>
-  body { max-width: 800px; margin: 40px auto; padding: 0 20px; font-family: -apple-system, BlinkMacSystemFont, "HarmonyOS Sans SC", "PingFang SC", sans-serif; font-size: 16px; line-height: 1.8; color: #2a2a26; background: #f6f3ec; }
-  pre { background: #f0ebe0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
-  code { background: #f0ebe0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
-  pre code { padding: 0; background: none; }
-  blockquote { border-left: 3px solid #8a8a80; margin: 0; padding: 4px 16px; color: #5a5a52; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #d0d0c8; padding: 8px 12px; text-align: left; }
-  h1, h2, h3 { margin-top: 1.5em; margin-bottom: 0.5em; }
-  img { max-width: 100%; }
-  @media print { body { background: white; color: black; } }
-</style>
-</head>
-<body>
-<pre style="white-space: pre-wrap; font-family: inherit; background: none; padding: 0;">${escaped}</pre>
-</body>
-</html>`;
 }
