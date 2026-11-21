@@ -556,5 +556,26 @@
   },
   "tile": {
     "empty": "Empty"
+  },
+  "wikiAutocomplete": {
+    "empty": "No matching notes",
+    "footer": {
+      "close": "Esc Close",
+      "confirm": "Enter / Tab Insert",
+      "navigate": "↑↓ Navigate"
+    },
+    "header": "Link Note",
+    "listboxLabel": "Wiki-link autocomplete suggestions"
+  },
+  "relatedNotes": {
+    "empty": "No closely related local notes yet",
+    "insertLink": "Insert Link",
+    "inserted": "Inserted note link",
+    "linked": "Linked",
+    "loading": "Finding related notes…",
+    "matchedTermsLabel": "Matched terms",
+    "score": "{{percent}}% match",
+    "subtitle": "Pure-local text & tag similarity",
+    "title": "Related Notes"
   }
 }

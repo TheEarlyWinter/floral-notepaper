@@ -556,5 +556,26 @@
   },
   "tile": {
     "empty": "空"
+  },
+  "wikiAutocomplete": {
+    "empty": "没有匹配的笔记",
+    "footer": {
+      "close": "Esc 关闭",
+      "confirm": "Enter / Tab 插入",
+      "navigate": "↑↓ 选择"
+    },
+    "header": "插入笔记链接",
+    "listboxLabel": "关联笔记补全列表"
+  },
+  "relatedNotes": {
+    "empty": "暂无高相关度的本地笔记",
+    "insertLink": "插入链接",
+    "inserted": "已插入关联链接",
+    "linked": "已关联",
+    "loading": "正在分析本地关联…",
+    "matchedTermsLabel": "匹配词",
+    "score": "相关度 {{percent}}%",
+    "subtitle": "基于本地词频与标签推荐",
+    "title": "相关笔记"
   }
 }

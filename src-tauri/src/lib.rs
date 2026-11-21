@@ -16,6 +16,7 @@ use services::{
     notes::{
         default_store, AppConfig, AppError, MergeNotesRequest, Note, NoteMetadata, SaveNoteRequest,
     },
+    related::{self, RelatedNoteSuggestion},
     reminders::{self, Reminder},
 };
 use sha2::{Digest, Sha256};
@@ -325,6 +326,19 @@ fn notes_search(query: String) -> Result<Vec<SearchResult>, AppError> {
 #[tauri::command]
 fn notes_rebuild_search_index() -> Result<(), AppError> {
     default_store()?.rebuild_search_index()
+}
+
+#[tauri::command]
+fn notes_related(
+    note_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<RelatedNoteSuggestion>, AppError> {
+    let store = default_store()?;
+    related::related_notes_for_store(
+        &store,
+        &note_id,
+        limit.unwrap_or_else(related::default_related_limit),
+    )
 }
 
 #[tauri::command]
@@ -1152,6 +1166,7 @@ pub fn run() {
             notes_export_markdown,
             notes_search,
             notes_rebuild_search_index,
+            notes_related,
             attachments_add,
             attachments_list,
             attachments_delete,

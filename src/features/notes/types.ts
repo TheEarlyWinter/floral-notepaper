@@ -87,3 +87,13 @@ export interface ExternalActivityEntry {
   summary: string;
   ok: boolean;
 }
+
+export interface RelatedNoteSuggestion {
+  id: string;
+  title: string;
+  category: string;
+  tags: string[];
+  score: number;
+  matchedTerms: string[];
+  alreadyLinked: boolean;
+}

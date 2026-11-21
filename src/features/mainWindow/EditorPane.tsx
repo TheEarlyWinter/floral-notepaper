@@ -6,9 +6,13 @@ import {
   type RefObject,
 } from "react";
 import type { TFunction } from "i18next";
+import {
+  WikiLinkAutocomplete,
+  useWikiLinkAutocomplete,
+} from "../../components/WikiLinkAutocomplete";
 import { MarkdownPreviewLazy as MarkdownPreview } from "../markdown/MarkdownPreviewLazy";
 import type { OutlineHeading } from "../markdown/outlineUtils";
-import type { ExternalFile } from "../notes/types";
+import type { ExternalFile, NoteMetadata } from "../notes/types";
 import type { ViewMode } from "../settings/types";
 import { applyFormat, type ToolbarButtonConfig } from "./editorFormatting";
 import { OutlinePanel } from "./lazyPanels";
@@ -22,6 +26,7 @@ interface EditorPaneProps {
   selectedId: string | null;
   isLoading: boolean;
   isExternal: boolean;
+  notes: NoteMetadata[];
   focusMode: boolean;
   settingsOpen: boolean;
   aboutOpen: boolean;
@@ -61,6 +66,7 @@ export function EditorPane({
   selectedId,
   isLoading,
   isExternal,
+  notes,
   focusMode,
   settingsOpen,
   aboutOpen,
@@ -90,6 +96,17 @@ export function EditorPane({
   onPreviewScroll,
   onOpenWikiLink,
 }: EditorPaneProps) {
+  const wikiCompletion = useWikiLinkAutocomplete({
+    content,
+    notes,
+    activeNoteId: isExternal ? null : selectedId,
+    textareaRef: contentRef,
+    setContent,
+    markDirty,
+    disabled: !selectedId || effectiveViewMode === "preview",
+    t,
+  });
+
   return (
     <div
       key={effectiveViewMode}
@@ -132,9 +149,23 @@ export function EditorPane({
               <div className="flex-1 overflow-hidden px-5 pb-4">
                 <textarea
                   ref={contentRef}
-                  data-tab-indent="true"
+                  data-tab-indent={wikiCompletion.isOpen ? "false" : "true"}
                   value={content}
-                  onChange={(event) => onContentChange(event.target.value)}
+                  onChange={(event) => {
+                    onContentChange(event.target.value);
+                    wikiCompletion.syncCursorFromElement(event.target);
+                  }}
+                  onKeyDown={(event) => {
+                    wikiCompletion.handleKeyDown(event);
+                  }}
+                  onKeyUp={(event) => wikiCompletion.syncCursorFromElement(event.currentTarget)}
+                  onClick={(event) => wikiCompletion.syncCursorFromElement(event.currentTarget)}
+                  onSelect={(event) => wikiCompletion.syncCursorFromElement(event.currentTarget)}
+                  onCompositionStart={wikiCompletion.handleCompositionStart}
+                  onCompositionEnd={(event) =>
+                    wikiCompletion.handleCompositionEnd(event.currentTarget)
+                  }
+                  onBlur={wikiCompletion.handleBlur}
                   onPaste={onPaste}
                   onDrop={onDrop}
                   onDragOver={onDragOver}
@@ -153,6 +184,16 @@ export function EditorPane({
                   })}
                   spellCheck={false}
                   disabled={!selectedId}
+                />
+                <WikiLinkAutocomplete
+                  open={wikiCompletion.isOpen}
+                  trigger={wikiCompletion.trigger}
+                  candidates={wikiCompletion.candidates}
+                  activeIndex={wikiCompletion.activeIndex}
+                  textareaRef={contentRef}
+                  onHoverIndex={wikiCompletion.setActiveIndex}
+                  onSelect={wikiCompletion.selectCandidate}
+                  t={t}
                 />
               </div>
             </div>
