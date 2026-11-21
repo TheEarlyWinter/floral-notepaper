@@ -24,8 +24,8 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Rust](https://img.shields.io/badge/Rust-1.96-orange?logo=rust)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
-![Rust Tests](https://img.shields.io/badge/Rust_Tests-185_passed-green)
-![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-175_passed-green)
+![Rust Tests](https://img.shields.io/badge/Rust_Tests-209_passed-green)
+![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-247_passed-green)
 
 </div>
 
@@ -63,10 +63,11 @@
 ### ✍️ 寫作與整理
 
 - **Markdown 編輯、預覽與分欄模式**：支持 GFM、任務列表、表格、數學公式、代碼塊等常用格式，分欄支援高精度雙向同步滾動；預覽區與桌面磁貼支援直接點擊勾選任務列表並回寫源碼。
+- **筆記內尋找與替換及圖片壓縮**：支援 `Ctrl+F` / `Ctrl+H` 正則搜尋、編輯/預覽雙區命中高亮與原生復原棧替換；貼上/拖入圖片自動轉 WebP（支援品質調整，自動跳過小圖與動圖）。
 - **命令面板**：主視窗內通過 `Ctrl+K`（可在設定中自訂錄製）一鍵呼出，融合本地過濾、FTS5 全文檢索摘要、`>` 命令模式與快速新建筆記。
 - **模板與每日便箋**：保存常用筆記模板，一鍵套用；每日便箋按本地時區打開，凌晨也不會開錯「昨天」。
 - **版本歷史**：自動保留最近 20 份正文版本，blake3 哈希去重，內容未變不重複存儲，可按需一鍵恢復。
-- **分類、標籤與置頂**：歸類、加標籤、置頂，支持組合篩選；從分類標題可直接在指定分類中新建筆記。
+- **分類、標籤、置頂與批次管理**：歸類、加標籤、置頂，支援組合篩選與側欄「多選」模式（一鍵批次移動分類、新增標籤、匯出或二次確認刪除）；從分類標題可直接在指定分類中新建筆記。
 - **增強搜索**：支持 `tag:標籤`、`in:分類`、`pinned` 與 `unpinned` 查詢。
 - **待辦聚合**：從所有筆記彙總未完成任務，面板中勾選後直接回寫原 Markdown。
 - **外部文件支持**：安全打開外部 Markdown 與 TXT 文件，識別 UTF-8 BOM、UTF-16 BOM 與 GBK 編碼；相對圖片按白名單安全顯示。
@@ -80,9 +81,8 @@
 
 ### 🔗 筆記之間的連接
 
-- **內部鏈接**：在正文輸入 `[[筆記標題]]`，標題唯一時從預覽直接跳轉。
-- **穩定鏈接**：支持 `[[note:筆記ID|顯示文字]]`，即使標題重複也不會猜錯目標；工具欄一鍵複製。
-- **反向鏈接**：查看哪些筆記提到了當前筆記，回顧上下文。
+- **內部鏈接與 `[[` 補全**：編輯正文輸入 `[[` 彈出候選清單即時插入鏈接；支援 `[[筆記標題]]` 與 `[[note:筆記ID|顯示文字]]`，預覽直接點擊或編輯區 `Ctrl+點擊` 直達目標筆記。
+- **反向鏈接與本地相關筆記**：查看哪些筆記提到了當前筆記，並在同一面板結合本地 BM25 與標籤相似度推薦相關筆記，一鍵插入關聯。
 - **導航歷史**：筆記間跳轉後可通過 `Alt+←` / `Alt+→` 輕鬆回溯。
 
 ### 🕸️ 知識發現
@@ -104,8 +104,9 @@
 
 - **FTS5 全文搜索**：SQLite FTS5 增量索引，trigram tokenizer 支持中英文混合搜索，速度遠超舊版全量遍歷。
 - **版本去重存儲**：blake3 哈希去重，內容未變時不重複存儲，節省 80%+ 磁盤空間。
-- **CLI 命令行接口**：`--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export`，方便腳本批量操作與管道集成。
-- **內置 MCP Server**：`--mcp` 提供原生 Rust stdio JSON-RPC 2.0 介面（14 個工具），可直接接入各類 AI Agent 讀寫筆記、待辦、提醒並向桌面彈出磁貼。
+- **CLI 命令行接口**：`--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export`（支援 `--ttl` / `--persist` 桌面磁貼逾時控制），方便腳本批量操作與管道集成。
+- **內置 MCP Server**：`--mcp` 提供原生 Rust stdio JSON-RPC 2.0 介面（14 個工具 + 4 個 `floral://` 唯讀資源/模板），設定頁自帶用戶端預設組態一鍵複製與近期外部活動紀錄。
+- **可選跨裝置雲同步**：預設關閉，可在設定中按需啟用 WebDAV 或 Git 同步（憑證安全存入系統鑰匙圈、自動衝突備份）。
 - **雙進程安全與 GUI 熱刷新**：CLI/MCP 與圖形界面併發寫入由跨進程文件鎖串行，外部寫入後 GUI 自動熱刷新（未儲存內容受保護不被覆蓋）。
 
 ### 🛡️ 數據安全與未保存保護

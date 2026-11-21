@@ -58,6 +58,7 @@ import {
 } from "../features/windows/tileWindowEvents";
 import { NotepadOpenPanel } from "./NotepadOpenPanel";
 import { Tile } from "./Tile";
+import { WikiLinkAutocomplete, useWikiLinkAutocomplete } from "./WikiLinkAutocomplete";
 
 type OpenMode = "new" | "open";
 type NotePadStatus = "empty" | "opened" | "saved" | "dirty" | "saveFailed" | "copied";
@@ -161,6 +162,8 @@ export function NotePad({
   const [tileDesktopOnly, setTileDesktopOnly] = useState<boolean | null>(null);
   const [tileDoubleClickToEdit, setTileDoubleClickToEdit] = useState(false);
   const [tileSaveReturnsToPin, setTileSaveReturnsToPin] = useState(false);
+  const [imageCompressWebp, setImageCompressWebp] = useState(true);
+  const [imageCompressQuality, setImageCompressQuality] = useState(0.85);
   const [tileColor, setTileColor] = useState(() =>
     resolveTileColor("system", normalizeTileColor(initialTileColor)),
   );
@@ -251,6 +254,8 @@ export function NotePad({
           setTileDesktopOnly(desktopOnly);
           setTileDoubleClickToEdit(loadedConfig.tileDoubleClickToEdit ?? false);
           setTileSaveReturnsToPin(loadedConfig.tileSaveReturnsToPin ?? false);
+          setImageCompressWebp(loadedConfig.imageCompressWebp ?? true);
+          setImageCompressQuality(loadedConfig.imageCompressQuality ?? 0.85);
           setTileColorRaw(normalizeTileColor(loadedConfig.tileColor));
           setTileColorMode(loadedConfig.tileColorMode ?? "system");
           setTileColor(
@@ -335,6 +340,8 @@ export function NotePad({
       tileDoubleClickToEdit?: boolean;
       tileSaveReturnsToPin?: boolean;
       noteSurfaceAutoSave?: boolean;
+      imageCompressWebp?: boolean;
+      imageCompressQuality?: number;
     }>("config-changed", (event) => {
       const mode = event.payload.tileColorMode ?? tileColorModeRef.current;
       const raw = event.payload.tileColor ?? tileColorRawRef.current;
@@ -354,6 +361,10 @@ export function NotePad({
         setTileSaveReturnsToPin(event.payload.tileSaveReturnsToPin);
       if (event.payload.noteSurfaceAutoSave != null)
         setNoteSurfaceAutoSave(event.payload.noteSurfaceAutoSave);
+      if (event.payload.imageCompressWebp != null)
+        setImageCompressWebp(event.payload.imageCompressWebp);
+      if (event.payload.imageCompressQuality != null)
+        setImageCompressQuality(event.payload.imageCompressQuality);
     });
     return () => {
       void unlisten.then((fn) => fn());
@@ -508,6 +519,10 @@ export function NotePad({
     }
   }, [editingNoteId, saveNote]);
 
+  const markPadDirty = useCallback(() => {
+    setStatus("dirty");
+  }, []);
+
   const {
     handlePaste: imagePasteHandler,
     handleDrop: imageDropHandler,
@@ -516,9 +531,22 @@ export function NotePad({
     noteId: editingNoteId,
     textareaRef: contentRef,
     setContent,
-    markDirty: () => setStatus("dirty"),
+    markDirty: markPadDirty,
     onEnsureNoteSaved: ensureNoteSaved,
+    compressWebp: imageCompressWebp,
+    compressQuality: imageCompressQuality,
     onError: showToast,
+    t,
+  });
+
+  const wikiCompletion = useWikiLinkAutocomplete({
+    content,
+    notes,
+    activeNoteId: editingNoteId,
+    textareaRef: contentRef,
+    setContent,
+    markDirty: markPadDirty,
+    disabled: surfaceMode === "tile" || mode !== "new",
     t,
   });
 
@@ -1019,16 +1047,20 @@ export function NotePad({
 
                 <textarea
                   ref={contentRef}
-                  data-tab-indent="true"
+                  data-tab-indent={wikiCompletion.isOpen ? "false" : "true"}
                   value={content}
                   onChange={(event) => {
                     setContent(event.target.value);
                     setStatus("dirty");
+                    wikiCompletion.syncCursorFromElement(event.target);
                   }}
                   onPaste={imagePasteHandler}
                   onDrop={imageDropHandler}
                   onDragOver={imageDragOverHandler}
                   onKeyDown={(event) => {
+                    if (wikiCompletion.handleKeyDown(event)) {
+                      return;
+                    }
                     if (event.key === "ArrowUp") {
                       const ta = contentRef.current;
                       if (ta && ta.selectionStart === ta.selectionEnd) {
@@ -1040,9 +1072,28 @@ export function NotePad({
                       }
                     }
                   }}
+                  onKeyUp={(event) => wikiCompletion.syncCursorFromElement(event.currentTarget)}
+                  onClick={(event) => wikiCompletion.syncCursorFromElement(event.currentTarget)}
+                  onSelect={(event) => wikiCompletion.syncCursorFromElement(event.currentTarget)}
+                  onCompositionStart={wikiCompletion.handleCompositionStart}
+                  onCompositionEnd={(event) =>
+                    wikiCompletion.handleCompositionEnd(event.currentTarget)
+                  }
+                  onBlur={wikiCompletion.handleBlur}
                   placeholder={t("notepad.placeholder.content", { defaultValue: "写点什么……" })}
                   className="w-full flex-1 min-h-0 pb-2 leading-relaxed text-ink-soft font-body placeholder:text-ink-ghost/50"
                   style={{ fontSize: `${surfaceFontSize}px`, tabSize: `var(--tab-indent-size, 2)` }}
+                />
+
+                <WikiLinkAutocomplete
+                  open={wikiCompletion.isOpen}
+                  trigger={wikiCompletion.trigger}
+                  candidates={wikiCompletion.candidates}
+                  activeIndex={wikiCompletion.activeIndex}
+                  textareaRef={contentRef}
+                  onHoverIndex={wikiCompletion.setActiveIndex}
+                  onSelect={wikiCompletion.selectCandidate}
+                  t={t}
                 />
 
                 <div className="flex items-center justify-between mt-auto pt-2 border-t border-paper-deep/30 shrink-0">

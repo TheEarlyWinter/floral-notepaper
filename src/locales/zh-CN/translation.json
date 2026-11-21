@@ -223,6 +223,7 @@
       "preview": "预览",
       "split": "分栏"
     },
+    "fontNotice": "界面优先使用本地 HarmonyOS Sans SC 并回退至系统字体；标题内嵌思源宋体（Source Han Serif SC，Copyright 2017-2022 Adobe）。",
     "fontSize": {
       "editor": "编辑器字号",
       "surface": "小窗/磁贴字号"
@@ -234,6 +235,41 @@
       "zhHK": "繁體中文"
     },
     "dataDir": "数据目录",
+    "mcp": {
+      "heading": "MCP 与 CLI 集成",
+      "description": "通过标准 MCP stdio 或命令行访问花笺笔记、待办与提醒。",
+      "executablePathLabel": "可执行文件路径",
+      "executablePathLoading": "正在读取路径…",
+      "presetLabel": "客户端预设",
+      "presets": {
+        "antigravity": "Antigravity",
+        "claudeCode": "Claude Code",
+        "codex": "Codex",
+        "generic": "通用"
+      },
+      "presetHint": {
+        "antigravity": "粘贴到 Antigravity 的 mcp_config.json 中。",
+        "claudeCode": "粘贴到 Claude Code 的 .mcp.json 或 ~/.claude.json 中（已包含 type: stdio）。",
+        "codex": "标准 mcpServers JSON 片段（若使用 Codex config.toml，对应 command 与 args = [\"--mcp\"]）。",
+        "generic": "适用于支持 mcpServers JSON 格式的任意 MCP 客户端。"
+      },
+      "snippetLabel": "mcpServers 配置片段",
+      "copyButton": "复制配置",
+      "copiedButton": "已复制",
+      "copiedToast": "MCP 配置已复制到剪贴板",
+      "copyFailedToast": "复制 MCP 配置失败",
+      "activity": {
+        "heading": "最近外部活动",
+        "refresh": "刷新",
+        "refreshing": "刷新中…",
+        "clear": "清空",
+        "clearedToast": "已清空外部活动记录",
+        "empty": "暂无 CLI 或 MCP 调用记录",
+        "loadFailed": "读取外部活动失败",
+        "statusOk": "成功",
+        "statusError": "失败"
+      }
+    },
     "openAtCursor": "快捷键打开时跟随鼠标位置",
     "commandPaletteShortcut": "命令面板快捷键",
     "quickCaptureShortcut": "快速捕获快捷键",
@@ -431,6 +467,12 @@
       "title": "更新"
     },
     "visibilityShortcut": "显示/隐藏窗口快捷键",
+    "imageCompress": {
+      "enable": "粘贴/拖入图片自动转为 WebP",
+      "heading": "图片压缩",
+      "hint": "自动跳过 GIF、SVG、WebP 及小于 30 KB 的图片，仅在体积更小时替换。",
+      "quality": "WebP 压缩质量"
+    },
     "background": {
       "label": "背景图片",
       "default": "默认背景",
@@ -445,6 +487,71 @@
         "cover": "填充",
         "contain": "完整",
         "repeat": "平铺"
+      }
+    },
+    "sync": {
+      "clearSecret": "清除",
+      "conflictsSummary": "检测到 {{count}} 个冲突副本（已保留本地文件）：",
+      "disabledHint": "同步默认关闭；选择 WebDAV 或 Git 后可跨设备同步笔记、图片与提醒。",
+      "git": {
+        "branch": "分支",
+        "remoteUrl": "远程仓库地址",
+        "remoteUrlPlaceholder": "https://github.com/user/notes.git",
+        "token": "个人访问令牌（PAT）",
+        "tokenPlaceholder": "输入访问令牌（SSH 可留空）",
+        "username": "用户名（可选）",
+        "usernamePlaceholder": "git / username"
+      },
+      "heading": "云同步",
+      "hideSecret": "隐藏",
+      "interval": {
+        "custom": "{{minutes}} 分钟",
+        "label": "自动同步间隔",
+        "minutes15": "15 分钟",
+        "minutes30": "30 分钟",
+        "minutes5": "5 分钟",
+        "minutes60": "60 分钟",
+        "off": "关闭"
+      },
+      "keyringUnavailable": "当前系统安全凭据库不可用，无法保存密码或令牌。",
+      "lastSyncLabel": "上次同步",
+      "neverSynced": "尚未同步",
+      "provider": {
+        "git": "Git",
+        "label": "同步方式",
+        "none": "关闭",
+        "webdav": "WebDAV"
+      },
+      "saveSecret": "保存",
+      "secretClearedToast": "已清除保存的凭据",
+      "secretEmpty": "请输入凭据后再保存",
+      "secretNotSet": "未配置",
+      "secretSaved": "已保存",
+      "secretSavedPlaceholder": "已安全保存（输入新凭据以覆盖）",
+      "secretSavedToast": "凭据已保存到系统安全存储",
+      "showSecret": "显示",
+      "state": {
+        "conflict": "有冲突",
+        "error": "失败",
+        "idle": "空闲",
+        "success": "已同步",
+        "syncing": "同步中"
+      },
+      "statsSummary": "上传 {{uploaded}} · 下载 {{downloaded}} · 删除 {{deleted}}",
+      "syncNow": "立即同步",
+      "syncSuccess": "同步完成",
+      "syncing": "同步中...",
+      "testConnection": "测试连接",
+      "testSuccess": "连接成功（{{latencyMs}} ms）",
+      "testing": "测试中...",
+      "webdav": {
+        "password": "密码 / 应用专用密码",
+        "passwordPlaceholder": "输入 WebDAV 密码",
+        "remoteDir": "远端目录",
+        "url": "服务器地址",
+        "urlPlaceholder": "https://dav.example.com/dav",
+        "username": "用户名",
+        "usernamePlaceholder": "username"
       }
     }
   },
@@ -477,6 +584,8 @@
     "commands": {
       "exportPdf": "导出 PDF",
       "exportPdfDesc": "将当前笔记导出为 PDF 文档",
+      "findReplace": "查找与替换",
+      "findReplaceDesc": "在当前笔记中查找或替换文本",
       "newNote": "新建笔记",
       "newNoteDesc": "在当前分类创建一篇空白笔记",
       "openDaily": "打开每日便笺",
@@ -497,6 +606,8 @@
       "openTodosDesc": "汇总全部笔记中的待办事项",
       "openWeeklyReview": "打开本周回顾",
       "openWeeklyReviewDesc": "打开仪表盘并查看或生成本周回顾",
+      "syncNow": "立即同步",
+      "syncNowDesc": "立即与云端同步笔记与附件",
       "toggleFocusMode": "切换专注模式",
       "toggleFocusModeDesc": "隐藏侧栏与工具栏，专注写作",
       "toggleReadingMode": "切换沉浸阅读",
@@ -518,7 +629,66 @@
     },
     "title": "命令面板"
   },
+  "findReplace": {
+    "caseSensitive": "区分大小写",
+    "clearFind": "清空查找",
+    "close": "关闭 (Esc)",
+    "findPlaceholder": "查找…",
+    "invalidRegex": "正则表达式无效",
+    "next": "下一个 (Enter)",
+    "previous": "上一个 (Shift+Enter)",
+    "regex": "正则表达式",
+    "regionLabel": "查找与替换",
+    "replace": "替换",
+    "replaceAll": "全部替换",
+    "replacePlaceholder": "替换为…",
+    "toggleReplace": "展开或收起替换"
+  },
+  "bulkActions": {
+    "addTags": "添加标签",
+    "barLabel": "批量管理操作栏",
+    "clearSelection": "清空",
+    "confirmDelete": "确认删除 {{count}} 篇？",
+    "confirmDeleteAction": "确认删除",
+    "delete": "删除所选",
+    "deletedToast": "已删除 {{count}} 篇笔记",
+    "doneShort": "完成",
+    "exitMode": "退出多选",
+    "exportMarkdown": "导出 Markdown",
+    "exportedToast": "已导出 {{count}} 篇 Markdown 笔记",
+    "move": "移动分类",
+    "movedToast": "已移动 {{count}} 篇笔记",
+    "selectAll": "全选",
+    "selectedCount": "已选 {{count}} 项",
+    "taggedToast": "已为 {{count}} 篇笔记添加标签",
+    "tagsAlreadyPresent": "所选笔记已包含这些标签",
+    "tagsPlaceholder": "标签（逗号分隔）",
+    "targetCategory": "目标分类",
+    "toggleMode": "批量选择",
+    "toggleShort": "多选"
+  },
   "tile": {
     "empty": "空"
+  },
+  "wikiAutocomplete": {
+    "empty": "没有匹配的笔记",
+    "footer": {
+      "close": "Esc 关闭",
+      "confirm": "Enter / Tab 插入",
+      "navigate": "↑↓ 选择"
+    },
+    "header": "插入笔记链接",
+    "listboxLabel": "关联笔记补全列表"
+  },
+  "relatedNotes": {
+    "empty": "暂无高相关度的本地笔记",
+    "insertLink": "插入链接",
+    "inserted": "已插入关联链接",
+    "linked": "已关联",
+    "loading": "正在分析本地关联…",
+    "matchedTermsLabel": "匹配词",
+    "score": "相关度 {{percent}}%",
+    "subtitle": "基于本地词频与标签推荐",
+    "title": "相关笔记"
   }
 }

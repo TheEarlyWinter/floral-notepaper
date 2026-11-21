@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
 import { getErrorMessage } from "../features/notes/api";
 import { showToast } from "./Toast";
+import { McpIntegrationSection } from "./McpIntegrationSection";
+import { SyncSettingsSection } from "./SyncSettingsSection";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
   AppConfig,
@@ -40,7 +42,10 @@ import {
 import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 
-const HARMONY_FONT_LICENSE_URL = new URL("../assets/fonts/LICENSE_Fonts", import.meta.url).href;
+const SOURCE_HAN_SERIF_LICENSE_URL = new URL(
+  "../assets/fonts/LICENSE_SourceHanSerif",
+  import.meta.url,
+).href;
 
 interface SettingsPanelProps {
   config: AppConfig;
@@ -583,6 +588,8 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
 
         <UpdateSettingsSection mode="settingsOnly" />
 
+        <SyncSettingsSection config={config} onChange={onChange} />
+
         {/* ═══════════════════════════════════════
             排版定制
            ═══════════════════════════════════════ */}
@@ -717,6 +724,57 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
         </section>
 
         {/* ═══════════════════════════════════════
+            图片压缩
+           ═══════════════════════════════════════ */}
+        <section className="space-y-2 pt-3 border-t border-paper-deep/20">
+          <h3 className="text-[11px] font-display font-medium text-ink-faint/80">
+            {t("settings.imageCompress.heading", { defaultValue: "图片压缩" })}
+          </h3>
+
+          <ToggleRow
+            label={t("settings.imageCompress.enable", {
+              defaultValue: "粘贴/拖入图片自动转为 WebP",
+            })}
+            checked={config.imageCompressWebp ?? true}
+            onChange={(checked) => setConfigValue("imageCompressWebp", checked)}
+          />
+
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+              {t("settings.imageCompress.quality", { defaultValue: "WebP 压缩质量" })}
+            </label>
+            <div
+              className={`flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25 ${
+                config.imageCompressWebp === false ? "opacity-50" : ""
+              }`}
+            >
+              <input
+                type="range"
+                min={0.6}
+                max={0.95}
+                step={0.01}
+                disabled={config.imageCompressWebp === false}
+                value={config.imageCompressQuality ?? 0.85}
+                onChange={(event) =>
+                  setConfigValue("imageCompressQuality", Number(event.target.value))
+                }
+                aria-label={t("settings.imageCompress.quality", { defaultValue: "WebP 压缩质量" })}
+                className="flex-1 h-1 accent-bamboo cursor-pointer disabled:cursor-not-allowed appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+              />
+              <span className="text-[12px] font-mono text-ink-soft tabular-nums w-10 text-right">
+                {(config.imageCompressQuality ?? 0.85).toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-ink-ghost leading-relaxed">
+            {t("settings.imageCompress.hint", {
+              defaultValue: "自动跳过 GIF、SVG、WebP 及小于 30 KB 的图片，仅在体积更小时替换。",
+            })}
+          </p>
+        </section>
+
+        {/* ═══════════════════════════════════════
             自定义 CSS
            ═══════════════════════════════════════ */}
         <section className="space-y-2 pt-3 border-t border-paper-deep/20">
@@ -740,21 +798,23 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
           />
         </section>
 
+        <McpIntegrationSection />
+
         <section className="pt-2 border-t border-paper-deep/25">
           <p className="text-[10px] leading-relaxed text-ink-ghost/75">
             <span>
               {t("settings.fontNotice", {
                 defaultValue:
-                  "Uses HarmonyOS Sans SC font. Copyright 2021 Huawei Device Co., Ltd. Licensed under HarmonyOS Sans Fonts License Agreement.",
+                  "界面优先使用本地 HarmonyOS Sans SC 并回退至系统字体；标题内嵌思源宋体（Source Han Serif SC，Copyright 2017-2022 Adobe）。",
               })}
             </span>{" "}
             <a
-              href={HARMONY_FONT_LICENSE_URL}
+              href={SOURCE_HAN_SERIF_LICENSE_URL}
               target="_blank"
               rel="noreferrer"
               className="underline underline-offset-2 hover:text-ink-faint"
             >
-              HarmonyOS Sans Fonts License Agreement
+              SIL Open Font License 1.1
             </a>
           </p>
         </section>

@@ -16,7 +16,9 @@ use services::{
     notes::{
         default_store, AppConfig, AppError, MergeNotesRequest, Note, NoteMetadata, SaveNoteRequest,
     },
+    related::{self, RelatedNoteSuggestion},
     reminders::{self, Reminder},
+    sync::{self, secrets::SyncSecretKind, SyncState, SyncStatusDto, SyncTestResult},
 };
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, env, fs, io::Write, path::PathBuf, sync::Mutex};
@@ -325,6 +327,19 @@ fn notes_search(query: String) -> Result<Vec<SearchResult>, AppError> {
 #[tauri::command]
 fn notes_rebuild_search_index() -> Result<(), AppError> {
     default_store()?.rebuild_search_index()
+}
+
+#[tauri::command]
+fn notes_related(
+    note_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<RelatedNoteSuggestion>, AppError> {
+    let store = default_store()?;
+    related::related_notes_for_store(
+        &store,
+        &note_id,
+        limit.unwrap_or_else(related::default_related_limit),
+    )
 }
 
 #[tauri::command]
@@ -1016,6 +1031,106 @@ fn take_startup_file() -> Option<String> {
     desktop::take_startup_file()
 }
 
+#[tauri::command]
+fn external_activity_list() -> Result<Vec<external_sync::ExternalActivityEntry>, AppError> {
+    let store = default_store()?;
+    external_sync::list_activity(store.data_dir())
+}
+
+#[tauri::command]
+fn external_activity_clear() -> Result<(), AppError> {
+    let store = default_store()?;
+    external_sync::clear_activity(store.data_dir())
+}
+
+#[tauri::command]
+fn get_executable_path() -> Result<String, AppError> {
+    let exe = env::current_exe().map_err(|error| io_error(error.to_string()))?;
+    Ok(exe.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn sync_get_status(state: State<'_, SyncState>) -> Result<SyncStatusDto, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || sync::get_status(&state))
+        .await
+        .map_err(|error| AppError {
+            code: "syncTaskJoinFailed".into(),
+            message: format!("读取同步状态失败：{error}"),
+            details: Default::default(),
+        })?
+}
+
+#[tauri::command]
+async fn sync_set_secret(
+    state: State<'_, SyncState>,
+    provider: String,
+    secret: String,
+) -> Result<(), AppError> {
+    let kind = SyncSecretKind::parse(&provider)?;
+    let secrets = state.secrets().clone();
+    tauri::async_runtime::spawn_blocking(move || secrets.set_secret(kind, &secret))
+        .await
+        .map_err(|error| AppError {
+            code: "syncTaskJoinFailed".into(),
+            message: format!("保存同步凭据失败：{error}"),
+            details: Default::default(),
+        })?
+}
+
+#[tauri::command]
+async fn sync_has_secret(state: State<'_, SyncState>, provider: String) -> Result<bool, AppError> {
+    let kind = SyncSecretKind::parse(&provider)?;
+    let secrets = state.secrets().clone();
+    tauri::async_runtime::spawn_blocking(move || secrets.has_secret(kind))
+        .await
+        .map_err(|error| AppError {
+            code: "syncTaskJoinFailed".into(),
+            message: format!("检查同步凭据失败：{error}"),
+            details: Default::default(),
+        })?
+}
+
+#[tauri::command]
+async fn sync_clear_secret(state: State<'_, SyncState>, provider: String) -> Result<(), AppError> {
+    let kind = SyncSecretKind::parse(&provider)?;
+    let secrets = state.secrets().clone();
+    tauri::async_runtime::spawn_blocking(move || secrets.clear_secret(kind))
+        .await
+        .map_err(|error| AppError {
+            code: "syncTaskJoinFailed".into(),
+            message: format!("清除同步凭据失败：{error}"),
+            details: Default::default(),
+        })?
+}
+
+#[tauri::command]
+async fn sync_test_connection(state: State<'_, SyncState>) -> Result<SyncTestResult, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || sync::test_connection(&state))
+        .await
+        .map_err(|error| AppError {
+            code: "syncTaskJoinFailed".into(),
+            message: format!("同步连接测试任务失败：{error}"),
+            details: Default::default(),
+        })?
+}
+
+#[tauri::command]
+async fn sync_run_now(
+    app: AppHandle,
+    state: State<'_, SyncState>,
+) -> Result<SyncStatusDto, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || sync::run_now(&app, &state))
+        .await
+        .map_err(|error| AppError {
+            code: "syncTaskJoinFailed".into(),
+            message: format!("同步任务执行失败：{error}"),
+            details: Default::default(),
+        })?
+}
+
 fn cli_version_or_help_requested() -> bool {
     env::args().any(|arg| matches!(arg.as_str(), "--version" | "-V" | "--help" | "-h"))
 }
@@ -1108,9 +1223,11 @@ pub fn run() {
                 eprintln!("failed to initialize updater infrastructure: {error}");
             }
             app.manage(updater_state);
+            app.manage(SyncState::default());
             updater::start_auto_check_scheduler(app.handle().clone());
             reminder_scheduler::start(app.handle().clone());
             external_sync::start(app.handle().clone());
+            sync::start_auto_sync_scheduler(app.handle().clone());
             desktop::setup_desktop(app)?;
             Ok(())
         })
@@ -1134,6 +1251,7 @@ pub fn run() {
             notes_export_markdown,
             notes_search,
             notes_rebuild_search_index,
+            notes_related,
             attachments_add,
             attachments_list,
             attachments_delete,
@@ -1185,8 +1303,17 @@ pub fn run() {
             updater::commands::update_install,
             updater::commands::update_install_prepare_report,
             updater::commands::update_cancel,
+            sync_get_status,
+            sync_set_secret,
+            sync_has_secret,
+            sync_clear_secret,
+            sync_test_connection,
+            sync_run_now,
             take_startup_file,
-            window_main_close_finished
+            window_main_close_finished,
+            external_activity_list,
+            external_activity_clear,
+            get_executable_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

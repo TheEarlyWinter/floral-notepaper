@@ -223,6 +223,7 @@
       "preview": "Preview",
       "split": "Split"
     },
+    "fontNotice": "UI prefers locally installed HarmonyOS Sans SC with system font fallbacks; display headings embed Source Han Serif SC (Copyright 2017-2022 Adobe).",
     "fontSize": {
       "editor": "Editor font size",
       "surface": "Surface font size"
@@ -234,6 +235,41 @@
       "zhHK": "繁體中文"
     },
     "dataDir": "Data directory",
+    "mcp": {
+      "heading": "MCP & CLI Integration",
+      "description": "Access Floral Notepaper notes, todos, and reminders via standard MCP stdio or CLI.",
+      "executablePathLabel": "Executable path",
+      "executablePathLoading": "Resolving path…",
+      "presetLabel": "Client preset",
+      "presets": {
+        "antigravity": "Antigravity",
+        "claudeCode": "Claude Code",
+        "codex": "Codex",
+        "generic": "Generic"
+      },
+      "presetHint": {
+        "antigravity": "Paste into Antigravity's mcp_config.json.",
+        "claudeCode": "Paste into Claude Code's .mcp.json or ~/.claude.json (includes type: stdio).",
+        "codex": "Standard mcpServers JSON snippet (for Codex config.toml, map command and args = [\"--mcp\"]).",
+        "generic": "Works with any MCP client that accepts mcpServers JSON."
+      },
+      "snippetLabel": "mcpServers snippet",
+      "copyButton": "Copy Config",
+      "copiedButton": "Copied",
+      "copiedToast": "MCP config copied to clipboard",
+      "copyFailedToast": "Failed to copy MCP config",
+      "activity": {
+        "heading": "Recent External Activity",
+        "refresh": "Refresh",
+        "refreshing": "Refreshing…",
+        "clear": "Clear",
+        "clearedToast": "External activity cleared",
+        "empty": "No CLI or MCP activity recorded yet",
+        "loadFailed": "Failed to load external activity",
+        "statusOk": "OK",
+        "statusError": "Failed"
+      }
+    },
     "openAtCursor": "Open near cursor with shortcut",
     "commandPaletteShortcut": "Command Palette shortcut",
     "quickCaptureShortcut": "Quick Capture shortcut",
@@ -431,6 +467,12 @@
       "title": "Updates"
     },
     "visibilityShortcut": "Show/Hide window shortcut",
+    "imageCompress": {
+      "enable": "Auto-convert pasted/dropped images to WebP",
+      "heading": "Image Compression",
+      "hint": "Automatically skips GIF, SVG, WebP, and images under 30 KB; replaces only when smaller.",
+      "quality": "WebP compression quality"
+    },
     "background": {
       "label": "Background image",
       "default": "Default background",
@@ -445,6 +487,71 @@
         "cover": "Cover",
         "contain": "Contain",
         "repeat": "Repeat"
+      }
+    },
+    "sync": {
+      "clearSecret": "Clear",
+      "conflictsSummary": "Detected {{count}} conflict copy(s) (local files preserved):",
+      "disabledHint": "Sync is off by default; select WebDAV or Git to sync notes, images, and reminders across devices.",
+      "git": {
+        "branch": "Branch",
+        "remoteUrl": "Remote Repository URL",
+        "remoteUrlPlaceholder": "https://github.com/user/notes.git",
+        "token": "Personal Access Token (PAT)",
+        "tokenPlaceholder": "Enter access token (leave blank for SSH)",
+        "username": "Username (optional)",
+        "usernamePlaceholder": "git / username"
+      },
+      "heading": "Cloud Sync",
+      "hideSecret": "Hide",
+      "interval": {
+        "custom": "{{minutes}} min",
+        "label": "Auto-sync Interval",
+        "minutes15": "15 min",
+        "minutes30": "30 min",
+        "minutes5": "5 min",
+        "minutes60": "60 min",
+        "off": "Off"
+      },
+      "keyringUnavailable": "OS secure credential store is unavailable; passwords or tokens cannot be saved.",
+      "lastSyncLabel": "Last Sync",
+      "neverSynced": "Never synced",
+      "provider": {
+        "git": "Git",
+        "label": "Sync Provider",
+        "none": "Off",
+        "webdav": "WebDAV"
+      },
+      "saveSecret": "Save",
+      "secretClearedToast": "Saved credential cleared",
+      "secretEmpty": "Enter a credential before saving",
+      "secretNotSet": "Not set",
+      "secretSaved": "Saved",
+      "secretSavedPlaceholder": "Safely stored (enter a new value to replace)",
+      "secretSavedToast": "Credential saved to OS keyring",
+      "showSecret": "Show",
+      "state": {
+        "conflict": "Conflicts",
+        "error": "Failed",
+        "idle": "Idle",
+        "success": "Synced",
+        "syncing": "Syncing"
+      },
+      "statsSummary": "Uploaded {{uploaded}} · Downloaded {{downloaded}} · Deleted {{deleted}}",
+      "syncNow": "Sync Now",
+      "syncSuccess": "Sync completed",
+      "syncing": "Syncing...",
+      "testConnection": "Test Connection",
+      "testSuccess": "Connected ({{latencyMs}} ms)",
+      "testing": "Testing...",
+      "webdav": {
+        "password": "Password / App Password",
+        "passwordPlaceholder": "Enter WebDAV password",
+        "remoteDir": "Remote Directory",
+        "url": "Server URL",
+        "urlPlaceholder": "https://dav.example.com/dav",
+        "username": "Username",
+        "usernamePlaceholder": "username"
       }
     }
   },
@@ -477,6 +584,8 @@
     "commands": {
       "exportPdf": "Export PDF",
       "exportPdfDesc": "Export current note as a PDF document",
+      "findReplace": "Find & Replace",
+      "findReplaceDesc": "Find or replace text in the current note",
       "newNote": "New Note",
       "newNoteDesc": "Create a blank note in the current category",
       "openDaily": "Open Daily Note",
@@ -497,6 +606,8 @@
       "openTodosDesc": "Aggregate tasks across all notes",
       "openWeeklyReview": "Open Weekly Review",
       "openWeeklyReviewDesc": "Open dashboard to view or generate weekly review",
+      "syncNow": "Sync Now",
+      "syncNowDesc": "Sync notes and attachments with remote storage",
       "toggleFocusMode": "Toggle Focus Mode",
       "toggleFocusModeDesc": "Hide sidebar and toolbars for distraction-free writing",
       "toggleReadingMode": "Toggle Immersive Reading",
@@ -518,7 +629,66 @@
     },
     "title": "Command Palette"
   },
+  "findReplace": {
+    "caseSensitive": "Match case",
+    "clearFind": "Clear search",
+    "close": "Close (Esc)",
+    "findPlaceholder": "Find…",
+    "invalidRegex": "Invalid regular expression",
+    "next": "Next match (Enter)",
+    "previous": "Previous match (Shift+Enter)",
+    "regex": "Use regular expression",
+    "regionLabel": "Find and replace",
+    "replace": "Replace",
+    "replaceAll": "Replace All",
+    "replacePlaceholder": "Replace with…",
+    "toggleReplace": "Toggle replace"
+  },
+  "bulkActions": {
+    "addTags": "Add Tags",
+    "barLabel": "Bulk action bar",
+    "clearSelection": "Clear",
+    "confirmDelete": "Delete {{count}} notes?",
+    "confirmDeleteAction": "Confirm Delete",
+    "delete": "Delete Selected",
+    "deletedToast": "Deleted {{count}} note(s)",
+    "doneShort": "Done",
+    "exitMode": "Exit multi-select",
+    "exportMarkdown": "Export Markdown",
+    "exportedToast": "Exported {{count}} Markdown note(s)",
+    "move": "Move",
+    "movedToast": "Moved {{count}} note(s)",
+    "selectAll": "Select All",
+    "selectedCount": "{{count}} selected",
+    "taggedToast": "Added tags to {{count}} note(s)",
+    "tagsAlreadyPresent": "Selected notes already have these tags",
+    "tagsPlaceholder": "Tags (comma-separated)",
+    "targetCategory": "Target category",
+    "toggleMode": "Bulk select",
+    "toggleShort": "Select"
+  },
   "tile": {
     "empty": "Empty"
+  },
+  "wikiAutocomplete": {
+    "empty": "No matching notes",
+    "footer": {
+      "close": "Esc Close",
+      "confirm": "Enter / Tab Insert",
+      "navigate": "↑↓ Navigate"
+    },
+    "header": "Link Note",
+    "listboxLabel": "Wiki-link autocomplete suggestions"
+  },
+  "relatedNotes": {
+    "empty": "No closely related local notes yet",
+    "insertLink": "Insert Link",
+    "inserted": "Inserted note link",
+    "linked": "Linked",
+    "loading": "Finding related notes…",
+    "matchedTermsLabel": "Matched terms",
+    "score": "{{percent}}% match",
+    "subtitle": "Pure-local text & tag similarity",
+    "title": "Related Notes"
   }
 }

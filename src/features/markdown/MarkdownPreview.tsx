@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { ComponentPropsWithoutRef, InputHTMLAttributes } from "react";
 import { useTranslation } from "react-i18next";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -102,10 +102,21 @@ export function toggleTaskCheckboxAtOffset(
   return content.slice(0, offset) + (checked ? "x" : " ") + content.slice(offset + 1);
 }
 
+function transformMarkdownUrl(url: string): string {
+  if (url.startsWith("wiki:")) {
+    return url;
+  }
+  return defaultUrlTransform(url);
+}
+
 const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts, remarkWikiLinks];
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "mark", "center", "font", "u", "abbr"],
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), "wiki"],
+  },
   attributes: {
     ...defaultSchema.attributes,
     "*": [
@@ -412,13 +423,20 @@ export function MarkdownPreview({
       ...staticComponents,
       a: ({ href, children }) => {
         if (href?.startsWith("wiki:")) {
-          const target = decodeURIComponent(href.slice("wiki:".length));
+          const rawTarget = href.slice("wiki:".length);
+          let target = rawTarget;
+          try {
+            target = decodeURIComponent(rawTarget);
+          } catch {
+            target = rawTarget;
+          }
           return (
             <button
               type="button"
+              data-wiki-target={target}
               onClick={() => onOpenWikiLink?.(target)}
               className="text-bamboo hover:text-bamboo-light underline underline-offset-2 cursor-pointer"
-              title={`打开关联笔记：${target}`}
+              title={`跳转到关联笔记：${extractText(children) || target}`}
             >
               {children}
             </button>
@@ -482,6 +500,7 @@ export function MarkdownPreview({
             remarkPlugins={remarkPlugins}
             rehypePlugins={renderHtml ? rehypePluginsWithHtml : rehypePluginsDefault}
             components={components}
+            urlTransform={transformMarkdownUrl}
           >
             {content}
           </Markdown>

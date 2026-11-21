@@ -7,7 +7,7 @@ name: 发行版（无签名）
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 concurrency:
   group: release-nosign-${{ github.ref }}
@@ -133,6 +133,11 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: "src-tauri -> target"
 
       - name: Pin npm for lockfile compatibility
         run: npm install --global npm@11.6.2

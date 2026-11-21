@@ -38,13 +38,17 @@ export async function exportMarkdownNote(note: ExportableNote): Promise<boolean>
   return true;
 }
 
+export async function exportMarkdownNoteToPath(id: string, path: string): Promise<void> {
+  await invoke("notes_export_markdown", { id, path });
+}
+
 function markdownFileName(title: string, translate: TFunction = t): string {
   const safeTitle =
     safeFileStem(title) || translate("common.untitledNote", { defaultValue: "无标题笔记" });
   return `${safeTitle}.md`;
 }
 
-function safeFileStem(value: string): string {
+export function safeFileStem(value: string): string {
   const sanitized = Array.from(value.trim(), (char) => {
     const code = char.codePointAt(0) ?? 0;
 

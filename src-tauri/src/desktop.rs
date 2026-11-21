@@ -3060,8 +3060,18 @@ mod tests {
             link_preview: true,
             custom_css: String::new(),
             templates: Vec::new(),
+            sync_provider: "none".into(),
+            sync_auto_interval_minutes: 0,
+            sync_webdav_url: String::new(),
+            sync_webdav_username: String::new(),
+            sync_webdav_remote_dir: "floral-notepaper".into(),
+            sync_git_remote_url: String::new(),
+            sync_git_branch: "main".into(),
+            sync_git_username: String::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: true,
+            image_compress_quality: 0.85,
         }
     }
 
@@ -3195,8 +3205,18 @@ mod tests {
             link_preview: true,
             custom_css: String::new(),
             templates: Vec::new(),
+            sync_provider: "none".into(),
+            sync_auto_interval_minutes: 0,
+            sync_webdav_url: String::new(),
+            sync_webdav_username: String::new(),
+            sync_webdav_remote_dir: "floral-notepaper".into(),
+            sync_git_remote_url: String::new(),
+            sync_git_branch: "main".into(),
+            sync_git_username: String::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: true,
+            image_compress_quality: 0.85,
         };
         let next = AppConfig {
             locale: "en-US".into(),
@@ -3253,8 +3273,18 @@ mod tests {
             link_preview: true,
             custom_css: String::new(),
             templates: Vec::new(),
+            sync_provider: "none".into(),
+            sync_auto_interval_minutes: 0,
+            sync_webdav_url: String::new(),
+            sync_webdav_username: String::new(),
+            sync_webdav_remote_dir: "floral-notepaper".into(),
+            sync_git_remote_url: String::new(),
+            sync_git_branch: "main".into(),
+            sync_git_username: String::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: true,
+            image_compress_quality: 0.85,
         };
 
         assert_eq!(

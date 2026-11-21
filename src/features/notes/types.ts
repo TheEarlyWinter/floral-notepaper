@@ -75,3 +75,25 @@ export interface IndexedSearchResult {
   matchLength: number;
   score: number;
 }
+
+export type ExternalActivitySource = "cli" | "mcp";
+
+export interface ExternalActivityEntry {
+  id: string;
+  timestamp: string;
+  source: ExternalActivitySource;
+  action: string;
+  target: string;
+  summary: string;
+  ok: boolean;
+}
+
+export interface RelatedNoteSuggestion {
+  id: string;
+  title: string;
+  category: string;
+  tags: string[];
+  score: number;
+  matchedTerms: string[];
+  alreadyLinked: boolean;
+}
