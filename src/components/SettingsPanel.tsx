@@ -40,7 +40,10 @@ import {
 import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 
-const HARMONY_FONT_LICENSE_URL = new URL("../assets/fonts/LICENSE_Fonts", import.meta.url).href;
+const SOURCE_HAN_SERIF_LICENSE_URL = new URL(
+  "../assets/fonts/LICENSE_SourceHanSerif",
+  import.meta.url,
+).href;
 
 interface SettingsPanelProps {
   config: AppConfig;
@@ -745,16 +748,16 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             <span>
               {t("settings.fontNotice", {
                 defaultValue:
-                  "Uses HarmonyOS Sans SC font. Copyright 2021 Huawei Device Co., Ltd. Licensed under HarmonyOS Sans Fonts License Agreement.",
+                  "界面优先使用本地 HarmonyOS Sans SC 并回退至系统字体；标题内嵌思源宋体（Source Han Serif SC，Copyright 2017-2022 Adobe）。",
               })}
             </span>{" "}
             <a
-              href={HARMONY_FONT_LICENSE_URL}
+              href={SOURCE_HAN_SERIF_LICENSE_URL}
               target="_blank"
               rel="noreferrer"
               className="underline underline-offset-2 hover:text-ink-faint"
             >
-              HarmonyOS Sans Fonts License Agreement
+              SIL Open Font License 1.1
             </a>
           </p>
         </section>

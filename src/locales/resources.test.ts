@@ -41,6 +41,18 @@ describe("locale resources", () => {
     }
   });
 
+  it("defines every source-locale leaf key directly in zh-HK and en-US with zero missing keys", () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      if (locale === DEFAULT_LOCALE) {
+        continue;
+      }
+
+      const overrideKeys = new Set(collectLeafKeys(translationOverrides[locale]));
+      const missingKeys = sourceKeys.filter((key) => !overrideKeys.has(key));
+      expect(missingKeys, `Missing keys in ${locale}: ${missingKeys.join(", ")}`).toEqual([]);
+    }
+  });
+
   it("defines quickCapture, commandPalette, and quickCaptureShortcut keys directly in all locales", () => {
     const requiredNamespaces = ["quickCapture.", "commandPalette."];
     const requiredExact = new Set([

@@ -223,6 +223,7 @@
       "preview": "预览",
       "split": "分栏"
     },
+    "fontNotice": "界面优先使用本地 HarmonyOS Sans SC 并回退至系统字体；标题内嵌思源宋体（Source Han Serif SC，Copyright 2017-2022 Adobe）。",
     "fontSize": {
       "editor": "编辑器字号",
       "surface": "小窗/磁贴字号"

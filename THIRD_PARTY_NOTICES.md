@@ -1,13 +1,15 @@
 # Third-Party Notices
 
-## HarmonyOS Sans SC
+## System Font Stack
 
-Floral Notepaper embeds the unmodified `HarmonyOS_Sans_SC.ttf` font from the OpenHarmony `global_system_resources` repository.
+Floral Notepaper does not bundle `HarmonyOS_Sans_SC.ttf`. The application UI prefers a locally installed `HarmonyOS Sans SC` font if present and falls back to the operating system's native sans-serif and monospace fonts.
 
-Copyright 2021 Huawei Device Co., Ltd.
+## Source Han Serif SC
 
-HarmonyOS Sans Fonts Software is licensed under the HarmonyOS Sans Fonts License Agreement. The full license text is retained at:
+Floral Notepaper bundles `src/assets/fonts/SourceHanSerifSC-Regular.woff2` (Source Han Serif SC) for display headings.
 
-- `src/assets/fonts/LICENSE_Fonts`
+Copyright 2017-2022 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. Source is a trademark of Adobe in the United States and/or other countries.
 
-The font is bundled only as part of this application and is not redistributed or sold as a standalone font package.
+This Font Software is licensed under the SIL Open Font License, Version 1.1. The full license text is retained at:
+
+- `src/assets/fonts/LICENSE_SourceHanSerif`
