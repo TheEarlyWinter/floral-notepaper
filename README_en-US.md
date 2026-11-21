@@ -36,6 +36,7 @@ Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepa
 ## 📖 Table of Contents
 
 - [What is it](#what-is-it)
+- [Highlights Over Upstream](#highlights-over-upstream)
 - [Features](#features)
   - [✍️ Writing & Organizing](#️-writing--organizing)
   - [🧲 Desktop Tiles & Quick Notes](#-desktop-tiles--quick-notes)
@@ -44,6 +45,8 @@ Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepa
   - [⏰ Reminders & Daily Rhythm](#-reminders--daily-rhythm)
   - [🚀 Performance & Infrastructure](#-performance--infrastructure)
   - [🛡️ Data Safety & Unsaved-Content Protection](#️-data-safety--unsaved-content-protection)
+- [MCP & CLI Quickstart](#mcp--cli-quickstart)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Download & Install](#download--install)
 - [Run from Source](#run-from-source)
 - [Data & Privacy](#data--privacy)
@@ -57,6 +60,19 @@ Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepa
 Floral Notepaper is for people who want to keep their notes on their own computer while keeping the writing experience smooth and pleasant.
 
 It can be a sticky note summoned at any moment, or a lightweight Markdown notebook: jot down a todo, keep a daily log, link notes together, or leave a reminder for your future self. No account, no cloud dependency — your data belongs to you.
+
+## Highlights Over Upstream
+
+Built on top of the lightweight sticky-note and Markdown core from [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper), this enhanced edition adds local indexing, automation, and knowledge-management capabilities:
+
+| Area                      | Enhanced Edition Highlights                                                                                                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Search & Editing**      | SQLite FTS5 (`trigram`) incremental CJK/English full-text index, `Ctrl+K` Command Palette, `Ctrl+F` / `Ctrl+H` regex Find & Replace with live editor/preview highlights                               |
+| **AI & Automation**       | Built-in native Rust `--mcp` server (14 tools + 4 read-only `floral://` resources/templates) and `--cli` interface, cross-process file locks, and automatic GUI hot-reload                            |
+| **Quick Capture & Tiles** | Frameless floating Quick Capture bar (`Alt+Shift+Space`), desktop tiles with `--ttl` auto-dismiss / `--persist`, and 140×96 mini tile mode                                                            |
+| **Knowledge Links**       | `[[` wiki-link autocomplete and click navigation, Backlinks + local BM25 Related Notes, force-directed Knowledge Graph, and Outline panel                                                             |
+| **Organization & Sync**   | Cross-note Todo aggregation with write-back, sidebar multi-select bulk actions, auto WebP image compression on paste/drop, blake3 deduplicated history, and opt-in WebDAV / Git sync (off by default) |
+| **Reliability & Safety**  | Atomic writes with rollback, forced save on close, atomic backup restore, SVG script filtering, and trilingual UI (`zh-CN` / `zh-HK` / `en-US`)                                                       |
 
 ## Features
 
@@ -118,15 +134,65 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 - **Self-healing reminders**: a corrupted reminders file is rebuilt automatically, with the damaged copy kept for inspection.
 - **Import safety**: SVG images with embedded scripts are rejected, tightening the XSS surface.
 
+## MCP & CLI Quickstart
+
+Floral Notepaper ships with a native Rust stdio MCP server (`--mcp`) requiring no extra runtime. Open **Settings → MCP & CLI Integration** to auto-detect the executable path, copy client presets (Antigravity, Claude Code, Codex, Generic) in one click, and inspect recent external activity logs.
+
+Standard `mcpServers` config example (for portable or custom installs, replace `command` with your actual executable path; the Claude Code preset in Settings includes `"type": "stdio"`):
+
+```json
+{
+  "mcpServers": {
+    "floral-notepaper": {
+      "command": "C:\\Program Files\\花笺\\floral-notepaper.exe",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+Built-in read-only MCP resources & template: `floral://daily` (today's daily note), `floral://todos/pending` (unfinished tasks), `floral://notes` (all notes metadata), and `floral://note/{id}` (full note body by ID).
+
+Common CLI examples (every command returns structured JSON, with `--stdin` piping and `FLORAL_NOTEPAPER_DATA_DIR` override support):
+
+```bash
+# Full-text search notes
+floral-notepaper --cli search "keyword"
+
+# Append a todo item to today's daily note
+floral-notepaper --cli append daily --content "- [ ] Prepare weekly report"
+
+# List all pending todos
+floral-notepaper --cli todos list --pending
+
+# Pin a note as a desktop tile (auto-closes after 300s by default; pass --persist to keep open)
+floral-notepaper --cli pin-tile <note-id> --ttl 600
+```
+
+## Keyboard Shortcuts
+
+| Shortcut            | Action                                | Scope / Notes                                                  |
+| ------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| `Ctrl+Space`        | Summon / focus quick note             | Global (`Command+Option+N` on macOS; customizable in Settings) |
+| `Alt+Shift+Space`   | Summon floating Quick Capture bar     | Global (customizable in Settings)                              |
+| `Ctrl+K`            | Open / close Command Palette          | Main window (customizable in Settings)                         |
+| `Ctrl+F` / `Ctrl+H` | In-note Find / Find & Replace         | Main editor (supports case sensitivity & regex)                |
+| `Ctrl+S`            | Save current note immediately         | Main window                                                    |
+| `Ctrl+W`            | Close current tab                     | Main window (customizable; auto-saves before closing)          |
+| `Alt+←` / `Alt+→`   | Navigate note history back / forward  | Main window                                                    |
+| `[[` / `Ctrl+Click` | Wiki-link autocomplete / jump to note | Editor (`Cmd+Click` on macOS; direct click in Preview)         |
+| `Ctrl+Right-Click`  | Quick-close a desktop tile            | Desktop tile (toggleable in Settings)                          |
+
 ## Download & Install
 
 Grab the latest build from [Releases](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest).
 
-| File                                             | Use                                                                 |
-| ------------------------------------------------ | ------------------------------------------------------------------- |
-| `floral-notepaper_VERSION_windows-x64-setup.exe` | **Windows x64 installer**, recommended for most users.              |
-| `floral-notepaper_VERSION.exe`                   | **Windows x64 portable build**, runs directly without installation. |
-| `SHA256SUMS.txt`                                 | SHA-256 checksums for all packages.                                 |
+| File                                     | Use                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| `floral-notepaper_VERSION_x64-setup.exe` | **Windows x64 installer**, recommended for most users.              |
+| `floral-notepaper_VERSION.exe`           | **Windows x64 portable build**, runs directly without installation. |
+| `SHA256SUMS.txt`                         | SHA-256 checksums for all release assets.                           |
+| `BUILD-INFO.txt`                         | Build version, commit hash, and build timestamp metadata.           |
 
 > [!WARNING]
 > The current builds are not commercially code-signed, so Windows may show an unknown-publisher warning on first launch. Download only from this repository's Releases page and verify `SHA256SUMS.txt` when needed.
@@ -153,12 +219,12 @@ npm run lint
 npm test
 npx tsc --noEmit
 cargo test --manifest-path src-tauri/Cargo.toml --lib
-npm run tauri build -- --bundles nsis
+npx tauri build --bundles nsis
 ```
 
 ## Data & Privacy
 
-No registration required, and note content is never uploaded. The data directory can be viewed or migrated from the app settings; please back up important notes before migrating, cleaning, or overwriting data.
+Floral Notepaper runs 100% locally by default — no account is required and note content is never uploaded automatically. Cross-device WebDAV / Git sync is disabled by default; when you opt in, it syncs only with the remote you configure, and passwords or access tokens are stored exclusively in your OS credential store (never written in plaintext to config files). The data directory can be viewed or migrated from app settings; please back up important notes before migrating, cleaning, or overwriting data.
 
 ## Tech Stack
 
