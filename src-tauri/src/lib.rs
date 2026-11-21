@@ -1,7 +1,9 @@
 pub mod cli;
 pub mod desktop;
+pub mod external_sync;
 pub mod json_io;
 pub mod locales;
+pub mod mcp;
 pub mod reminder_scheduler;
 pub mod services;
 pub mod updater;
@@ -1000,6 +1002,16 @@ async fn open_note_in_editor(app: AppHandle, note_id: String) -> Result<(), AppE
 }
 
 #[tauri::command]
+async fn open_quick_capture_window(app: AppHandle) -> Result<(), AppError> {
+    desktop::open_quick_capture_window_now(&app)
+}
+
+#[tauri::command]
+async fn hide_quick_capture_window(app: AppHandle) -> Result<(), AppError> {
+    desktop::hide_quick_capture_window_now(&app)
+}
+
+#[tauri::command]
 fn take_startup_file() -> Option<String> {
     desktop::take_startup_file()
 }
@@ -1098,6 +1110,7 @@ pub fn run() {
             app.manage(updater_state);
             updater::start_auto_check_scheduler(app.handle().clone());
             reminder_scheduler::start(app.handle().clone());
+            external_sync::start(app.handle().clone());
             desktop::setup_desktop(app)?;
             Ok(())
         })
@@ -1159,6 +1172,8 @@ pub fn run() {
             open_tile_window,
             toggle_tile_window,
             open_note_in_editor,
+            open_quick_capture_window,
+            hide_quick_capture_window,
             updater::commands::update_status,
             updater::commands::update_settings_get,
             updater::commands::update_settings_save,

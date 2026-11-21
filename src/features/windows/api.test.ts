@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { describe, expect, test, vi } from "vitest";
-import { openNotepadWindow, openTileWindow, toggleTileWindow, type WindowBounds } from "./api";
+import {
+  hideQuickCaptureWindow,
+  openNotepadWindow,
+  openQuickCaptureWindow,
+  openTileWindow,
+  toggleTileWindow,
+  type WindowBounds,
+} from "./api";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -33,5 +40,15 @@ describe("window api", () => {
       noteId: "note-1",
       bounds: null,
     });
+  });
+
+  test("opens and hides the quick capture window", async () => {
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    await openQuickCaptureWindow();
+    await hideQuickCaptureWindow();
+
+    expect(invoke).toHaveBeenCalledWith("open_quick_capture_window");
+    expect(invoke).toHaveBeenCalledWith("hide_quick_capture_window");
   });
 });

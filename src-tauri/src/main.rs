@@ -17,6 +17,11 @@ fn main() {
         return;
     }
 
+    if all_args.first().map(String::as_str) == Some("--mcp") {
+        floral_notepaper_lib::mcp::run_stdio();
+        return;
+    }
+
     floral_notepaper_lib::try_exit_for_cli_version_or_help();
     floral_notepaper_lib::run()
 }

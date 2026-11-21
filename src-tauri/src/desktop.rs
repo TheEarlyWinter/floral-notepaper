@@ -415,11 +415,15 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartExt};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 const MAIN_WINDOW_LABEL: &str = "main";
+const QUICK_CAPTURE_WINDOW_LABEL: &str = "quick-capture";
 const OPEN_ABOUT_PANEL_EVENT: &str = "open-about-panel";
+const QUICK_CAPTURE_OPENED_EVENT: &str = "quick-capture-opened";
+const QUICK_CAPTURE_BLUR_GRACE: std::time::Duration = std::time::Duration::from_millis(120);
 const MACOS_APP_ABOUT_ID: &str = "macos-about";
 const TRAY_ID: &str = "main-tray";
 const TRAY_SHOW_MAIN_ID: &str = "show-main";
 const TRAY_QUICK_NOTE_ID: &str = "quick-note";
+const TRAY_QUICK_CAPTURE_ID: &str = "quick-capture";
 const TRAY_TOGGLE_CLOSE_TO_TRAY_ID: &str = "toggle-close-to-tray";
 const TRAY_TOGGLE_AUTOSTART_ID: &str = "toggle-autostart";
 const TRAY_QUIT_ID: &str = "quit";
@@ -438,6 +442,7 @@ static STARTUP_FILE: Mutex<Option<String>> = Mutex::new(None);
 pub enum TrayMenuAction {
     ShowMain,
     QuickNote,
+    QuickCapture,
     ToggleCloseToTray,
     ToggleAutostart,
     Quit,
@@ -482,6 +487,7 @@ pub struct RuntimeConfigChanges {
     pub autostart_changed: bool,
     pub global_shortcut_changed: bool,
     pub toggle_visibility_shortcut_changed: bool,
+    pub quick_capture_shortcut_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -547,6 +553,7 @@ struct RuntimeState {
     is_exiting: AtomicBool,
     windows_hidden: AtomicBool,
     hidden_window_labels: Mutex<Vec<String>>,
+    quick_capture_opened_at: Mutex<Option<std::time::Instant>>,
     #[cfg(desktop)]
     shortcut_bindings: Mutex<ShortcutBindings>,
 }
@@ -556,6 +563,7 @@ struct RuntimeState {
 struct ShortcutBindings {
     open_notepad: Option<Shortcut>,
     toggle_visibility: Option<Shortcut>,
+    quick_capture: Option<Shortcut>,
 }
 
 #[cfg(desktop)]
@@ -563,6 +571,7 @@ struct ShortcutBindings {
 enum ShortcutAction {
     OpenNotepad,
     ToggleVisibility,
+    QuickCapture,
 }
 
 #[derive(Default)]
@@ -635,6 +644,21 @@ impl RuntimeState {
         }
     }
 
+    fn mark_quick_capture_opened(&self) {
+        if let Ok(mut guard) = self.quick_capture_opened_at.lock() {
+            *guard = Some(std::time::Instant::now());
+        }
+    }
+
+    fn should_hide_quick_capture_on_blur(&self) -> bool {
+        let Ok(guard) = self.quick_capture_opened_at.lock() else {
+            return true;
+        };
+        guard
+            .map(|opened_at| opened_at.elapsed() >= QUICK_CAPTURE_BLUR_GRACE)
+            .unwrap_or(true)
+    }
+
     #[cfg(desktop)]
     fn set_shortcut_bindings(&self, bindings: ShortcutBindings) {
         if let Ok(mut guard) = self.shortcut_bindings.lock() {
@@ -643,12 +667,11 @@ impl RuntimeState {
     }
 
     #[cfg(desktop)]
-    fn shortcut_action(&self, shortcut: &Shortcut) -> ShortcutAction {
+    fn shortcut_action(&self, shortcut: &Shortcut) -> Option<ShortcutAction> {
         self.shortcut_bindings
             .lock()
             .ok()
             .and_then(|bindings| bindings.action_for(shortcut))
-            .unwrap_or(ShortcutAction::OpenNotepad)
     }
 }
 
@@ -661,6 +684,8 @@ impl ShortcutBindings {
             .is_some_and(|s| s == shortcut)
         {
             Some(ShortcutAction::ToggleVisibility)
+        } else if self.quick_capture.as_ref().is_some_and(|s| s == shortcut) {
+            Some(ShortcutAction::QuickCapture)
         } else if self.open_notepad.as_ref().is_some_and(|s| s == shortcut) {
             Some(ShortcutAction::OpenNotepad)
         } else {
@@ -673,6 +698,7 @@ pub fn tray_menu_action(id: &str) -> Option<TrayMenuAction> {
     match id {
         TRAY_SHOW_MAIN_ID => Some(TrayMenuAction::ShowMain),
         TRAY_QUICK_NOTE_ID => Some(TrayMenuAction::QuickNote),
+        TRAY_QUICK_CAPTURE_ID => Some(TrayMenuAction::QuickCapture),
         TRAY_TOGGLE_CLOSE_TO_TRAY_ID => Some(TrayMenuAction::ToggleCloseToTray),
         TRAY_TOGGLE_AUTOSTART_ID => Some(TrayMenuAction::ToggleAutostart),
         TRAY_QUIT_ID => Some(TrayMenuAction::Quit),
@@ -697,6 +723,11 @@ pub fn tray_menu_specs(locale: Locale, close_to_tray: bool, autostart: bool) -> 
         TrayMenuSpec {
             id: TRAY_QUICK_NOTE_ID,
             label: locales::tray_quick_note_label(locale),
+            checked: None,
+        },
+        TrayMenuSpec {
+            id: TRAY_QUICK_CAPTURE_ID,
+            label: locales::tray_quick_capture_label(locale),
             checked: None,
         },
         TrayMenuSpec {
@@ -734,15 +765,8 @@ fn build_tray_menu(app: &AppHandle, config: &AppConfig) -> Result<Menu<Wry>, Box
 
     let show_main = MenuItem::with_id(app, specs[0].id, specs[0].label, true, None::<&str>)?;
     let quick_note = MenuItem::with_id(app, specs[1].id, specs[1].label, true, None::<&str>)?;
+    let quick_capture = MenuItem::with_id(app, specs[2].id, specs[2].label, true, None::<&str>)?;
     let close_to_tray = CheckMenuItem::with_id(
-        app,
-        specs[2].id,
-        specs[2].label,
-        true,
-        specs[2].checked.unwrap_or(false),
-        None::<&str>,
-    )?;
-    let autostart = CheckMenuItem::with_id(
         app,
         specs[3].id,
         specs[3].label,
@@ -750,14 +774,23 @@ fn build_tray_menu(app: &AppHandle, config: &AppConfig) -> Result<Menu<Wry>, Box
         specs[3].checked.unwrap_or(false),
         None::<&str>,
     )?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        specs[4].id,
+        specs[4].label,
+        true,
+        specs[4].checked.unwrap_or(false),
+        None::<&str>,
+    )?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, specs[4].id, specs[4].label, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, specs[5].id, specs[5].label, true, None::<&str>)?;
 
     Ok(Menu::with_items(
         app,
         &[
             &show_main,
             &quick_note,
+            &quick_capture,
             &close_to_tray,
             &autostart,
             &separator,
@@ -896,6 +929,10 @@ fn refresh_window_titles(app: &AppHandle, config: &AppConfig) -> Result<(), AppE
         window.set_title(locales::main_window_title(locale))?;
     }
 
+    if let Some(window) = app.get_webview_window(QUICK_CAPTURE_WINDOW_LABEL) {
+        window.set_title(locales::quick_capture_window_title(locale))?;
+    }
+
     for (label, window) in app.webview_windows() {
         if label.starts_with("notepad-") {
             window.set_title(locales::notepad_window_title(locale))?;
@@ -1004,6 +1041,8 @@ pub fn runtime_config_changes(previous: &AppConfig, next: &AppConfig) -> Runtime
         global_shortcut_changed: previous.global_shortcut != next.global_shortcut,
         toggle_visibility_shortcut_changed: previous.toggle_visibility_shortcut
             != next.toggle_visibility_shortcut,
+        quick_capture_shortcut_changed: previous.quick_capture_shortcut
+            != next.quick_capture_shortcut,
     }
 }
 
@@ -1075,8 +1114,11 @@ pub fn apply_runtime_config(
 ) -> Result<(), Box<dyn Error>> {
     let changes = runtime_config_changes(previous, next);
 
-    if changes.global_shortcut_changed || changes.toggle_visibility_shortcut_changed {
-        apply_global_shortcut_config(app, next)?;
+    if changes.global_shortcut_changed
+        || changes.toggle_visibility_shortcut_changed
+        || changes.quick_capture_shortcut_changed
+    {
+        apply_global_shortcut_config(app, next, changes.quick_capture_shortcut_changed)?;
     }
 
     if changes.autostart_changed {
@@ -1195,6 +1237,36 @@ pub fn handle_window_event(window: &Window, event: &WindowEvent) {
         if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
             save_surface_size(&webview);
         }
+    }
+
+    if window.label() == QUICK_CAPTURE_WINDOW_LABEL {
+        match event {
+            WindowEvent::CloseRequested { api, .. } if !app_is_exiting(window.app_handle()) => {
+                api.prevent_close();
+                if let Err(error) = hide_quick_capture_window_now(window.app_handle()) {
+                    eprintln!("failed to hide quick-capture window on close request: {error}");
+                }
+            }
+            WindowEvent::Focused(true) => {
+                if let Some(state) = window.app_handle().try_state::<RuntimeState>() {
+                    state.mark_quick_capture_opened();
+                }
+            }
+            WindowEvent::Focused(false) => {
+                let is_visible = window.is_visible().unwrap_or(false);
+                let past_grace = window
+                    .app_handle()
+                    .try_state::<RuntimeState>()
+                    .is_none_or(|state| state.should_hide_quick_capture_on_blur());
+                if is_visible && past_grace {
+                    if let Err(error) = hide_quick_capture_window_now(window.app_handle()) {
+                        eprintln!("failed to hide quick-capture window on blur: {error}");
+                    }
+                }
+            }
+            _ => {}
+        }
+        return;
     }
 
     if window.label() != MAIN_WINDOW_LABEL {
@@ -1353,6 +1425,9 @@ fn handle_tray_menu_event(app: &AppHandle, id: &str) -> Result<(), Box<dyn Error
         Some(TrayMenuAction::ShowMain) => show_main_window(app)?,
         Some(TrayMenuAction::QuickNote) => {
             open_notepad_window_now(app, None, None)?;
+        }
+        Some(TrayMenuAction::QuickCapture) => {
+            open_quick_capture_window_now(app)?;
         }
         Some(TrayMenuAction::ToggleCloseToTray) => {
             let config = toggle_close_to_tray(app)?;
@@ -1671,6 +1746,137 @@ fn notepad_window_specs() -> WindowSizeSpec {
     }
 }
 
+fn quick_capture_window_specs() -> WindowSizeSpec {
+    WindowSizeSpec {
+        width: 560.0,
+        height: 180.0,
+        min_width: 460.0,
+        min_height: 150.0,
+    }
+}
+
+pub(crate) fn upper_third_bounds(
+    work_x: i32,
+    work_y: i32,
+    work_width: u32,
+    work_height: u32,
+    scale: f64,
+    logical_width: f64,
+    logical_height: f64,
+) -> WindowBounds {
+    let w = (logical_width * scale).round().max(1.0) as i32;
+    let h = (logical_height * scale).round().max(1.0) as i32;
+    let max_x = work_x + (work_width as i32 - w).max(0);
+    let max_y = work_y + (work_height as i32 - h).max(0);
+    let centered_x = work_x + ((work_width as i32 - w) / 2);
+    let upper_third_y = work_y + (work_height as i32 / 3) - (h / 2);
+
+    WindowBounds {
+        x: centered_x.clamp(work_x, max_x),
+        y: upper_third_y.clamp(work_y, max_y),
+        width: w as u32,
+        height: h as u32,
+    }
+}
+
+fn monitor_bounds_for_quick_capture(
+    app: &AppHandle,
+    specs: &WindowSizeSpec,
+) -> Option<WindowBounds> {
+    let cursor_monitor = app.cursor_position().ok().and_then(|pos| {
+        app.available_monitors().ok()?.into_iter().find(|monitor| {
+            let mpos = monitor.position();
+            let msize = monitor.size();
+            let left = mpos.x as f64;
+            let top = mpos.y as f64;
+            let right = left + msize.width as f64;
+            let bottom = top + msize.height as f64;
+            pos.x >= left && pos.x < right && pos.y >= top && pos.y < bottom
+        })
+    });
+
+    let monitor = cursor_monitor
+        .or_else(|| {
+            app.get_webview_window(MAIN_WINDOW_LABEL)
+                .and_then(|window| window.current_monitor().ok().flatten())
+        })
+        .or_else(|| app.primary_monitor().ok().flatten())?;
+
+    let work = monitor.work_area();
+    Some(upper_third_bounds(
+        work.position.x,
+        work.position.y,
+        work.size.width,
+        work.size.height,
+        monitor.scale_factor(),
+        specs.width,
+        specs.height,
+    ))
+}
+
+fn quick_capture_bounds(app: &AppHandle, open_at_cursor: bool) -> Option<WindowBounds> {
+    let specs = quick_capture_window_specs();
+    if open_at_cursor {
+        if let Some(bounds) = cursor_centered_bounds(&specs) {
+            return Some(bounds);
+        }
+    }
+    monitor_bounds_for_quick_capture(app, &specs)
+}
+
+pub fn open_quick_capture_window_now(app: &AppHandle) -> Result<(), AppError> {
+    let open_at_cursor = load_config().map(|c| c.open_at_cursor).unwrap_or(true);
+    let bounds = quick_capture_bounds(app, open_at_cursor);
+    let locale = configured_locale();
+    let specs = quick_capture_window_specs();
+
+    if let Some(state) = app.try_state::<RuntimeState>() {
+        state.mark_quick_capture_opened();
+    }
+
+    if let Some(window) = app.get_webview_window(QUICK_CAPTURE_WINDOW_LABEL) {
+        set_webview_memory_usage_level(&window, false);
+        window.set_title(locales::quick_capture_window_title(locale))?;
+        window.set_always_on_top(true)?;
+        apply_window_bounds(&window, bounds)?;
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
+        let _ = app.emit(QUICK_CAPTURE_OPENED_EVENT, ());
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(
+        app,
+        QUICK_CAPTURE_WINDOW_LABEL,
+        WebviewUrl::App("index.html?view=quick-capture".into()),
+    )
+    .title(locales::quick_capture_window_title(locale))
+    .inner_size(specs.width, specs.height)
+    .min_inner_size(specs.min_width, specs.min_height)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .shadow(false)
+    .skip_taskbar(true)
+    .visible(false)
+    .build()?;
+
+    apply_window_bounds(&window, bounds)?;
+    let _ = app.emit(QUICK_CAPTURE_OPENED_EVENT, ());
+    Ok(())
+}
+
+pub fn hide_quick_capture_window_now(app: &AppHandle) -> Result<(), AppError> {
+    let Some(window) = app.get_webview_window(QUICK_CAPTURE_WINDOW_LABEL) else {
+        return Ok(());
+    };
+    window.hide()?;
+    set_webview_memory_usage_level(&window, true);
+    Ok(())
+}
+
 fn tile_window_specs(app: &AppHandle) -> WindowSizeSpec {
     let mut specs = saved_surface_specs(app);
     // 磁贴只承载展示内容，可比编辑小窗更紧凑；切回编辑态时前端会恢复 220 × 220。
@@ -1813,7 +2019,7 @@ fn visible_surface_size(app: &AppHandle) -> Option<(f64, f64)> {
     fallback
 }
 
-fn open_tile_window_now(
+pub(crate) fn open_tile_window_now(
     app: &AppHandle,
     note_id: &str,
     bounds: Option<WindowBounds>,
@@ -1959,8 +2165,10 @@ fn tile_window_label(note_id: &str) -> String {
 }
 
 fn dynamic_window_visual_options(label: &str) -> DynamicWindowVisualOptions {
-    let is_app_surface =
-        label == MAIN_WINDOW_LABEL || label.starts_with("notepad-") || label.starts_with("tile-");
+    let is_app_surface = label == MAIN_WINDOW_LABEL
+        || label == QUICK_CAPTURE_WINDOW_LABEL
+        || label.starts_with("notepad-")
+        || label.starts_with("tile-");
 
     DynamicWindowVisualOptions {
         transparent: is_app_surface,
@@ -2026,10 +2234,12 @@ fn setup_global_shortcut_plugin(app: &AppHandle) -> tauri::Result<()> {
                     return;
                 }
 
-                let action = app
+                let Some(action) = app
                     .try_state::<RuntimeState>()
-                    .map(|state| state.shortcut_action(shortcut))
-                    .unwrap_or(ShortcutAction::OpenNotepad);
+                    .and_then(|state| state.shortcut_action(shortcut))
+                else {
+                    return;
+                };
 
                 let app_for_closure = app.clone();
                 match action {
@@ -2038,6 +2248,17 @@ fn setup_global_shortcut_plugin(app: &AppHandle) -> tauri::Result<()> {
                             toggle_app_visibility(&app_for_closure);
                         }) {
                             eprintln!("failed to dispatch visibility toggle action: {error}");
+                        }
+                    }
+                    ShortcutAction::QuickCapture => {
+                        if let Err(error) = app.run_on_main_thread(move || {
+                            if let Err(error) = open_quick_capture_window_now(&app_for_closure) {
+                                eprintln!(
+                                    "failed to open quick capture from global shortcut: {error}"
+                                );
+                            }
+                        }) {
+                            eprintln!("failed to dispatch quick capture shortcut action: {error}");
                         }
                     }
                     ShortcutAction::OpenNotepad => {
@@ -2074,7 +2295,7 @@ fn register_configured_global_shortcut(app: &AppHandle) {
         return;
     };
 
-    if let Err(error) = install_global_shortcut_bindings(app, &config, false) {
+    if let Err(error) = install_global_shortcut_bindings(app, &config, false, false) {
         let msg = format!("快捷键注册失败：{error}");
         eprintln!("{msg}");
         let _ = app.emit("shortcut-register-failed", &msg);
@@ -2214,7 +2435,10 @@ fn parse_configured_shortcut(field: &str, value: &str) -> Result<Shortcut, Box<d
 }
 
 #[cfg(desktop)]
-fn shortcut_bindings_from_config(config: &AppConfig) -> Result<ShortcutBindings, Box<dyn Error>> {
+fn shortcut_bindings_from_config(
+    config: &AppConfig,
+    strict_quick_capture: bool,
+) -> Result<ShortcutBindings, Box<dyn Error>> {
     // 允许用户主动清空快捷键；空值表示不注册对应的全局快捷键。
     let open_notepad = if config.global_shortcut.is_empty() {
         None
@@ -2246,9 +2470,47 @@ fn shortcut_bindings_from_config(config: &AppConfig) -> Result<ShortcutBindings,
         }));
     }
 
+    let mut quick_capture = if config.quick_capture_shortcut.is_empty() {
+        None
+    } else {
+        match parse_configured_shortcut("quickCaptureShortcut", &config.quick_capture_shortcut) {
+            Ok(shortcut) => Some(shortcut),
+            Err(error) if strict_quick_capture => return Err(error),
+            Err(error) => {
+                eprintln!("skipping invalid quickCaptureShortcut: {error}");
+                None
+            }
+        }
+    };
+
+    let quick_capture_duplicates_other = quick_capture
+        .as_ref()
+        .zip(open_notepad.as_ref())
+        .is_some_and(|(quick_capture, open_notepad)| quick_capture == open_notepad)
+        || quick_capture
+            .as_ref()
+            .zip(toggle_visibility.as_ref())
+            .is_some_and(|(quick_capture, toggle_visibility)| quick_capture == toggle_visibility);
+
+    if quick_capture_duplicates_other {
+        if strict_quick_capture {
+            return Err(Box::new(AppError {
+                code: "duplicateShortcut".into(),
+                message: "quick capture shortcut must differ from other global shortcuts".into(),
+                details: Default::default(),
+            }));
+        }
+        eprintln!(
+            "skipping quickCaptureShortcut ({}) because it duplicates an existing global shortcut",
+            config.quick_capture_shortcut
+        );
+        quick_capture = None;
+    }
+
     Ok(ShortcutBindings {
         open_notepad,
         toggle_visibility,
+        quick_capture,
     })
 }
 
@@ -2257,8 +2519,9 @@ fn install_global_shortcut_bindings(
     app: &AppHandle,
     config: &AppConfig,
     replace_existing: bool,
+    strict_quick_capture: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let bindings = shortcut_bindings_from_config(config)?;
+    let mut bindings = shortcut_bindings_from_config(config, strict_quick_capture)?;
 
     // 已注册的旧绑定（用于替换时精确卸载，避免 unregister_all 把新键也卸掉）
     let previous = app.try_state::<RuntimeState>().and_then(|state| {
@@ -2271,26 +2534,30 @@ fn install_global_shortcut_bindings(
     let previous_strings = previous
         .as_ref()
         .map(|old| {
-            [&old.open_notepad, &old.toggle_visibility]
-                .into_iter()
-                .flatten()
-                .map(|shortcut| shortcut.to_string())
-                .collect::<Vec<_>>()
+            [
+                &old.open_notepad,
+                &old.toggle_visibility,
+                &old.quick_capture,
+            ]
+            .into_iter()
+            .flatten()
+            .map(|shortcut| shortcut.to_string())
+            .collect::<Vec<_>>()
         })
         .unwrap_or_default();
 
-    let new_shortcuts = [&bindings.open_notepad, &bindings.toggle_visibility]
+    let primary_shortcuts = [&bindings.open_notepad, &bindings.toggle_visibility]
         .into_iter()
         .flatten()
         .copied()
         .collect::<Vec<_>>();
 
-    // 先注册新绑定（与旧绑定相同的跳过，避免重复注册报错）；
-    // 全部成功后再卸载旧绑定。若新键被其他应用占用导致注册失败，
+    // 先注册主快捷键（与旧绑定相同的跳过，避免重复注册报错）；
+    // 全部成功后再尝试注册快速捕获快捷键与卸载旧绑定。若主快捷键被其他应用占用，
     // 回滚本次注册并保留旧快捷键，不会让本会话快捷键全部失效。
     let mut registered: Vec<Shortcut> = Vec::new();
     let register_result = (|| -> Result<(), Box<dyn Error>> {
-        for shortcut in &new_shortcuts {
+        for shortcut in &primary_shortcuts {
             if previous_strings.contains(&shortcut.to_string()) {
                 continue;
             }
@@ -2306,17 +2573,46 @@ fn install_global_shortcut_bindings(
         return Err(error);
     }
 
+    // 快速捕获默认非空（Alt+Shift+Space）：在启动、结束录制或修改其他配置时采用尽力注册，
+    // 即使被系统/其他软件占用也只降级跳过，不影响用户原有的全局快捷键；
+    // 仅当用户在设置中显式修改快速捕获快捷键时才作为硬错误返回。
+    if let Some(quick_capture) = bindings.quick_capture {
+        if !previous_strings.contains(&quick_capture.to_string()) {
+            if let Err(error) = app.global_shortcut().register(quick_capture) {
+                if strict_quick_capture {
+                    for shortcut in &registered {
+                        let _ = app.global_shortcut().unregister(*shortcut);
+                    }
+                    return Err(error.into());
+                }
+                let msg = format!("快速捕获快捷键注册失败：{error}");
+                eprintln!("{msg}");
+                let _ = app.emit("shortcut-register-failed", &msg);
+                bindings.quick_capture = None;
+            }
+        }
+    }
+
     if replace_existing {
-        let new_strings = new_shortcuts
-            .iter()
-            .map(|shortcut| shortcut.to_string())
-            .collect::<Vec<_>>();
+        let active_strings = [
+            &bindings.open_notepad,
+            &bindings.toggle_visibility,
+            &bindings.quick_capture,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|shortcut| shortcut.to_string())
+        .collect::<Vec<_>>();
         if let Some(previous) = previous.as_ref() {
-            for shortcut in [&previous.open_notepad, &previous.toggle_visibility]
-                .into_iter()
-                .flatten()
+            for shortcut in [
+                &previous.open_notepad,
+                &previous.toggle_visibility,
+                &previous.quick_capture,
+            ]
+            .into_iter()
+            .flatten()
             {
-                if !new_strings.contains(&shortcut.to_string()) {
+                if !active_strings.contains(&shortcut.to_string()) {
                     let _ = app.global_shortcut().unregister(*shortcut);
                 }
             }
@@ -2331,14 +2627,19 @@ fn install_global_shortcut_bindings(
 }
 
 #[cfg(desktop)]
-fn apply_global_shortcut_config(app: &AppHandle, config: &AppConfig) -> Result<(), Box<dyn Error>> {
-    install_global_shortcut_bindings(app, config, true)
+fn apply_global_shortcut_config(
+    app: &AppHandle,
+    config: &AppConfig,
+    strict_quick_capture: bool,
+) -> Result<(), Box<dyn Error>> {
+    install_global_shortcut_bindings(app, config, true, strict_quick_capture)
 }
 
 #[cfg(not(desktop))]
 fn apply_global_shortcut_config(
     _app: &AppHandle,
     _config: &AppConfig,
+    _strict_quick_capture: bool,
 ) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
@@ -2530,7 +2831,7 @@ pub fn stop_shortcut_recording(app: &AppHandle) -> Result<(), Box<dyn Error>> {
     keyboard_hook::stop();
 
     let config = load_config()?;
-    if let Err(e) = install_global_shortcut_bindings(app, &config, false) {
+    if let Err(e) = install_global_shortcut_bindings(app, &config, false, false) {
         eprintln!("failed to re-register global shortcuts after recording: {e}");
     }
 
@@ -2560,6 +2861,10 @@ mod tests {
         assert_eq!(
             tray_menu_action("quick-note"),
             Some(TrayMenuAction::QuickNote)
+        );
+        assert_eq!(
+            tray_menu_action("quick-capture"),
+            Some(TrayMenuAction::QuickCapture)
         );
         assert_eq!(
             tray_menu_action("toggle-close-to-tray"),
@@ -2592,13 +2897,14 @@ mod tests {
             vec![
                 "show-main",
                 "quick-note",
+                "quick-capture",
                 "toggle-close-to-tray",
                 "toggle-autostart",
                 "quit"
             ]
         );
-        assert_eq!(specs[2].checked, Some(true));
-        assert_eq!(specs[3].checked, Some(false));
+        assert_eq!(specs[3].checked, Some(true));
+        assert_eq!(specs[4].checked, Some(false));
     }
 
     #[test]
@@ -2694,13 +3000,18 @@ mod tests {
     }
 
     #[cfg(desktop)]
-    fn test_app_config(global_shortcut: &str, toggle_visibility_shortcut: &str) -> AppConfig {
+    fn test_app_config(
+        global_shortcut: &str,
+        toggle_visibility_shortcut: &str,
+        quick_capture_shortcut: &str,
+    ) -> AppConfig {
         AppConfig {
             locale: "zh-CN".into(),
             data_dir: Some("D:\\notes".into()),
             global_shortcut: global_shortcut.into(),
             close_to_tray: true,
             close_tab_shortcut: "Ctrl+W".into(),
+            command_palette_shortcut: "Ctrl+K".into(),
             autostart: false,
             default_view_mode: "split".into(),
             note_auto_save: true,
@@ -2731,6 +3042,7 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: toggle_visibility_shortcut.into(),
+            quick_capture_shortcut: quick_capture_shortcut.into(),
             preset_theme: "default".into(),
             accent_color: String::new(),
             code_theme: "light".into(),
@@ -2756,37 +3068,66 @@ mod tests {
     #[cfg(desktop)]
     #[test]
     fn rejects_duplicate_shortcut_bindings() {
-        let config = test_app_config("Ctrl+Shift+K", "Ctrl+Shift+K");
+        let config = test_app_config("Ctrl+Shift+K", "Ctrl+Shift+K", "");
 
-        let error = match shortcut_bindings_from_config(&config) {
+        let error = match shortcut_bindings_from_config(&config, false) {
             Ok(_) => panic!("expected duplicate shortcut error"),
             Err(error) => error,
         };
 
         assert!(error.to_string().contains("must differ"));
+
+        let quick_capture_dup = test_app_config("Ctrl+Space", "", "Ctrl+Space");
+        assert!(shortcut_bindings_from_config(&quick_capture_dup, true).is_err());
+
+        let visibility_dup = test_app_config("", "Alt+Shift+Space", "Alt+Shift+Space");
+        assert!(shortcut_bindings_from_config(&visibility_dup, true).is_err());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn default_quick_capture_colliding_with_existing_global_shortcut_keeps_others_bound() {
+        let collides_with_global =
+            test_app_config("Alt+Shift+Space", "Ctrl+Shift+H", "Alt+Shift+Space");
+        let bindings = shortcut_bindings_from_config(&collides_with_global, false)
+            .expect("non-strict quick capture collision should keep existing shortcuts bound");
+        assert!(bindings.open_notepad.is_some());
+        assert!(bindings.toggle_visibility.is_some());
+        assert!(bindings.quick_capture.is_none());
+
+        let collides_with_visibility =
+            test_app_config("Ctrl+Space", "Alt+Shift+Space", "Alt+Shift+Space");
+        let bindings = shortcut_bindings_from_config(&collides_with_visibility, false)
+            .expect("non-strict quick capture collision with visibility should keep others bound");
+        assert!(bindings.open_notepad.is_some());
+        assert!(bindings.toggle_visibility.is_some());
+        assert!(bindings.quick_capture.is_none());
     }
 
     #[cfg(desktop)]
     #[test]
     fn accepts_empty_shortcut_bindings() {
-        let config = test_app_config("", "");
+        let config = test_app_config("", "", "");
 
-        let bindings = shortcut_bindings_from_config(&config).expect("empty shortcuts are valid");
+        let bindings =
+            shortcut_bindings_from_config(&config, false).expect("empty shortcuts are valid");
 
         assert!(bindings.open_notepad.is_none());
         assert!(bindings.toggle_visibility.is_none());
+        assert!(bindings.quick_capture.is_none());
     }
 
     #[cfg(desktop)]
     #[test]
     fn accepts_visibility_shortcut_when_quick_note_shortcut_is_empty() {
-        let config = test_app_config("", "Ctrl+Shift+H");
+        let config = test_app_config("", "Ctrl+Shift+H", "Alt+Shift+Space");
 
-        let bindings =
-            shortcut_bindings_from_config(&config).expect("single visibility shortcut is valid");
+        let bindings = shortcut_bindings_from_config(&config, false)
+            .expect("single visibility shortcut is valid");
 
         assert!(bindings.open_notepad.is_none());
         assert!(bindings.toggle_visibility.is_some());
+        assert!(bindings.quick_capture.is_some());
     }
 
     #[test]
@@ -2805,6 +3146,7 @@ mod tests {
             global_shortcut: "Ctrl+Space".into(),
             close_to_tray: true,
             close_tab_shortcut: "Ctrl+W".into(),
+            command_palette_shortcut: "Ctrl+K".into(),
             autostart: false,
             default_view_mode: "split".into(),
             note_auto_save: true,
@@ -2835,6 +3177,7 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: String::new(),
+            quick_capture_shortcut: "Alt+Shift+Space".into(),
             preset_theme: "default".into(),
             accent_color: String::new(),
             code_theme: "light".into(),
@@ -2861,6 +3204,7 @@ mod tests {
             global_shortcut: "Alt+Space".into(),
             close_to_tray: false,
             close_tab_shortcut: "Ctrl+W".into(),
+            command_palette_shortcut: "Ctrl+K".into(),
             autostart: true,
             default_view_mode: "preview".into(),
             note_auto_save: false,
@@ -2891,6 +3235,7 @@ mod tests {
             surface_width: None,
             surface_height: None,
             toggle_visibility_shortcut: "Ctrl+Shift+H".into(),
+            quick_capture_shortcut: "Ctrl+Alt+Space".into(),
             preset_theme: "default".into(),
             accent_color: String::new(),
             code_theme: "light".into(),
@@ -2918,6 +3263,7 @@ mod tests {
                 autostart_changed: true,
                 global_shortcut_changed: true,
                 toggle_visibility_shortcut_changed: true,
+                quick_capture_shortcut_changed: true,
             }
         );
         assert_eq!(
@@ -2926,6 +3272,7 @@ mod tests {
                 autostart_changed: false,
                 global_shortcut_changed: false,
                 toggle_visibility_shortcut_changed: false,
+                quick_capture_shortcut_changed: false,
             }
         );
     }
@@ -2961,6 +3308,25 @@ mod tests {
             dynamic_window_visual_options("main"),
             DynamicWindowVisualOptions { transparent: true }
         );
+        assert_eq!(
+            dynamic_window_visual_options("quick-capture"),
+            DynamicWindowVisualOptions { transparent: true }
+        );
+    }
+
+    #[test]
+    fn computes_upper_third_bounds_for_quick_capture() {
+        let bounds = upper_third_bounds(0, 0, 1920, 1040, 1.0, 560.0, 180.0);
+        assert_eq!(bounds.x, 680);
+        assert_eq!(bounds.y, 256);
+        assert_eq!(bounds.width, 560);
+        assert_eq!(bounds.height, 180);
+
+        let scaled = upper_third_bounds(1920, 0, 2560, 1440, 1.5, 560.0, 180.0);
+        assert_eq!(scaled.width, 840);
+        assert_eq!(scaled.height, 270);
+        assert_eq!(scaled.x, 1920 + (2560 - 840) / 2);
+        assert_eq!(scaled.y, (1440 / 3) - (270 / 2));
     }
 
     #[test]
@@ -2995,6 +3361,9 @@ mod tests {
         assert!(windows
             .iter()
             .any(|window| window.as_str() == Some("notepad-*")));
+        assert!(windows
+            .iter()
+            .any(|window| window.as_str() == Some("quick-capture")));
         assert!(permissions
             .iter()
             .any(|permission| permission.as_str() == Some("core:window:allow-set-focus")));

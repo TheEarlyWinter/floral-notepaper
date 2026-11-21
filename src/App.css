@@ -565,6 +565,10 @@ input::placeholder {
   overflow-wrap: anywhere;
 }
 
+.markdown-selectable input[type="checkbox"] {
+  cursor: default;
+}
+
 .markdown-selectable button,
 .markdown-selectable svg {
   -webkit-user-select: none;

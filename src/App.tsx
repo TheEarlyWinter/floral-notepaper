@@ -3,11 +3,24 @@ import "./App.css";
 import { ContextMenuProvider } from "./components/ContextMenu";
 import { MainWindow } from "./components/MainWindow";
 import { NotePad } from "./components/NotePad";
+import { QuickCapture } from "./components/QuickCapture";
 import { TileShowcase } from "./components/TileShowcase";
 import { ToastContainer } from "./components/Toast";
 import { tabToIndentListener } from "indent-textarea";
 import { getConfig } from "./features/settings/api";
-import { applyTheme, watchSystemTheme, applyPresetTheme, applyAccentColor, applyCodeTheme, applyEditorFont, applyEditorLineHeight, applyEditorParagraphSpacing, applyEditorWidth, applySidebarPosition, applyWindowOpacity } from "./features/settings/theme";
+import {
+  applyTheme,
+  watchSystemTheme,
+  applyPresetTheme,
+  applyAccentColor,
+  applyCodeTheme,
+  applyEditorFont,
+  applyEditorLineHeight,
+  applyEditorParagraphSpacing,
+  applyEditorWidth,
+  applySidebarPosition,
+  applyWindowOpacity,
+} from "./features/settings/theme";
 import type { AppConfig, ThemeOption, PresetTheme, CodeTheme } from "./features/settings/types";
 import { getInitialRoute } from "./features/windows/windowRoutes";
 import { syncLanguage } from "./locales";
@@ -127,6 +140,8 @@ function App() {
           <MainWindow />
         ) : activeView === "notepad" ? (
           <NotePad initialNoteId={route.noteId} />
+        ) : activeView === "quick-capture" ? (
+          <QuickCapture />
         ) : (
           <TileShowcase noteId={route.noteId} />
         )}

@@ -17,6 +17,7 @@ export interface TileProps extends Omit<
   fontSize?: number;
   renderMarkdown?: boolean;
   imageBaseDir?: string;
+  onContentChange?: (content: string) => void;
 }
 
 const MARK_SIZE = 8;
@@ -77,6 +78,7 @@ export function Tile({
   fontSize = 14,
   renderMarkdown: renderMarkdownProp = false,
   imageBaseDir,
+  onContentChange,
   className = "",
   style,
   children,
@@ -84,7 +86,7 @@ export function Tile({
 }: TileProps) {
   const { t } = useTranslation();
   // 内容包含图片标记时自动启用 Markdown 渲染
-  const renderMarkdown = renderMarkdownProp || (/!\[[^\]]*\]\([^)]+\)/.test(content ?? ""));
+  const renderMarkdown = renderMarkdownProp || /!\[[^\]]*\]\([^)]+\)/.test(content ?? "");
   const tileColor = normalizeTileColor(color);
   const { borderColor, cornerColor, titleColor, contentColor, emptyColor } = useMemo(() => {
     const isLightBg = chroma(tileColor).luminance() > 0.18;
@@ -129,6 +131,7 @@ export function Tile({
                 fontSize={fontSize}
                 renderHtml={false}
                 imageBaseDir={imageBaseDir}
+                onContentChange={onContentChange}
               />
             </div>
           ) : (

@@ -26,6 +26,7 @@ export interface AppConfig {
   globalShortcut: string;
   closeToTray: boolean;
   closeTabShortcut: string;
+  commandPaletteShortcut?: string;
   autostart: boolean;
   defaultViewMode: string;
   noteAutoSave: boolean;
@@ -49,6 +50,7 @@ export interface AppConfig {
   surfaceWidth?: number;
   surfaceHeight?: number;
   toggleVisibilityShortcut: string;
+  quickCaptureShortcut: string;
   openAtCursor: boolean;
   backgroundImagePath?: string;
   backgroundFit?: BackgroundFit;

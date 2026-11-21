@@ -29,3 +29,11 @@ export function openNoteInEditor(noteId: string): Promise<void> {
 export function takeStartupFile(): Promise<string | null> {
   return invoke("take_startup_file");
 }
+
+export function openQuickCaptureWindow(): Promise<void> {
+  return invoke("open_quick_capture_window");
+}
+
+export function hideQuickCaptureWindow(): Promise<void> {
+  return invoke("hide_quick_capture_window");
+}

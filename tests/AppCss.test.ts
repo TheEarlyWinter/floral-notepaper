@@ -11,4 +11,10 @@ describe("app CSS", () => {
   test("wraps long unbroken Markdown preview text", () => {
     expect(css).toMatch(/\.markdown-selectable\s*\{[^}]*overflow-wrap:\s*anywhere;/);
   });
+
+  test("keeps default cursor on markdown task checkboxes", () => {
+    expect(css).toMatch(
+      /\.markdown-selectable\s+input\[type="checkbox"\]\s*\{[^}]*cursor:\s*default;/,
+    );
+  });
 });
