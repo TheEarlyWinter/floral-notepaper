@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import type { NotesWorkspaceMode } from "../../components/NotesWorkspacePanel";
 import type { SearchHit } from "../notes/insights";
-import type { Note, NoteMetadata } from "../notes/types";
+import type { Note, NoteMetadata, RelatedNoteSuggestion } from "../notes/types";
 import type { TodoItem } from "../notes/todoUtils";
 import type { AppConfig } from "../settings/types";
 import {
@@ -39,6 +39,7 @@ interface MainWindowSidePanelsProps {
   onRestoreNoteVersion: (versionId: string) => Promise<void>;
   onCloseBacklinks: () => void;
   onOpenBacklinkNote: (noteId: string) => void;
+  onInsertRelatedLink?: (suggestion: RelatedNoteSuggestion) => void;
   onCloseReminders: () => void;
   onCloseLibrary: () => void;
   onBeforeRestoreBackup: () => Promise<boolean>;
@@ -77,6 +78,7 @@ export function MainWindowSidePanels({
   onRestoreNoteVersion,
   onCloseBacklinks,
   onOpenBacklinkNote,
+  onInsertRelatedLink,
   onCloseReminders,
   onCloseLibrary,
   onBeforeRestoreBackup,
@@ -168,6 +170,7 @@ export function MainWindowSidePanels({
                 noteId={selectedId}
                 notes={notes}
                 onOpenNote={onOpenBacklinkNote}
+                onInsertLink={onInsertRelatedLink}
                 onClose={onCloseBacklinks}
               />
             </Suspense>

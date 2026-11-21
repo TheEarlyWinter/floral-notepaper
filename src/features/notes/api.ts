@@ -8,6 +8,7 @@ import type {
   Note,
   NoteMetadata,
   NoteVersion,
+  RelatedNoteSuggestion,
   Reminder,
   SaveNoteRequest,
 } from "./types";
@@ -67,6 +68,10 @@ export function searchNotes(query: string): Promise<IndexedSearchResult[]> {
 
 export function rebuildSearchIndex(): Promise<void> {
   return invoke("notes_rebuild_search_index");
+}
+
+export function getRelatedNotes(noteId: string, limit?: number): Promise<RelatedNoteSuggestion[]> {
+  return invoke("notes_related", limit !== undefined ? { noteId, limit } : { noteId });
 }
 
 export function addAttachment(noteId: string, sourcePath: string): Promise<Attachment> {

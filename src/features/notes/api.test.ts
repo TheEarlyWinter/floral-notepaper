@@ -1,6 +1,11 @@
+import { invoke } from "@tauri-apps/api/core";
 import { i18n } from "../../locales";
-import { describe, expect, test } from "vitest";
-import { getErrorMessage } from "./api";
+import { describe, expect, test, vi } from "vitest";
+import { getErrorMessage, getRelatedNotes } from "./api";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
 
 describe("notes api error localization", () => {
   test("localizes structured backend errors with interpolation details", () => {
@@ -45,5 +50,15 @@ describe("notes api error localization", () => {
         message: "something went wrong",
       }),
     ).toBe("something went wrong");
+  });
+
+  test("invokes notes_related with noteId and optional limit", async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+
+    await getRelatedNotes("note-1");
+    expect(invoke).toHaveBeenCalledWith("notes_related", { noteId: "note-1" });
+
+    await getRelatedNotes("note-1", 8);
+    expect(invoke).toHaveBeenCalledWith("notes_related", { noteId: "note-1", limit: 8 });
   });
 });

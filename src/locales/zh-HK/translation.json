@@ -521,5 +521,26 @@
   },
   "tile": {
     "empty": "空"
+  },
+  "wikiAutocomplete": {
+    "empty": "沒有符合的筆記",
+    "footer": {
+      "close": "Esc 關閉",
+      "confirm": "Enter / Tab 插入",
+      "navigate": "↑↓ 選擇"
+    },
+    "header": "插入筆記連結",
+    "listboxLabel": "關聯筆記補全列表"
+  },
+  "relatedNotes": {
+    "empty": "暫無高相關度的本地筆記",
+    "insertLink": "插入連結",
+    "inserted": "已插入關聯連結",
+    "linked": "已關聯",
+    "loading": "正在分析本地關聯…",
+    "matchedTermsLabel": "匹配詞",
+    "score": "相關度 {{percent}}%",
+    "subtitle": "基於本地詞頻與標籤推薦",
+    "title": "相關筆記"
   }
 }

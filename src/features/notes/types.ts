@@ -75,3 +75,13 @@ export interface IndexedSearchResult {
   matchLength: number;
   score: number;
 }
+
+export interface RelatedNoteSuggestion {
+  id: string;
+  title: string;
+  category: string;
+  tags: string[];
+  score: number;
+  matchedTerms: string[];
+  alreadyLinked: boolean;
+}

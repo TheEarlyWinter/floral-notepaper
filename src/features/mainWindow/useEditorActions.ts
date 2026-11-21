@@ -14,6 +14,7 @@ import { exportMarkdownPdf, pdfFileName } from "../importExport/pdf";
 import { createNote, getErrorMessage, saveExternalFile } from "../notes/api";
 import type { NoteContextMenuAction } from "../notes/noteContextMenu";
 import type { ExternalFile, Note, NoteMetadata } from "../notes/types";
+import { formatWikiLinkCompletion, insertTextRangeInTextarea } from "../notes/wikiLinkCompletion";
 import { resolveWikiLink, wikiLinkSyntax } from "../notes/wikiLinks";
 import type { AppConfig, NoteTemplate } from "../settings/types";
 import { toggleTileWindow } from "../windows/api";
@@ -260,6 +261,47 @@ export function useEditorActions({
     [handleSelectNote, notesRef],
   );
 
+  const handleInsertWikiLink = useCallback(
+    (note: Pick<NoteMetadata, "id" | "title">) => {
+      if (!selectedId) return;
+      const linkText = formatWikiLinkCompletion(note, t);
+      const textarea = contentRef.current;
+
+      if (textarea && !textarea.disabled) {
+        const currentValue = textarea.value;
+        const start = textarea.selectionStart ?? 0;
+        const end = textarea.selectionEnd ?? start;
+        const shouldAppend =
+          start === 0 &&
+          end === 0 &&
+          currentValue.length > 0 &&
+          document.activeElement !== textarea;
+
+        const nextValue = shouldAppend
+          ? insertTextRangeInTextarea(
+              textarea,
+              currentValue.length,
+              currentValue.length,
+              currentValue.endsWith("\n") ? linkText : `\n${linkText}`,
+              setContent,
+              markDirty,
+            )
+          : insertTextRangeInTextarea(textarea, start, end, linkText, setContent, markDirty);
+        contentValueRef.current = nextValue;
+      } else {
+        const current = contentValueRef.current;
+        const prefix = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+        const nextValue = `${current}${prefix}${linkText}`;
+        contentValueRef.current = nextValue;
+        setContent(nextValue);
+        markDirty();
+      }
+
+      showToast(t("relatedNotes.inserted", { defaultValue: "已插入关联链接" }), "info");
+    },
+    [contentRef, contentValueRef, markDirty, selectedId, setContent, t],
+  );
+
   const handlePinEntry = async () => {
     if (!selectedId) return;
     const currentId = selectedId;
@@ -301,6 +343,7 @@ export function useEditorActions({
     handleRedo,
     handleCopyStableLink,
     handleOpenWikiLink,
+    handleInsertWikiLink,
     handlePinEntry,
   };
 }

@@ -655,6 +655,7 @@ export function MainWindow({
     handleRedo,
     handleCopyStableLink,
     handleOpenWikiLink,
+    handleInsertWikiLink,
     handlePinEntry,
   } = useEditorActions({
     t,
@@ -1050,6 +1051,7 @@ export function MainWindow({
               selectedId={selectedId}
               isLoading={isLoading}
               isExternal={isExternal}
+              notes={notes}
               focusMode={focusMode}
               settingsOpen={settingsOpen}
               aboutOpen={aboutOpen}
@@ -1130,6 +1132,7 @@ export function MainWindow({
               setBacklinksOpen(false);
               void handleSelectNote(noteId);
             }}
+            onInsertRelatedLink={handleInsertWikiLink}
             onCloseReminders={() => setRemindersOpen(false)}
             onCloseLibrary={() => setLibraryOpen(false)}
             onBeforeRestoreBackup={async () => {
