@@ -44,7 +44,8 @@ import { buildPaletteCommands } from "../features/mainWindow/buildPaletteCommand
 import { getToolbarButtons } from "../features/mainWindow/editorFormatting";
 import { EditorPane } from "../features/mainWindow/EditorPane";
 import { EditorToolbar } from "../features/mainWindow/EditorToolbar";
-import { CommandPalette } from "../features/mainWindow/lazyPanels";
+import { CommandPalette, BulkActionBar } from "../features/mainWindow/lazyPanels";
+import { selectAllNoteIds, toggleSelectionId } from "../features/notes/bulkActions";
 import { MainSidebar } from "../features/mainWindow/MainSidebar";
 import { MainWindowSidePanels } from "../features/mainWindow/MainWindowSidePanels";
 import { NoteHeader } from "../features/mainWindow/NoteHeader";
@@ -116,6 +117,12 @@ export function MainWindow({
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findShowReplace, setFindShowReplace] = useState(false);
+  const [findFocusSignal, setFindFocusSignal] = useState(0);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const navHistory = useNavigationHistory();
   const handleSelectNoteRef = useRef<(id: string) => Promise<boolean>>(async () => false);
@@ -466,6 +473,10 @@ export function MainWindow({
     handleOpenWorkspaceNote,
     handleCreateNoteWithTitle,
     ensureNoteSaved,
+    handleBatchMoveCategory,
+    handleBatchAddTags,
+    handleBatchExportMarkdown,
+    handleBatchDeleteNotes,
   } = useNoteOperations({
     t,
     loadEpoch,
@@ -562,12 +573,144 @@ export function MainWindow({
     takeStartupFile,
   });
 
+  const visibleSidebarNotes = useMemo(
+    () => categoryGroups.flatMap((group) => group.notes),
+    [categoryGroups],
+  );
+
+  useEffect(() => {
+    setFindOpen(false);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (selectedNoteIds.size === 0) return;
+    const existingIds = new Set(notes.map((note) => note.id));
+    setSelectedNoteIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (existingIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [notes, selectedNoteIds.size]);
+
+  const openFindReplace = useCallback(
+    (withReplace: boolean) => {
+      if (!selectedIdRef.current) return;
+      if (readingMode) setReadingMode(false);
+      if (viewMode === "preview") setViewMode("split");
+      setFindShowReplace(withReplace);
+      setFindOpen(true);
+      setFindFocusSignal((n) => n + 1);
+    },
+    [readingMode, selectedIdRef, viewMode],
+  );
+
+  const closeFindReplace = useCallback(() => {
+    setFindOpen(false);
+    requestAnimationFrame(() => {
+      contentRef.current?.focus();
+    });
+  }, []);
+
+  const handleToggleMultiSelectMode = useCallback(() => {
+    setMultiSelectMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        setSelectedNoteIds(new Set());
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleNoteSelection = useCallback((noteId: string) => {
+    setSelectedNoteIds((current) => toggleSelectionId(current, noteId));
+  }, []);
+
+  const handleSelectAllNotes = useCallback(() => {
+    setSelectedNoteIds(selectAllNoteIds(visibleSidebarNotes));
+  }, [visibleSidebarNotes]);
+
+  const handleClearNoteSelection = useCallback(() => {
+    setSelectedNoteIds(new Set());
+  }, []);
+
+  const runBulkMove = useCallback(
+    async (targetCategory: string) => {
+      if (bulkBusy || selectedNoteIds.size === 0) return;
+      setBulkBusy(true);
+      try {
+        const moved = await handleBatchMoveCategory(Array.from(selectedNoteIds), targetCategory);
+        if (moved.length > 0) {
+          const movedSet = new Set(moved);
+          setSelectedNoteIds((current) => {
+            const next = new Set(Array.from(current).filter((id) => !movedSet.has(id)));
+            return next;
+          });
+        }
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [bulkBusy, handleBatchMoveCategory, selectedNoteIds],
+  );
+
+  const runBulkAddTags = useCallback(
+    async (rawTags: string) => {
+      if (bulkBusy || selectedNoteIds.size === 0) return;
+      setBulkBusy(true);
+      try {
+        await handleBatchAddTags(Array.from(selectedNoteIds), rawTags);
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [bulkBusy, handleBatchAddTags, selectedNoteIds],
+  );
+
+  const runBulkExport = useCallback(async () => {
+    if (bulkBusy || selectedNoteIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      await handleBatchExportMarkdown(Array.from(selectedNoteIds));
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [bulkBusy, handleBatchExportMarkdown, selectedNoteIds]);
+
+  const runBulkDelete = useCallback(async () => {
+    if (bulkBusy || selectedNoteIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const targetIds = Array.from(selectedNoteIds);
+      const deleted = await handleBatchDeleteNotes(targetIds);
+      if (deleted.length > 0) {
+        const deletedSet = new Set(deleted);
+        const remaining = targetIds.filter((id) => !deletedSet.has(id));
+        setSelectedNoteIds(new Set(remaining));
+        if (remaining.length === 0) {
+          setMultiSelectMode(false);
+        }
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [bulkBusy, handleBatchDeleteNotes, selectedNoteIds]);
+
   useMainWindowShortcuts({
     commandPaletteShortcut: settingsConfig?.commandPaletteShortcut,
     closeTabShortcut: settingsConfig?.closeTabShortcut,
     paletteOpenRef,
+    hasActiveNote: Boolean(selectedId),
     openCommandPalette,
     closeCommandPalette,
+    onOpenFind: () => openFindReplace(false),
+    onOpenReplace: () => openFindReplace(true),
     onSave: () => {
       void saveCurrentNote(true);
     },
@@ -641,6 +784,8 @@ export function MainWindow({
     markDirty,
     onEnsureNoteSaved: ensureNoteSaved,
     disabled: isExternal,
+    compressWebp: settingsConfig?.imageCompressWebp ?? true,
+    compressQuality: settingsConfig?.imageCompressQuality ?? 0.85,
     onError: showToast,
     t,
   });
@@ -798,6 +943,7 @@ export function MainWindow({
         showToast(getErrorMessage(error));
       });
     },
+    onOpenFindReplace: () => openFindReplace(false),
   });
 
   return (
@@ -888,6 +1034,12 @@ export function MainWindow({
             }}
             onToggleCategoryCollapse={toggleCategoryCollapse}
             onOpenCategoryMenu={openCategoryMenu}
+            multiSelectMode={multiSelectMode}
+            selectedNoteIds={selectedNoteIds}
+            onToggleMultiSelectMode={handleToggleMultiSelectMode}
+            onToggleNoteSelection={handleToggleNoteSelection}
+            onSelectAllNotes={handleSelectAllNotes}
+            onClearNoteSelection={handleClearNoteSelection}
           />
 
           <div className="flex-1 flex flex-col min-w-0">
@@ -1081,6 +1233,11 @@ export function MainWindow({
               onEditorScroll={handleEditorScroll}
               onPreviewScroll={handlePreviewScroll}
               onOpenWikiLink={handleOpenWikiLink}
+              findOpen={findOpen}
+              findShowReplace={findShowReplace}
+              findFocusSignal={findFocusSignal}
+              onToggleFindReplace={() => setFindShowReplace((prev) => !prev)}
+              onCloseFind={closeFindReplace}
             />
 
             <StatusBar
@@ -1218,6 +1375,25 @@ export function MainWindow({
             }}
             onCreateNote={handleCreateNoteWithTitle}
             onClose={closeCommandPalette}
+          />
+        </Suspense>
+      ) : null}
+
+      {multiSelectMode && selectedNoteIds.size >= 1 ? (
+        <Suspense fallback={null}>
+          <BulkActionBar
+            selectedCount={selectedNoteIds.size}
+            categories={categories}
+            busy={bulkBusy}
+            onMoveCategory={runBulkMove}
+            onAddTags={runBulkAddTags}
+            onExportMarkdown={runBulkExport}
+            onDeleteSelected={runBulkDelete}
+            onClearSelection={handleClearNoteSelection}
+            onExitMultiSelect={() => {
+              setMultiSelectMode(false);
+              setSelectedNoteIds(new Set());
+            }}
           />
         </Suspense>
       ) : null}

@@ -161,6 +161,8 @@ export function NotePad({
   const [tileDesktopOnly, setTileDesktopOnly] = useState<boolean | null>(null);
   const [tileDoubleClickToEdit, setTileDoubleClickToEdit] = useState(false);
   const [tileSaveReturnsToPin, setTileSaveReturnsToPin] = useState(false);
+  const [imageCompressWebp, setImageCompressWebp] = useState(true);
+  const [imageCompressQuality, setImageCompressQuality] = useState(0.85);
   const [tileColor, setTileColor] = useState(() =>
     resolveTileColor("system", normalizeTileColor(initialTileColor)),
   );
@@ -251,6 +253,8 @@ export function NotePad({
           setTileDesktopOnly(desktopOnly);
           setTileDoubleClickToEdit(loadedConfig.tileDoubleClickToEdit ?? false);
           setTileSaveReturnsToPin(loadedConfig.tileSaveReturnsToPin ?? false);
+          setImageCompressWebp(loadedConfig.imageCompressWebp ?? true);
+          setImageCompressQuality(loadedConfig.imageCompressQuality ?? 0.85);
           setTileColorRaw(normalizeTileColor(loadedConfig.tileColor));
           setTileColorMode(loadedConfig.tileColorMode ?? "system");
           setTileColor(
@@ -335,6 +339,8 @@ export function NotePad({
       tileDoubleClickToEdit?: boolean;
       tileSaveReturnsToPin?: boolean;
       noteSurfaceAutoSave?: boolean;
+      imageCompressWebp?: boolean;
+      imageCompressQuality?: number;
     }>("config-changed", (event) => {
       const mode = event.payload.tileColorMode ?? tileColorModeRef.current;
       const raw = event.payload.tileColor ?? tileColorRawRef.current;
@@ -354,6 +360,10 @@ export function NotePad({
         setTileSaveReturnsToPin(event.payload.tileSaveReturnsToPin);
       if (event.payload.noteSurfaceAutoSave != null)
         setNoteSurfaceAutoSave(event.payload.noteSurfaceAutoSave);
+      if (event.payload.imageCompressWebp != null)
+        setImageCompressWebp(event.payload.imageCompressWebp);
+      if (event.payload.imageCompressQuality != null)
+        setImageCompressQuality(event.payload.imageCompressQuality);
     });
     return () => {
       void unlisten.then((fn) => fn());
@@ -518,6 +528,8 @@ export function NotePad({
     setContent,
     markDirty: () => setStatus("dirty"),
     onEnsureNoteSaved: ensureNoteSaved,
+    compressWebp: imageCompressWebp,
+    compressQuality: imageCompressQuality,
     onError: showToast,
     t,
   });

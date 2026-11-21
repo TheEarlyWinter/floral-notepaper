@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { TFunction } from "i18next";
 import { saveImage } from "./api";
+import { compressImageForUpload } from "./compressImage";
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB
 
@@ -20,11 +21,23 @@ interface UseImagePasteOptions {
   markDirty: () => void;
   onEnsureNoteSaved: () => Promise<string | null>;
   disabled?: boolean;
+  compressWebp?: boolean;
+  compressQuality?: number;
   onError?: (message: string) => void;
   t?: TFunction;
 }
 
-async function processImageFile(file: File, noteId: string, t?: TFunction): Promise<string | null> {
+export async function processImageFile(
+  file: File,
+  noteId: string,
+  t?: TFunction,
+  compressWebp = true,
+  compressQuality = 0.85,
+  deps: {
+    compress?: typeof compressImageForUpload;
+    save?: typeof saveImage;
+  } = {},
+): Promise<string | null> {
   if (file.size > MAX_IMAGE_SIZE) {
     throw new Error(
       t?.("errors.imageTooLarge", { defaultValue: "图片文件过大（上限 20 MB）" }) ??
@@ -35,8 +48,13 @@ async function processImageFile(file: File, noteId: string, t?: TFunction): Prom
   const ext = MIME_TO_EXT[file.type];
   if (!ext) return null;
 
-  const buffer = await file.arrayBuffer();
-  return saveImage(noteId, new Uint8Array(buffer), ext);
+  const compressFn = deps.compress ?? compressImageForUpload;
+  const saveFn = deps.save ?? saveImage;
+  const prepared = await compressFn(file, ext, {
+    enabled: compressWebp,
+    quality: compressQuality,
+  });
+  return saveFn(noteId, prepared.data, prepared.extension);
 }
 
 export function insertTextAtCursor(
@@ -72,6 +90,8 @@ export function useImagePaste({
   markDirty,
   onEnsureNoteSaved,
   disabled,
+  compressWebp = true,
+  compressQuality = 0.85,
   onError,
   t,
 }: UseImagePasteOptions) {
@@ -94,7 +114,13 @@ export function useImagePaste({
 
         const markdownLines: string[] = [];
         for (const file of files) {
-          const relativePath = await processImageFile(file, resolvedId, t);
+          const relativePath = await processImageFile(
+            file,
+            resolvedId,
+            t,
+            compressWebp,
+            compressQuality,
+          );
           if (relativePath) {
             markdownLines.push(`![](${relativePath})`);
           }
@@ -114,7 +140,17 @@ export function useImagePaste({
         processingRef.current = false;
       }
     },
-    [noteId, textareaRef, setContent, markDirty, onEnsureNoteSaved, onError, t],
+    [
+      compressQuality,
+      compressWebp,
+      markDirty,
+      noteId,
+      onEnsureNoteSaved,
+      onError,
+      setContent,
+      t,
+      textareaRef,
+    ],
   );
 
   const handlePaste = useCallback(

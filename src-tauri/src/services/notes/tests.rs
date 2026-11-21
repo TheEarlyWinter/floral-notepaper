@@ -371,6 +371,8 @@ fn reads_and_writes_config_json() {
     assert!(default_config.link_preview);
     assert!(default_config.templates.is_empty());
     assert_eq!(default_config.locale, "zh-CN");
+    assert!(default_config.image_compress_webp);
+    assert_eq!(default_config.image_compress_quality, 0.85);
     assert_eq!(
         default_config.data_dir.as_deref(),
         Some(store.data_dir().to_string_lossy().as_ref())
@@ -436,6 +438,8 @@ fn reads_and_writes_config_json() {
         }],
         notes_dir: None,
         last_known_base_dir: None,
+        image_compress_webp: false,
+        image_compress_quality: 0.72,
         open_at_cursor: true,
     };
 
@@ -530,6 +534,37 @@ fn app_config_deserialization_defaults_missing_quick_capture_shortcut_and_preser
     let parsed_empty: AppConfig = serde_json::from_str(empty_json)
         .expect("deserialize config with empty quickCaptureShortcut");
     assert_eq!(parsed_empty.quick_capture_shortcut, "");
+    assert!(parsed_empty.image_compress_webp);
+    assert_eq!(parsed_empty.image_compress_quality, 0.85);
+}
+
+#[test]
+fn app_config_clamps_image_compress_quality_on_load_and_save() {
+    let store = test_store("image-compress-quality-clamp");
+    fs::create_dir_all(store.config_dir.as_path()).expect("create config dir");
+    fs::write(
+        store.config_path(),
+        r#"{
+  "globalShortcut": "Ctrl+Space",
+  "closeToTray": true,
+  "autostart": false,
+  "defaultViewMode": "split",
+  "imageCompressWebp": false,
+  "imageCompressQuality": 0.2
+}"#,
+    )
+    .expect("write config with low quality");
+
+    let loaded = store.load_config().expect("load config");
+    assert!(!loaded.image_compress_webp);
+    assert_eq!(loaded.image_compress_quality, 0.60);
+
+    let mut high = loaded;
+    high.image_compress_quality = 1.5;
+    let saved = store
+        .save_config(high)
+        .expect("save config with high quality");
+    assert_eq!(saved.image_compress_quality, 0.95);
 }
 
 fn legacy_config_json(notes_dir: &Path, background_image_path: &str) -> String {

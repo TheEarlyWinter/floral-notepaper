@@ -14,9 +14,12 @@ interface SidebarNoteCardProps {
   note: NoteMetadata;
   isSelected: boolean;
   isHovered: boolean;
+  multiSelectMode: boolean;
+  isBulkSelected: boolean;
   variant: "uncategorized" | "categorized";
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onClick: () => void;
+  onToggleBulkSelect: () => void;
   onContextMenu: (event: MouseEvent<HTMLElement>) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -27,58 +30,82 @@ function SidebarNoteCard({
   note,
   isSelected,
   isHovered,
+  multiSelectMode,
+  isBulkSelected,
   variant,
   onPointerDown,
   onClick,
+  onToggleBulkSelect,
   onContextMenu,
   onMouseEnter,
   onMouseLeave,
 }: SidebarNoteCardProps) {
   const paddingClass =
     variant === "uncategorized" ? "rounded-xl px-3 py-2.5" : "rounded-lg mx-1 px-2.5 py-2";
+  const displayTitle = getDisplayTitle(note, t);
   return (
     <div
-      onPointerDown={onPointerDown}
-      onClick={onClick}
+      onPointerDown={multiSelectMode ? undefined : onPointerDown}
+      onClick={multiSelectMode ? onToggleBulkSelect : onClick}
       onContextMenu={onContextMenu}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       className={`w-full text-left ${paddingClass} transition-all duration-[600ms] cursor-pointer group relative ${
-        isSelected ? "bg-bamboo-mist/70" : isHovered ? "bg-paper-warm/70" : "bg-transparent"
+        multiSelectMode && isBulkSelected
+          ? "bg-bamboo-mist/75 ring-1 ring-bamboo/35"
+          : isSelected
+            ? "bg-bamboo-mist/70"
+            : isHovered
+              ? "bg-paper-warm/70"
+              : "bg-transparent"
       }`}
       style={variant === "categorized" ? { width: "calc(100% - 8px)" } : undefined}
     >
       <div
         className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-          isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
+          isSelected && !multiSelectMode ? "h-5 opacity-100" : "h-0 opacity-0"
         }`}
       />
-      <div className="flex items-baseline justify-between mb-0.5">
-        <span
-          className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
-            isSelected ? "text-bamboo" : "text-ink-soft"
-          }`}
-        >
-          {getDisplayTitle(note, t)}
-        </span>
-        <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
-          {formatShortDate(note.updatedAt)}
-        </span>
-      </div>
-      <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
-        {note.preview || t("common.blankNote", { defaultValue: "空白笔记" })}
-      </p>
-      <div className="flex items-center gap-2 mt-1">
-        <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-          {formatTime(note.updatedAt)}
-        </span>
-        <span className="text-[10px] text-ink-ghost/40">·</span>
-        <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
-          {t("common.wordCount", {
-            count: note.wordCount,
-            defaultValue: "{{count}} 字",
-          })}
-        </span>
+      <div className={multiSelectMode ? "flex items-start gap-2" : undefined}>
+        {multiSelectMode && (
+          <input
+            type="checkbox"
+            checked={isBulkSelected}
+            onChange={onToggleBulkSelect}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={displayTitle}
+            className="mt-0.5 w-3.5 h-3.5 accent-bamboo rounded cursor-pointer shrink-0"
+          />
+        )}
+        <div className={multiSelectMode ? "min-w-0 flex-1" : undefined}>
+          <div className="flex items-baseline justify-between mb-0.5">
+            <span
+              className={`text-[13px] font-display font-medium truncate pr-2 transition-colors ${
+                isSelected ? "text-bamboo" : "text-ink-soft"
+              }`}
+            >
+              {displayTitle}
+            </span>
+            <span className="text-[10px] text-ink-ghost font-mono tabular-nums shrink-0">
+              {formatShortDate(note.updatedAt)}
+            </span>
+          </div>
+          <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
+            {note.preview || t("common.blankNote", { defaultValue: "空白笔记" })}
+          </p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
+              {formatTime(note.updatedAt)}
+            </span>
+            <span className="text-[10px] text-ink-ghost/40">·</span>
+            <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
+              {t("common.wordCount", {
+                count: note.wordCount,
+                defaultValue: "{{count}} 字",
+              })}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -148,6 +175,12 @@ interface MainSidebarProps {
   onOpenNoteMenu: (event: MouseEvent<HTMLElement>, noteId: string) => void;
   onToggleCategoryCollapse: (category: string) => void;
   onOpenCategoryMenu: (event: MouseEvent<HTMLElement>, category: string) => void;
+  multiSelectMode: boolean;
+  selectedNoteIds: Set<string>;
+  onToggleMultiSelectMode: () => void;
+  onToggleNoteSelection: (noteId: string) => void;
+  onSelectAllNotes: () => void;
+  onClearNoteSelection: () => void;
 }
 
 export function MainSidebar({
@@ -206,6 +239,12 @@ export function MainSidebar({
   onOpenNoteMenu,
   onToggleCategoryCollapse,
   onOpenCategoryMenu,
+  multiSelectMode,
+  selectedNoteIds,
+  onToggleMultiSelectMode,
+  onToggleNoteSelection,
+  onSelectAllNotes,
+  onClearNoteSelection,
 }: MainSidebarProps) {
   return (
     <>
@@ -483,31 +522,93 @@ export function MainSidebar({
                   })}`
                 : ""}
             </span>
-            <button
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                if (showCategoryInput && categoryInputValue.trim()) {
-                  onCreateCategory();
-                  return;
-                }
-                onOpenCategoryInput();
-              }}
-              className="text-[10px] text-ink-ghost hover:text-bamboo transition-colors cursor-pointer"
-              title={t("main.category.new", { defaultValue: "新建分类" })}
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="toggle-multi-select"
+                aria-pressed={multiSelectMode}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={onToggleMultiSelectMode}
+                className={`w-5 h-5 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                  multiSelectMode
+                    ? "text-bamboo bg-bamboo-mist/70"
+                    : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm/70"
+                }`}
+                title={t("bulkActions.toggleMode", { defaultValue: "批量选择" })}
+                aria-label={t("bulkActions.toggleMode", { defaultValue: "批量选择" })}
               >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="4" width="14" height="14" rx="2" />
+                  <path d="m7 11 2.2 2.2L13.5 9" />
+                  <path d="M21 8v11a2 2 0 0 1-2 2H8" />
+                </svg>
+              </button>
+              <button
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (showCategoryInput && categoryInputValue.trim()) {
+                    onCreateCategory();
+                    return;
+                  }
+                  onOpenCategoryInput();
+                }}
+                className="w-5 h-5 flex items-center justify-center rounded text-ink-ghost hover:text-bamboo transition-colors cursor-pointer"
+                title={t("main.category.new", { defaultValue: "新建分类" })}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+            </div>
           </div>
+
+          {multiSelectMode && (
+            <div
+              data-testid="sidebar-multiselect-bar"
+              className="mx-3 mb-1.5 px-2.5 py-1.5 rounded-lg bg-bamboo-mist/45 border border-bamboo/20 flex items-center justify-between gap-2 shrink-0"
+            >
+              <span className="text-[11px] font-mono text-bamboo tabular-nums">
+                {t("bulkActions.selectedCount", {
+                  count: selectedNoteIds.size,
+                  defaultValue: "已选 {{count}} 项",
+                })}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onSelectAllNotes}
+                  className="text-[11px] text-ink-soft hover:text-bamboo transition-colors cursor-pointer"
+                >
+                  {t("bulkActions.selectAll", { defaultValue: "全选" })}
+                </button>
+                <span className="text-ink-ghost/40 text-[10px]">·</span>
+                <button
+                  type="button"
+                  onClick={onClearNoteSelection}
+                  className="text-[11px] text-ink-faint hover:text-ink-soft transition-colors cursor-pointer"
+                >
+                  {t("bulkActions.clearSelection", { defaultValue: "清空" })}
+                </button>
+              </div>
+            </div>
+          )}
 
           {showCategoryInput && (
             <div className="px-3 pb-2 shrink-0">
@@ -631,6 +732,8 @@ export function MainSidebar({
                           note={note}
                           isSelected={note.id === selectedId}
                           isHovered={note.id === hoveredId}
+                          multiSelectMode={multiSelectMode}
+                          isBulkSelected={selectedNoteIds.has(note.id)}
                           variant="uncategorized"
                           onPointerDown={(event) =>
                             beginSidebarNotePointerDrag(event, note.id, note.category)
@@ -639,6 +742,7 @@ export function MainSidebar({
                             if (consumeSidebarPointerClick()) return;
                             onSelectNote(note.id);
                           }}
+                          onToggleBulkSelect={() => onToggleNoteSelection(note.id)}
                           onContextMenu={(event) => onOpenNoteMenu(event, note.id)}
                           onMouseEnter={() => onHoverId(note.id)}
                           onMouseLeave={() => onHoverId(null)}
@@ -776,6 +880,8 @@ export function MainSidebar({
                               note={note}
                               isSelected={note.id === selectedId}
                               isHovered={note.id === hoveredId}
+                              multiSelectMode={multiSelectMode}
+                              isBulkSelected={selectedNoteIds.has(note.id)}
                               variant="categorized"
                               onPointerDown={(event) =>
                                 beginSidebarNotePointerDrag(event, note.id, note.category)
@@ -784,6 +890,7 @@ export function MainSidebar({
                                 if (consumeSidebarPointerClick()) return;
                                 onSelectNote(note.id);
                               }}
+                              onToggleBulkSelect={() => onToggleNoteSelection(note.id)}
                               onContextMenu={(event) => onOpenNoteMenu(event, note.id)}
                               onMouseEnter={() => onHoverId(note.id)}
                               onMouseLeave={() => onHoverId(null)}

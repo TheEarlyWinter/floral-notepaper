@@ -241,6 +241,8 @@ impl NoteStore {
             let mut config = self.default_config();
             config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
             config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
+            config.image_compress_quality =
+                normalize_image_compress_quality(config.image_compress_quality);
             is_safe_data_dir(&self.data_dir)?;
             fs::create_dir_all(self.data_dir.join("notes"))?;
             write_json_atomic(&path, &config)?;
@@ -254,6 +256,8 @@ impl NoteStore {
         self.migrate_data_dir_if_relocated(&mut config)?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
+        config.image_compress_quality =
+            normalize_image_compress_quality(config.image_compress_quality);
         // 只有内容实际变化才写盘：避免每次读取都 fsync 重写 config
         let mut serialized = serde_json::to_vec_pretty(&config)?;
         serialized.push(b'\n');
@@ -272,6 +276,8 @@ impl NoteStore {
         self.ensure_config_dir()?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
+        config.image_compress_quality =
+            normalize_image_compress_quality(config.image_compress_quality);
         is_safe_data_dir(&self.data_dir)?;
         fs::create_dir_all(self.data_dir.join("notes"))?;
         write_json_atomic(&self.config_path(), &config)?;
@@ -339,6 +345,8 @@ impl NoteStore {
             templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: default_image_compress_webp(),
+            image_compress_quality: default_image_compress_quality(),
         }
     }
 
@@ -708,4 +716,20 @@ pub(super) fn default_link_preview() -> bool {
 
 pub(super) fn default_locale() -> String {
     "zh-CN".into()
+}
+
+pub(super) fn default_image_compress_webp() -> bool {
+    true
+}
+
+pub(super) fn default_image_compress_quality() -> f64 {
+    0.85
+}
+
+fn normalize_image_compress_quality(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.60, 0.95)
+    } else {
+        default_image_compress_quality()
+    }
 }

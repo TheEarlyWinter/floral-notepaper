@@ -3062,6 +3062,8 @@ mod tests {
             templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: true,
+            image_compress_quality: 0.85,
         }
     }
 
@@ -3197,6 +3199,8 @@ mod tests {
             templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: true,
+            image_compress_quality: 0.85,
         };
         let next = AppConfig {
             locale: "en-US".into(),
@@ -3255,6 +3259,8 @@ mod tests {
             templates: Vec::new(),
             notes_dir: None,
             last_known_base_dir: None,
+            image_compress_webp: true,
+            image_compress_quality: 0.85,
         };
 
         assert_eq!(

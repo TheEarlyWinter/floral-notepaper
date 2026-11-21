@@ -61,3 +61,15 @@ export const CommandPalette = lazy(() =>
     default: module.CommandPalette,
   })),
 );
+
+export const FindReplaceBar = lazy(() =>
+  import("../../components/FindReplaceBar").then((module) => ({
+    default: module.FindReplaceBar,
+  })),
+);
+
+export const BulkActionBar = lazy(() =>
+  import("../../components/BulkActionBar").then((module) => ({
+    default: module.BulkActionBar,
+  })),
+);
