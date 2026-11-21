@@ -26,6 +26,7 @@ export interface AppConfig {
   globalShortcut: string;
   closeToTray: boolean;
   closeTabShortcut: string;
+  commandPaletteShortcut?: string;
   autostart: boolean;
   defaultViewMode: string;
   noteAutoSave: boolean;

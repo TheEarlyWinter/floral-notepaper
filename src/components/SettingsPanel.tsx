@@ -359,6 +359,17 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
               defaultHintKey="settings.shortcut.forQuickCapture"
             />
           </div>
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
+              {t("settings.commandPaletteShortcut", { defaultValue: "命令面板快捷键" })}
+            </label>
+            <ShortcutRecorder
+              value={config.commandPaletteShortcut ?? "Ctrl+K"}
+              onChange={(v) => setConfigValue("commandPaletteShortcut", v)}
+              defaultHintKey="settings.shortcut.forCommandPalette"
+              isGlobal={false}
+            />
+          </div>
         </section>
 
         <section className="space-y-2">
@@ -940,6 +951,7 @@ interface ShortcutRecorderProps {
   value: string;
   onChange: (value: string) => void;
   defaultHintKey?: string;
+  isGlobal?: boolean;
 }
 
 type ShortcutMsg = { key: string; params?: Record<string, string> } | { raw: string };
@@ -948,6 +960,7 @@ function ShortcutRecorder({
   value,
   onChange,
   defaultHintKey = "settings.shortcut.forQuickNote",
+  isGlobal = true,
 }: ShortcutRecorderProps) {
   const { t } = useTranslation();
   const [checkState, setCheckState] = useState<"idle" | "checking" | "ok" | "warning" | "error">(
@@ -1029,7 +1042,14 @@ function ShortcutRecorder({
         markShortcutCleared();
       } else if (isValidGlobalShortcut(shortcut)) {
         const configString = hotkeyToConfigString(shortcut, platform);
-        void runShortcutCheck(configString, true);
+        if (isGlobal) {
+          void runShortcutCheck(configString, true);
+        } else {
+          invalidateShortcutChecks();
+          onChange(configString);
+          setCheckState("ok");
+          setCheckMsg({ key: defaultHintKey });
+        }
       } else {
         invalidateShortcutChecks();
         setCheckState("warning");
@@ -1122,16 +1142,18 @@ function ShortcutRecorder({
         >
           ×
         </button>
-        <button
-          type="button"
-          disabled={!value || isChecking || recorder.isRecording}
-          onClick={() => void runShortcutCheck(value, false)}
-          className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
-        >
-          {isChecking
-            ? t("settings.shortcut.checkingShort", { defaultValue: "检测中" })
-            : t("settings.shortcut.check", { defaultValue: "检测" })}
-        </button>
+        {isGlobal && (
+          <button
+            type="button"
+            disabled={!value || isChecking || recorder.isRecording}
+            onClick={() => void runShortcutCheck(value, false)}
+            className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          >
+            {isChecking
+              ? t("settings.shortcut.checkingShort", { defaultValue: "检测中" })
+              : t("settings.shortcut.check", { defaultValue: "检测" })}
+          </button>
+        )}
       </div>
       <p className={`min-h-4 text-[11px] ${statusClass}`}>{resolveMsg(checkMsg)}</p>
     </div>

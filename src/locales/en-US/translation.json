@@ -235,6 +235,7 @@
     },
     "dataDir": "Data directory",
     "openAtCursor": "Open near cursor with shortcut",
+    "commandPaletteShortcut": "Command Palette shortcut",
     "quickCaptureShortcut": "Quick Capture shortcut",
     "quickNoteShortcut": "Quick Note shortcut",
     "rememberSurfaceSize": "Remember surface size",
@@ -255,6 +256,7 @@
         "system": "Shortcut {{shortcut}} conflicts with a system shortcut",
         "unknown": "Check completed, but failed to release temporary shortcut"
       },
+      "forCommandPalette": "Opens the Command Palette inside the main window",
       "forQuickCapture": "Opens the floating Quick Capture bar",
       "forQuickNote": "Opens the Quick Note window",
       "needsModifier": "Shortcut must include Ctrl, Option/Alt, or Command/Meta",

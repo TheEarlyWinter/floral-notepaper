@@ -235,6 +235,7 @@
     },
     "dataDir": "数据目录",
     "openAtCursor": "快捷键打开时跟随鼠标位置",
+    "commandPaletteShortcut": "命令面板快捷键",
     "quickCaptureShortcut": "快速捕获快捷键",
     "quickNoteShortcut": "快捷记录快捷键",
     "rememberSurfaceSize": "记住小窗尺寸",
@@ -255,6 +256,7 @@
         "system": "快捷键 {{shortcut}} 与系统快捷键冲突",
         "unknown": "检测完成，但释放临时快捷键失败"
       },
+      "forCommandPalette": "用于在主窗口内呼出命令面板",
       "forQuickCapture": "用于呼出桌面快速捕获输入框",
       "forQuickNote": "用于打开快捷记录小窗",
       "needsModifier": "快捷键需要包含 Ctrl、Option/Alt 或 Command/Meta",

@@ -478,5 +478,8 @@ describe("CommandPalette", () => {
     expect(markup).toContain("快速捕获快捷键");
     expect(markup).toContain("Alt+Shift+Space");
     expect(markup).toContain("用于呼出桌面快速捕获输入框");
+    expect(markup).toContain("命令面板快捷键");
+    expect(markup).toContain("Ctrl+K");
+    expect(markup).toContain("用于在主窗口内呼出命令面板");
   });
 });

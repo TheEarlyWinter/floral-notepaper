@@ -62,6 +62,8 @@ pub struct AppConfig {
     pub close_to_tray: bool,
     #[serde(default = "default_close_tab_shortcut")]
     pub close_tab_shortcut: String,
+    #[serde(default = "default_command_palette_shortcut")]
+    pub command_palette_shortcut: String,
     pub autostart: bool,
     pub default_view_mode: String,
     #[serde(default = "default_note_auto_save")]
@@ -1844,6 +1846,7 @@ impl NoteStore {
             global_shortcut: "Ctrl+Space".into(),
             close_to_tray: true,
             close_tab_shortcut: default_close_tab_shortcut(),
+            command_palette_shortcut: default_command_palette_shortcut(),
             autostart: false,
             default_view_mode: "split".into(),
             note_auto_save: true,
@@ -2796,6 +2799,10 @@ fn default_close_tab_shortcut() -> String {
     "Ctrl+W".into()
 }
 
+fn default_command_palette_shortcut() -> String {
+    "Ctrl+K".into()
+}
+
 fn default_tile_color_mode() -> String {
     "system".into()
 }
@@ -3274,6 +3281,7 @@ mod tests {
             global_shortcut: "Alt+Space".into(),
             close_to_tray: false,
             close_tab_shortcut: default_close_tab_shortcut(),
+            command_palette_shortcut: default_command_palette_shortcut(),
             autostart: true,
             default_view_mode: "preview".into(),
             note_auto_save: false,

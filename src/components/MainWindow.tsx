@@ -144,11 +144,13 @@ import {
 function matchShortcut(event: KeyboardEvent, shortcut: string): boolean {
   if (!shortcut) return false;
   const parts = shortcut.split("+").map((s) => s.trim().toLowerCase());
-  const hasCtrl = parts.includes("ctrl");
-  const hasAlt = parts.includes("alt");
+  const hasCtrl = parts.includes("ctrl") || parts.includes("control");
+  const hasAlt = parts.includes("alt") || parts.includes("option");
   const hasShift = parts.includes("shift");
-  const hasMeta = parts.includes("meta") || parts.includes("cmd");
-  const keyPart = parts.find((p) => !["ctrl", "alt", "shift", "meta", "cmd"].includes(p));
+  const hasMeta = parts.includes("meta") || parts.includes("cmd") || parts.includes("command");
+  const keyPart = parts.find(
+    (p) => !["ctrl", "control", "alt", "option", "shift", "meta", "cmd", "command"].includes(p),
+  );
   if (!keyPart) return false;
   // Ctrl 和 Meta 互认：Mac 上用 Cmd(Meta) 等价于 Windows 的 Ctrl
   const hasModKey = hasCtrl || hasMeta;
@@ -156,7 +158,8 @@ function matchShortcut(event: KeyboardEvent, shortcut: string): boolean {
   if (eventHasModKey !== hasModKey) return false;
   if (event.altKey !== hasAlt) return false;
   if (event.shiftKey !== hasShift) return false;
-  return event.key.toLowerCase() === keyPart;
+  const eventKey = event.key === " " ? "space" : event.key.toLowerCase();
+  return eventKey === keyPart;
 }
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -1677,12 +1680,8 @@ export function MainWindow({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "k"
-      ) {
+      const paletteShortcut = (settingsConfig?.commandPaletteShortcut ?? "Ctrl+K").trim();
+      if (paletteShortcut && matchShortcut(event, paletteShortcut)) {
         if (document.querySelector('[data-shortcut-recording="true"]')) return;
         event.preventDefault();
         if (paletteOpenRef.current) {
@@ -1725,7 +1724,14 @@ export function MainWindow({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [saveCurrentNote, navHistory, openCommandPalette, closeCommandPalette]);
+  }, [
+    saveCurrentNote,
+    navHistory,
+    openCommandPalette,
+    closeCommandPalette,
+    settingsConfig?.commandPaletteShortcut,
+    settingsConfig?.closeTabShortcut,
+  ]);
 
   useEffect(() => {
     // error（上次保存失败）也触发自动重试，避免失败后永远不再保存

@@ -46,6 +46,8 @@ describe("locale resources", () => {
     const requiredExact = new Set([
       "settings.quickCaptureShortcut",
       "settings.shortcut.forQuickCapture",
+      "settings.commandPaletteShortcut",
+      "settings.shortcut.forCommandPalette",
     ]);
     const requiredKeys = sourceKeys.filter(
       (key) => requiredExact.has(key) || requiredNamespaces.some((ns) => key.startsWith(ns)),

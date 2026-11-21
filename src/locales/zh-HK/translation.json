@@ -235,6 +235,7 @@
     },
     "dataDir": "數據目錄",
     "openAtCursor": "快捷鍵開啟時跟隨滑鼠位置",
+    "commandPaletteShortcut": "命令面板快捷鍵",
     "quickCaptureShortcut": "快速捕獲快捷鍵",
     "quickNoteShortcut": "快捷記錄快捷鍵",
     "rememberSurfaceSize": "記住小窗尺寸",
@@ -255,6 +256,7 @@
         "system": "快捷鍵 {{shortcut}} 與系統快捷鍵衝突",
         "unknown": "檢測完成，但釋放臨時快捷鍵失敗"
       },
+      "forCommandPalette": "用於在主視窗內呼出命令面板",
       "forQuickCapture": "用於呼出桌面快速捕獲輸入框",
       "forQuickNote": "用於開啟快捷記錄小窗",
       "needsModifier": "快捷鍵需要包含 Ctrl、Option/Alt 或 Command/Meta",
