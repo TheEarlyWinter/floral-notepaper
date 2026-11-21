@@ -223,6 +223,7 @@
       "preview": "Preview",
       "split": "Split"
     },
+    "fontNotice": "UI prefers locally installed HarmonyOS Sans SC with system font fallbacks; display headings embed Source Han Serif SC (Copyright 2017-2022 Adobe).",
     "fontSize": {
       "editor": "Editor font size",
       "surface": "Surface font size"

@@ -57,7 +57,7 @@
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,css,json,yml,yaml,html,md}": "oxfmt",
-    "src-tauri/**/*.rs": "cargo fmt --manifest-path src-tauri/Cargo.toml --"
+    "src-tauri/**/*.rs": "rustfmt --edition 2021"
   },
   "packageManager": "npm@11.6.2"
 }
