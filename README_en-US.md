@@ -24,8 +24,8 @@ Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepa
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Rust](https://img.shields.io/badge/Rust-1.96-orange?logo=rust)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
-![Rust Tests](https://img.shields.io/badge/Rust_Tests-166_passed-green)
-![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-121_passed-green)
+![Rust Tests](https://img.shields.io/badge/Rust_Tests-185_passed-green)
+![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-175_passed-green)
 
 </div>
 
@@ -62,7 +62,8 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 
 ### ✍️ Writing & Organizing
 
-- **Edit / Split / Preview modes**: GFM, task lists, tables, math formulas, code blocks and more.
+- **Edit / Split / Preview modes**: GFM, task lists, tables, math formulas, code blocks and more, with upgraded bidirectional split scroll sync; check task boxes directly in Preview and Desktop Tiles to write back to Markdown.
+- **Command Palette**: press `Ctrl+K` (customizable in Settings) inside the main window for instant local filtering, debounced FTS5 snippets, `>` workspace commands, and quick note creation.
 - **Templates & Daily Note**: save reusable templates; the daily note opens in your local timezone, so it is never "yesterday's" note at midnight.
 - **Version History**: keep the last 20 revisions per note with blake3 deduplication; restore any revision with one click.
 - **Categories, Tags & Pinning**: organize, filter, and create a new note directly from a category header.
@@ -73,7 +74,7 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 
 ### 🧲 Desktop Tiles & Quick Notes
 
-- **Quick capture**: summon a note from the tray or a global shortcut.
+- **Quick capture & floating Quick Capture bar**: summon a note from the tray or global shortcut; the frameless floating Quick Capture bar (default `Alt+Shift+Space`, customizable) lets you switch between saving to Inbox or appending to today's Daily Note.
 - **Desktop tiles**: pin a note to a corner of your screen, down to 140×96 px; "tiles on desktop only" keeps normal windows from covering them.
 - **No data loss on close**: unsaved content is saved automatically before a note window closes.
 
@@ -103,8 +104,9 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 
 - **FTS5 full-text search**: SQLite FTS5 incremental index with trigram tokenizer for mixed Chinese/English search — far faster than full scans.
 - **Deduplicated storage**: blake3 hashing avoids re-storing unchanged versions, saving 80%+ disk space.
-- **CLI**: `--cli list|get|search|daily|create|export` for scripting and piping.
-- **Cross-process safety**: CLI and GUI writes are serialized by cross-process file locks.
+- **CLI**: `--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export` for scripting and piping.
+- **Built-in MCP Server**: `--mcp` exposes a native Rust stdio JSON-RPC 2.0 server (14 tools) so AI agents can read/write notes, todos, reminders, and pin desktop tiles.
+- **Cross-process safety & live GUI reload**: CLI/MCP and GUI writes are serialized by cross-process file locks, with automatic GUI hot-reload on external edits (protecting unsaved editor buffers).
 
 ### 🛡️ Data Safety & Unsaved-Content Protection
 
@@ -119,11 +121,11 @@ It can be a sticky note summoned at any moment, or a lightweight Markdown notebo
 
 Grab the latest build from [Releases](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest).
 
-| File | Use |
-| --- | --- |
-| `floral-notepaper_VERSION_windows-x64-setup.exe` | **Windows x64 installer**, recommended for most users. |
-| `floral-notepaper_VERSION.exe` | **Windows x64 portable build**, runs directly without installation. |
-| `SHA256SUMS.txt` | SHA-256 checksums for all packages. |
+| File                                             | Use                                                                 |
+| ------------------------------------------------ | ------------------------------------------------------------------- |
+| `floral-notepaper_VERSION_windows-x64-setup.exe` | **Windows x64 installer**, recommended for most users.              |
+| `floral-notepaper_VERSION.exe`                   | **Windows x64 portable build**, runs directly without installation. |
+| `SHA256SUMS.txt`                                 | SHA-256 checksums for all packages.                                 |
 
 > [!WARNING]
 > The current builds are not commercially code-signed, so Windows may show an unknown-publisher warning on first launch. Download only from this repository's Releases page and verify `SHA256SUMS.txt` when needed.
@@ -159,14 +161,14 @@ No registration required, and note content is never uploaded. The data directory
 
 ## Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| Desktop framework | [Tauri 2](https://tauri.app/) |
-| Frontend | React 19 + TypeScript + Vite |
-| Backend | Rust 1.96 |
-| Full-text index | SQLite FTS5 (trigram) |
-| Deduplication | blake3 hashing |
-| Release | GitHub Actions auto-build + draft release |
+| Layer             | Technology                                |
+| ----------------- | ----------------------------------------- |
+| Desktop framework | [Tauri 2](https://tauri.app/)             |
+| Frontend          | React 19 + TypeScript + Vite              |
+| Backend           | Rust 1.96                                 |
+| Full-text index   | SQLite FTS5 (trigram)                     |
+| Deduplication     | blake3 hashing                            |
+| Release           | GitHub Actions auto-build + draft release |
 
 ## Upstream & License
 

@@ -24,8 +24,8 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Rust](https://img.shields.io/badge/Rust-1.96-orange?logo=rust)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
-![Rust Tests](https://img.shields.io/badge/Rust_Tests-166_passed-green)
-![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-121_passed-green)
+![Rust Tests](https://img.shields.io/badge/Rust_Tests-185_passed-green)
+![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-175_passed-green)
 
 </div>
 
@@ -62,7 +62,8 @@
 
 ### ✍️ 写作与整理
 
-- **Markdown 编辑、预览与分栏模式**：支持 GFM、任务列表、表格、数学公式、代码块等常用格式，编辑体验流畅。
+- **Markdown 编辑、预览与分栏模式**：支持 GFM、任务列表、表格、数学公式、代码块等常用格式，分栏支持高精度双向同步滚动；预览区与桌面磁贴支持直接点击勾选任务列表并回写源码。
+- **命令面板**：主窗口内通过 `Ctrl+K`（可在设置中自定义录制）一键呼出，融合本地过滤、FTS5 全文检索摘要、`>` 命令模式与快速新建笔记。
 - **模板与每日便笺**：保存常用笔记模板，一键套用；每日便笺按本地时区打开，凌晨也不会开错「昨天」。
 - **版本历史**：自动保留最近 20 份正文版本，blake3 哈希去重，内容未变不重复存储，可按需一键恢复。
 - **分类、标签与置顶**：归类、加标签、置顶，支持组合筛选；从分类标题可直接在指定分类中新建笔记。
@@ -73,7 +74,7 @@
 
 ### 🧲 桌面磁贴与快速便签
 
-- **随时唤出的便签**：托盘或全局快捷键快速记录，灵感不等人。
+- **随时唤出的便签与闪念快捕条**：托盘或全局快捷键快速记录；独立悬浮「闪念快捕条」（默认 `Alt+Shift+Space`，支持自定义）可一键切换保存至收件箱或追加至今日便笺。
 - **桌面磁贴**：把笔记固定在桌面一角，支持缩至 140×96 的迷你尺寸；「磁贴仅在桌面显示」选项让普通窗口不再遮挡。
 - **关窗不丢字**：关闭便签窗口前自动保存未完成内容。
 
@@ -103,8 +104,9 @@
 
 - **FTS5 全文搜索**：SQLite FTS5 增量索引，trigram tokenizer 支持中英文混合搜索，速度远超旧版全量遍历。
 - **版本去重存储**：blake3 哈希去重，内容未变时不重复存储，节省 80%+ 磁盘空间。
-- **CLI 命令行接口**：`--cli list|get|search|daily|create|export`，方便脚本批量操作与管道集成。
-- **双进程安全**：CLI 与图形界面并发写入由跨进程文件锁串行，互不覆盖。
+- **CLI 命令行接口**：`--cli list|get|search|daily|create|append|update|delete|todos|remind|pin-tile|export`，方便脚本批量操作与管道集成。
+- **内置 MCP Server**：`--mcp` 提供原生 Rust stdio JSON-RPC 2.0 接口（14 个工具），可直接接入各类 AI Agent 读写笔记、待办、提醒并向桌面弹出磁贴。
+- **双进程安全与 GUI 热刷新**：CLI/MCP 与图形界面并发写入由跨进程文件锁串行，外部写入后 GUI 自动热刷新（未保存内容受保护不被覆盖）。
 
 ### 🛡️ 数据安全与未保存保护
 
@@ -119,11 +121,11 @@
 
 前往 [Releases](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest) 下载最新版。
 
-| 文件 | 适用场景 |
-| --- | --- |
-| `floral-notepaper_版本号_windows-x64-setup.exe` | **Windows x64 安装版**，推荐大多数用户使用。 |
-| `floral-notepaper_版本号.exe` | **Windows x64 绿色版**，下载后可直接运行，不写入安装目录。 |
-| `SHA256SUMS.txt` | 全部安装包的 SHA-256 校验值。 |
+| 文件                                            | 适用场景                                                   |
+| ----------------------------------------------- | ---------------------------------------------------------- |
+| `floral-notepaper_版本号_windows-x64-setup.exe` | **Windows x64 安装版**，推荐大多数用户使用。               |
+| `floral-notepaper_版本号.exe`                   | **Windows x64 绿色版**，下载后可直接运行，不写入安装目录。 |
+| `SHA256SUMS.txt`                                | 全部安装包的 SHA-256 校验值。                              |
 
 > [!WARNING]
 > 当前发布包尚未做商业代码签名，首次运行时 Windows 可能提示未知发布者。请仅从本仓库的 Release 页面下载，并按需核验 `SHA256SUMS.txt`。
@@ -159,14 +161,14 @@ npm run tauri build -- --bundles nsis
 
 ## 技术栈
 
-| 层 | 技术 |
-| --- | --- |
-| 桌面框架 | [Tauri 2](https://tauri.app/) |
-| 前端 | React 19 + TypeScript + Vite |
-| 后端 | Rust 1.96 |
-| 全文索引 | SQLite FTS5（trigram） |
-| 版本去重 | blake3 哈希 |
-| 发布 | GitHub Actions 自动构建 + 草稿 Release |
+| 层       | 技术                                   |
+| -------- | -------------------------------------- |
+| 桌面框架 | [Tauri 2](https://tauri.app/)          |
+| 前端     | React 19 + TypeScript + Vite           |
+| 后端     | Rust 1.96                              |
+| 全文索引 | SQLite FTS5（trigram）                 |
+| 版本去重 | blake3 哈希                            |
+| 发布     | GitHub Actions 自动构建 + 草稿 Release |
 
 ## 上游与许可
 
