@@ -235,6 +235,41 @@
       "zhHK": "繁體中文"
     },
     "dataDir": "数据目录",
+    "mcp": {
+      "heading": "MCP 与 CLI 集成",
+      "description": "通过标准 MCP stdio 或命令行访问花笺笔记、待办与提醒。",
+      "executablePathLabel": "可执行文件路径",
+      "executablePathLoading": "正在读取路径…",
+      "presetLabel": "客户端预设",
+      "presets": {
+        "antigravity": "Antigravity",
+        "claudeCode": "Claude Code",
+        "codex": "Codex",
+        "generic": "通用"
+      },
+      "presetHint": {
+        "antigravity": "粘贴到 Antigravity 的 mcp_config.json 中。",
+        "claudeCode": "粘贴到 Claude Code 的 .mcp.json 或 ~/.claude.json 中（已包含 type: stdio）。",
+        "codex": "标准 mcpServers JSON 片段（若使用 Codex config.toml，对应 command 与 args = [\"--mcp\"]）。",
+        "generic": "适用于支持 mcpServers JSON 格式的任意 MCP 客户端。"
+      },
+      "snippetLabel": "mcpServers 配置片段",
+      "copyButton": "复制配置",
+      "copiedButton": "已复制",
+      "copiedToast": "MCP 配置已复制到剪贴板",
+      "copyFailedToast": "复制 MCP 配置失败",
+      "activity": {
+        "heading": "最近外部活动",
+        "refresh": "刷新",
+        "refreshing": "刷新中…",
+        "clear": "清空",
+        "clearedToast": "已清空外部活动记录",
+        "empty": "暂无 CLI 或 MCP 调用记录",
+        "loadFailed": "读取外部活动失败",
+        "statusOk": "成功",
+        "statusError": "失败"
+      }
+    },
     "openAtCursor": "快捷键打开时跟随鼠标位置",
     "commandPaletteShortcut": "命令面板快捷键",
     "quickCaptureShortcut": "快速捕获快捷键",

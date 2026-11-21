@@ -7,10 +7,12 @@
 
 use crate::cli::{
     append_note_operation, create_reminder_checked, delete_note_with_sync,
-    delete_reminder_with_sync, enqueue_pin_tile, open_daily_with_sync,
+    delete_reminder_with_sync, enqueue_pin_tile, open_daily_with_sync, resolve_pin_tile_ttl,
 };
-use crate::external_sync;
-use crate::services::notes::{default_store, AppError, NoteStore, SaveNoteRequest};
+use crate::external_sync::{self, ExternalActivitySource};
+use crate::services::notes::{
+    default_store, validate_note_id, AppError, NoteStore, SaveNoteRequest,
+};
 use crate::services::reminders;
 use crate::services::todos::{self, TodoFilter};
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,7 @@ const ERR_PARSE: i64 = -32700;
 const ERR_INVALID_REQUEST: i64 = -32600;
 const ERR_METHOD_NOT_FOUND: i64 = -32601;
 const ERR_INVALID_PARAMS: i64 = -32602;
+const ERR_RESOURCE_NOT_FOUND: i64 = -32002;
 
 #[derive(Debug, Serialize)]
 struct JsonRpcResponse {
@@ -208,6 +211,10 @@ struct DeleteReminderArgs {
 struct PinTileArgs {
     #[serde(alias = "note_id", alias = "id")]
     note_id: String,
+    #[serde(default, alias = "ttl_secs")]
+    ttl_secs: Option<u64>,
+    #[serde(default)]
+    persist: bool,
 }
 
 pub fn tool_definitions() -> Value {
@@ -382,10 +389,46 @@ pub fn tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "noteId": { "type": "string", "description": "Note ID." }
+                    "noteId": { "type": "string", "description": "Note ID." },
+                    "ttlSecs": { "type": "integer", "minimum": 0, "description": "Optional TTL in seconds before the queued pin_tile command expires (default 300; 0 disables expiry)." },
+                    "persist": { "type": "boolean", "description": "Set true to keep the queued pin_tile command without TTL expiry." }
                 },
                 "required": ["noteId"]
             }
+        }
+    ])
+}
+
+pub fn resource_definitions() -> Value {
+    json!([
+        {
+            "uri": "floral://daily",
+            "name": "Today's Daily Note",
+            "description": "Markdown content of today's daily note (created if missing).",
+            "mimeType": "text/markdown"
+        },
+        {
+            "uri": "floral://todos/pending",
+            "name": "Pending Todos",
+            "description": "All pending Markdown GFM task list items across notes as JSON.",
+            "mimeType": "application/json"
+        },
+        {
+            "uri": "floral://notes",
+            "name": "All Notes Metadata",
+            "description": "Metadata list for all notes sorted by updated time as JSON.",
+            "mimeType": "application/json"
+        }
+    ])
+}
+
+pub fn resource_template_definitions() -> Value {
+    json!([
+        {
+            "uriTemplate": "floral://note/{id}",
+            "name": "Note by ID",
+            "description": "Markdown content of a single note identified by its ID.",
+            "mimeType": "text/markdown"
         }
     ])
 }
@@ -431,28 +474,47 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                let mut notes = store.list_notes()?;
-                if let Some(ref cat) = args.category {
-                    notes.retain(|n| n.category == *cat);
-                }
-                if let Some(ref tag) = args.tag {
-                    notes.retain(|n| n.tags.iter().any(|t| t == tag));
-                }
-                if let Some(pinned) = args.pinned {
-                    notes.retain(|n| n.pinned == pinned);
-                }
-                Ok(json!({ "count": notes.len(), "notes": notes }))
-            }))
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                "notes",
+                |store| {
+                    let mut notes = store.list_notes()?;
+                    if let Some(ref cat) = args.category {
+                        notes.retain(|n| n.category == *cat);
+                    }
+                    if let Some(ref tag) = args.tag {
+                        notes.retain(|n| n.tags.iter().any(|t| t == tag));
+                    }
+                    if let Some(pinned) = args.pinned {
+                        notes.retain(|n| n.pinned == pinned);
+                    }
+                    let count = notes.len();
+                    Ok((
+                        json!({ "count": count, "notes": notes }),
+                        "notes".into(),
+                        format!("{count} notes"),
+                    ))
+                },
+            ))
         }
         "get_note" => {
             let args: NoteIdArg = parse_tool_args(raw_args, name).map_err(|msg| JsonRpcError {
                 code: ERR_INVALID_PARAMS,
                 message: msg,
             })?;
-            Ok(run_tool_body(store_provider, |store| {
-                store.read_note(&args.id)
-            }))
+            let default_target = args.id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let note = store.read_note(&args.id)?;
+                    let summary =
+                        format!("{} ({} chars)", note.title, note.content.chars().count());
+                    Ok((note, args.id.clone(), summary))
+                },
+            ))
         }
         "search_notes" => {
             let args: SearchNotesArgs =
@@ -460,14 +522,25 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                let results = store.search_content(&args.query)?;
-                Ok(json!({
-                    "query": args.query,
-                    "count": results.len(),
-                    "results": results
-                }))
-            }))
+            let default_target = args.query.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let results = store.search_content(&args.query)?;
+                    let count = results.len();
+                    Ok((
+                        json!({
+                            "query": args.query,
+                            "count": count,
+                            "results": results
+                        }),
+                        args.query.clone(),
+                        format!("{count} results"),
+                    ))
+                },
+            ))
         }
         "create_note" => {
             let args: CreateNoteArgs =
@@ -475,24 +548,33 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                if args.title.trim().is_empty() {
-                    return Err(AppError {
-                        code: "invalidTitle".into(),
-                        message: "title cannot be empty".into(),
-                        details: Default::default(),
-                    });
-                }
-                let note = store.create_note(SaveNoteRequest {
-                    title: args.title,
-                    content: args.content,
-                    category: args.category,
-                    tags: args.tags,
-                    pinned: args.pinned,
-                })?;
-                external_sync::touch_external_rev(store.data_dir())?;
-                Ok(note)
-            }))
+            let default_target = args.title.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    if args.title.trim().is_empty() {
+                        return Err(AppError {
+                            code: "invalidTitle".into(),
+                            message: "title cannot be empty".into(),
+                            details: Default::default(),
+                        });
+                    }
+                    let content_len = args.content.chars().count();
+                    let note = store.create_note(SaveNoteRequest {
+                        title: args.title,
+                        content: args.content,
+                        category: args.category,
+                        tags: args.tags,
+                        pinned: args.pinned,
+                    })?;
+                    external_sync::touch_external_rev(store.data_dir())?;
+                    let target = note.id.clone();
+                    let summary = format!("created '{}' ({content_len} chars)", note.title);
+                    Ok((note, target, summary))
+                },
+            ))
         }
         "append_note" => {
             let args: AppendNoteArgs =
@@ -500,9 +582,24 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                append_note_operation(&store, &args.id, &args.content, args.separator.as_deref())
-            }))
+            let default_target = args.id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let added_len = args.content.chars().count();
+                    let updated = append_note_operation(
+                        store,
+                        &args.id,
+                        &args.content,
+                        args.separator.as_deref(),
+                    )?;
+                    let target = updated.id.clone();
+                    let summary = format!("appended +{added_len} chars to '{}'", updated.title);
+                    Ok((updated, target, summary))
+                },
+            ))
         }
         "update_note" => {
             let args: UpdateNoteArgs =
@@ -521,37 +618,62 @@ fn execute_tool(
                     message: "update_note requires at least one field to update".into(),
                 });
             }
-            Ok(run_tool_body(store_provider, |store| {
-                let existing = store.read_note(&args.id)?;
-                let updated = store.update_note(
-                    &args.id,
-                    SaveNoteRequest {
-                        title: args.title.unwrap_or(existing.title),
-                        content: args.content.unwrap_or(existing.content),
-                        category: args.category.unwrap_or(existing.category),
-                        tags: args.tags.unwrap_or(existing.tags),
-                        pinned: args.pinned.unwrap_or(existing.pinned),
-                    },
-                )?;
-                external_sync::touch_external_rev(store.data_dir())?;
-                Ok(updated)
-            }))
+            let default_target = args.id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let existing = store.read_note(&args.id)?;
+                    let updated = store.update_note(
+                        &args.id,
+                        SaveNoteRequest {
+                            title: args.title.unwrap_or(existing.title),
+                            content: args.content.unwrap_or(existing.content),
+                            category: args.category.unwrap_or(existing.category),
+                            tags: args.tags.unwrap_or(existing.tags),
+                            pinned: args.pinned.unwrap_or(existing.pinned),
+                        },
+                    )?;
+                    external_sync::touch_external_rev(store.data_dir())?;
+                    let summary = format!("updated '{}'", updated.title);
+                    Ok((updated, args.id.clone(), summary))
+                },
+            ))
         }
         "delete_note" => {
             let args: NoteIdArg = parse_tool_args(raw_args, name).map_err(|msg| JsonRpcError {
                 code: ERR_INVALID_PARAMS,
                 message: msg,
             })?;
-            Ok(run_tool_body(store_provider, |store| {
-                delete_note_with_sync(&store, &args.id)?;
-                Ok(json!({ "deleted": true, "id": args.id }))
-            }))
+            let default_target = args.id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    delete_note_with_sync(store, &args.id)?;
+                    Ok((
+                        json!({ "deleted": true, "id": args.id }),
+                        args.id.clone(),
+                        "deleted note".into(),
+                    ))
+                },
+            ))
         }
         "open_daily_note" => {
             // Accept empty object without extra strictness
-            Ok(run_tool_body(store_provider, |store| {
-                open_daily_with_sync(&store)
-            }))
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                "daily",
+                |store| {
+                    let note = open_daily_with_sync(store)?;
+                    let target = note.id.clone();
+                    let summary = format!("daily {}", note.title);
+                    Ok((note, target, summary))
+                },
+            ))
         }
         "list_todos" => {
             let args: ListTodosArgs =
@@ -572,10 +694,22 @@ fn execute_tool(
                     });
                 }
             };
-            Ok(run_tool_body(store_provider, |store| {
-                let items = todos::list_todos(&store, filter, args.note_id.as_deref())?;
-                Ok(json!({ "count": items.len(), "todos": items }))
-            }))
+            let default_target = args.note_id.clone().unwrap_or_else(|| "all".into());
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let items = todos::list_todos(store, filter, args.note_id.as_deref())?;
+                    let count = items.len();
+                    let target = args.note_id.clone().unwrap_or_else(|| "all".into());
+                    Ok((
+                        json!({ "count": count, "todos": items }),
+                        target,
+                        format!("{count} todos"),
+                    ))
+                },
+            ))
         }
         "toggle_todo" => {
             let args: ToggleTodoArgs =
@@ -583,25 +717,55 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                let item = todos::toggle_todo(&store, &args.note_id, args.index)?;
-                external_sync::touch_external_rev(store.data_dir())?;
-                Ok(item)
-            }))
+            let default_target = format!("{}#{}", args.note_id, args.index);
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let item = todos::toggle_todo(store, &args.note_id, args.index)?;
+                    external_sync::touch_external_rev(store.data_dir())?;
+                    let summary = format!("done={}", item.done);
+                    Ok((item, format!("{}#{}", args.note_id, args.index), summary))
+                },
+            ))
         }
-        "list_reminders" => Ok(run_tool_body(store_provider, |store| {
-            let list = reminders::list(store.data_dir())?;
-            Ok(json!({ "count": list.len(), "reminders": list }))
-        })),
+        "list_reminders" => Ok(run_tool_body_logged(
+            store_provider,
+            name,
+            "reminders",
+            |store| {
+                let list = reminders::list(store.data_dir())?;
+                let count = list.len();
+                Ok((
+                    json!({ "count": count, "reminders": list }),
+                    "reminders".into(),
+                    format!("{count} reminders"),
+                ))
+            },
+        )),
         "create_reminder" => {
             let args: CreateReminderArgs =
                 parse_tool_args(raw_args, name).map_err(|msg| JsonRpcError {
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                create_reminder_checked(&store, &args.note_id, &args.remind_at, &args.message)
-            }))
+            let default_target = args.note_id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let reminder = create_reminder_checked(
+                        store,
+                        &args.note_id,
+                        &args.remind_at,
+                        &args.message,
+                    )?;
+                    let summary = format!("reminder at {}", args.remind_at);
+                    Ok((reminder, args.note_id.clone(), summary))
+                },
+            ))
         }
         "delete_reminder" => {
             let args: DeleteReminderArgs =
@@ -609,10 +773,20 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                delete_reminder_with_sync(&store, &args.id)?;
-                Ok(json!({ "deleted": true, "id": args.id }))
-            }))
+            let default_target = args.id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    delete_reminder_with_sync(store, &args.id)?;
+                    Ok((
+                        json!({ "deleted": true, "id": args.id }),
+                        args.id.clone(),
+                        "deleted reminder".into(),
+                    ))
+                },
+            ))
         }
         "pin_tile" => {
             let args: PinTileArgs =
@@ -620,26 +794,270 @@ fn execute_tool(
                     code: ERR_INVALID_PARAMS,
                     message: msg,
                 })?;
-            Ok(run_tool_body(store_provider, |store| {
-                let note_id = enqueue_pin_tile(&store, &args.note_id)?;
-                Ok(json!({ "queued": true, "command": "pin_tile", "noteId": note_id }))
-            }))
+            let ttl_secs = resolve_pin_tile_ttl(args.ttl_secs, args.persist);
+            let default_target = args.note_id.clone();
+            Ok(run_tool_body_logged(
+                store_provider,
+                name,
+                &default_target,
+                |store| {
+                    let note_id = enqueue_pin_tile(store, &args.note_id, ttl_secs)?;
+                    let persist = ttl_secs.is_none();
+                    let summary = match ttl_secs {
+                        Some(ttl) => format!("pin_tile ttl={ttl}s"),
+                        None => "pin_tile persist".into(),
+                    };
+                    Ok((
+                        json!({
+                            "queued": true,
+                            "command": "pin_tile",
+                            "noteId": note_id,
+                            "ttlSecs": ttl_secs,
+                            "persist": persist
+                        }),
+                        note_id,
+                        summary,
+                    ))
+                },
+            ))
         }
         _ => unreachable!(),
     }
 }
 
-fn run_tool_body<T: Serialize>(
+fn run_tool_body_logged<T: Serialize>(
     store_provider: &impl Fn() -> Result<NoteStore, AppError>,
-    f: impl FnOnce(NoteStore) -> Result<T, AppError>,
+    action: &str,
+    default_target: &str,
+    f: impl FnOnce(&NoteStore) -> Result<(T, String, String), AppError>,
 ) -> Value {
-    let result = store_provider().and_then(f);
-    match result {
-        Ok(data) => match ToolCallResult::success_json(&data) {
-            Ok(value) => value,
-            Err(err) => ToolCallResult::error_text(err),
+    match store_provider() {
+        Ok(store) => match f(&store) {
+            Ok((data, target, summary)) => {
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    action,
+                    &target,
+                    &summary,
+                    true,
+                );
+                match ToolCallResult::success_json(&data) {
+                    Ok(value) => value,
+                    Err(err) => ToolCallResult::error_text(err),
+                }
+            }
+            Err(err) => {
+                let err_msg = err.to_string();
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    action,
+                    default_target,
+                    &err_msg,
+                    false,
+                );
+                ToolCallResult::error_text(err_msg)
+            }
         },
         Err(err) => ToolCallResult::error_text(err.to_string()),
+    }
+}
+
+fn resource_content(uri: &str, mime_type: &str, text: String) -> Value {
+    json!({
+        "contents": [{
+            "uri": uri,
+            "mimeType": mime_type,
+            "text": text
+        }]
+    })
+}
+
+fn execute_resource_read(
+    uri: &str,
+    store_provider: &impl Fn() -> Result<NoteStore, AppError>,
+) -> Result<Value, JsonRpcError> {
+    let store = store_provider().map_err(|err| JsonRpcError {
+        code: ERR_INVALID_PARAMS,
+        message: err.to_string(),
+    })?;
+
+    match uri {
+        "floral://daily" => match open_daily_with_sync(&store) {
+            Ok(note) => {
+                let summary = format!(
+                    "daily {} ({} chars)",
+                    note.title,
+                    note.content.chars().count()
+                );
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &summary,
+                    true,
+                );
+                Ok(resource_content(uri, "text/markdown", note.content))
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &msg,
+                    false,
+                );
+                Err(JsonRpcError {
+                    code: ERR_INVALID_PARAMS,
+                    message: msg,
+                })
+            }
+        },
+        "floral://todos/pending" => match todos::list_todos(&store, TodoFilter::Pending, None) {
+            Ok(items) => {
+                let count = items.len();
+                let payload = json!({ "count": count, "todos": items });
+                let text = serde_json::to_string_pretty(&payload).map_err(|err| JsonRpcError {
+                    code: ERR_INVALID_PARAMS,
+                    message: format!("JSON serialize failed: {err}"),
+                })?;
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &format!("{count} pending todos"),
+                    true,
+                );
+                Ok(resource_content(uri, "application/json", text))
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &msg,
+                    false,
+                );
+                Err(JsonRpcError {
+                    code: ERR_INVALID_PARAMS,
+                    message: msg,
+                })
+            }
+        },
+        "floral://notes" => match store.list_notes() {
+            Ok(notes) => {
+                let count = notes.len();
+                let payload = json!({ "count": count, "notes": notes });
+                let text = serde_json::to_string_pretty(&payload).map_err(|err| JsonRpcError {
+                    code: ERR_INVALID_PARAMS,
+                    message: format!("JSON serialize failed: {err}"),
+                })?;
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &format!("{count} notes"),
+                    true,
+                );
+                Ok(resource_content(uri, "application/json", text))
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &msg,
+                    false,
+                );
+                Err(JsonRpcError {
+                    code: ERR_INVALID_PARAMS,
+                    message: msg,
+                })
+            }
+        },
+        _ => {
+            if let Some(note_id) = uri.strip_prefix("floral://note/") {
+                if note_id.is_empty()
+                    || note_id.contains('?')
+                    || note_id.contains('#')
+                    || validate_note_id(note_id).is_err()
+                {
+                    let msg = format!("Invalid note resource URI: {uri}");
+                    external_sync::record_activity_best_effort(
+                        store.data_dir(),
+                        ExternalActivitySource::Mcp,
+                        "resources/read",
+                        uri,
+                        &msg,
+                        false,
+                    );
+                    return Err(JsonRpcError {
+                        code: ERR_INVALID_PARAMS,
+                        message: msg,
+                    });
+                }
+
+                match store.read_note(note_id) {
+                    Ok(note) => {
+                        let summary = format!(
+                            "note '{}' ({} chars)",
+                            note.title,
+                            note.content.chars().count()
+                        );
+                        external_sync::record_activity_best_effort(
+                            store.data_dir(),
+                            ExternalActivitySource::Mcp,
+                            "resources/read",
+                            uri,
+                            &summary,
+                            true,
+                        );
+                        Ok(resource_content(uri, "text/markdown", note.content))
+                    }
+                    Err(err) => {
+                        let msg = format!("Resource not found '{uri}': {err}");
+                        external_sync::record_activity_best_effort(
+                            store.data_dir(),
+                            ExternalActivitySource::Mcp,
+                            "resources/read",
+                            uri,
+                            &msg,
+                            false,
+                        );
+                        let code = if err.code == "noteNotFound" {
+                            ERR_RESOURCE_NOT_FOUND
+                        } else {
+                            ERR_INVALID_PARAMS
+                        };
+                        Err(JsonRpcError { code, message: msg })
+                    }
+                }
+            } else {
+                let msg = format!("Unknown or invalid resource URI: {uri}");
+                external_sync::record_activity_best_effort(
+                    store.data_dir(),
+                    ExternalActivitySource::Mcp,
+                    "resources/read",
+                    uri,
+                    &msg,
+                    false,
+                );
+                Err(JsonRpcError {
+                    code: ERR_INVALID_PARAMS,
+                    message: msg,
+                })
+            }
+        }
     }
 }
 
@@ -718,7 +1136,8 @@ pub(crate) fn handle_line(
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {
-                    "tools": {}
+                    "tools": {},
+                    "resources": {}
                 },
                 "serverInfo": {
                     "name": SERVER_NAME,
@@ -774,6 +1193,49 @@ pub(crate) fn handle_line(
                 }
             };
             match execute_tool(tool_name, arguments, store_provider) {
+                Ok(result) => JsonRpcResponse::ok(id, result),
+                Err(rpc_err) => JsonRpcResponse::err(id, rpc_err.code, rpc_err.message),
+            }
+        }
+        "resources/list" => JsonRpcResponse::ok(
+            id,
+            json!({
+                "resources": resource_definitions()
+            }),
+        ),
+        "resources/templates/list" => JsonRpcResponse::ok(
+            id,
+            json!({
+                "resourceTemplates": resource_template_definitions()
+            }),
+        ),
+        "resources/read" => {
+            let Some(params_obj) = params.as_ref().and_then(Value::as_object) else {
+                return Some(
+                    serde_json::to_value(JsonRpcResponse::err(
+                        id,
+                        ERR_INVALID_PARAMS,
+                        "Invalid params: expected params object",
+                    ))
+                    .expect("serialize invalid params"),
+                );
+            };
+            let Some(uri) = params_obj
+                .get("uri")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                return Some(
+                    serde_json::to_value(JsonRpcResponse::err(
+                        id,
+                        ERR_INVALID_PARAMS,
+                        "Invalid params: missing string 'uri'",
+                    ))
+                    .expect("serialize missing resource uri"),
+                );
+            };
+            match execute_resource_read(uri, store_provider) {
                 Ok(result) => JsonRpcResponse::ok(id, result),
                 Err(rpc_err) => JsonRpcResponse::err(id, rpc_err.code, rpc_err.message),
             }
@@ -871,6 +1333,7 @@ mod tests {
         assert_eq!(init["id"], 1);
         assert_eq!(init["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(init["result"]["capabilities"]["tools"], json!({}));
+        assert_eq!(init["result"]["capabilities"]["resources"], json!({}));
         assert_eq!(init["result"]["serverInfo"]["name"], "floral-notepaper");
         assert_eq!(
             init["result"]["serverInfo"]["version"],
@@ -1035,11 +1498,28 @@ mod tests {
         let dr_resp = call_line(&dr_req.to_string(), &config_dir, &data_dir).unwrap();
         assert_eq!(parse_tool_payload(&dr_resp)["deleted"], true);
 
-        // 13. pin_tile
+        // 13. pin_tile (default TTL 300s, ttl_secs: 0 -> persist, persist: true -> persist)
         let pin_req = json!({"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"pin_tile","arguments":{"noteId": note_id}}});
         let pin_resp = call_line(&pin_req.to_string(), &config_dir, &data_dir).unwrap();
-        assert_eq!(parse_tool_payload(&pin_resp)["queued"], true);
-        assert_eq!(external_sync::drain_commands(&data_dir).unwrap().len(), 1);
+        let pin_payload = parse_tool_payload(&pin_resp);
+        assert_eq!(pin_payload["queued"], true);
+        assert_eq!(pin_payload["ttlSecs"], 300);
+        assert_eq!(pin_payload["persist"], false);
+
+        let pin_zero_req = json!({"jsonrpc":"2.0","id":130,"method":"tools/call","params":{"name":"pin_tile","arguments":{"noteId": note_id, "ttl_secs": 0}}});
+        let pin_zero_resp = call_line(&pin_zero_req.to_string(), &config_dir, &data_dir).unwrap();
+        let pin_zero_payload = parse_tool_payload(&pin_zero_resp);
+        assert_eq!(pin_zero_payload["ttlSecs"], Value::Null);
+        assert_eq!(pin_zero_payload["persist"], true);
+
+        let pin_persist_req = json!({"jsonrpc":"2.0","id":131,"method":"tools/call","params":{"name":"pin_tile","arguments":{"noteId": note_id, "persist": true}}});
+        let pin_persist_resp =
+            call_line(&pin_persist_req.to_string(), &config_dir, &data_dir).unwrap();
+        let pin_persist_payload = parse_tool_payload(&pin_persist_resp);
+        assert_eq!(pin_persist_payload["ttlSecs"], Value::Null);
+        assert_eq!(pin_persist_payload["persist"], true);
+
+        assert_eq!(external_sync::drain_commands(&data_dir).unwrap().len(), 3);
 
         // 14. delete_note
         let del_req = json!({"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"delete_note","arguments":{"id": note_id}}});
@@ -1059,6 +1539,181 @@ mod tests {
         )
         .unwrap();
         assert_eq!(bad_params_resp["error"]["code"], -32602);
+
+        // Activity log recorded MCP actions without dumping full note body
+        let activity = external_sync::list_activity(&data_dir).unwrap();
+        assert!(!activity.is_empty());
+        assert_eq!(activity[0].source, ExternalActivitySource::Mcp);
+        assert_eq!(activity[0].action, "get_note");
+        assert!(!activity[0].ok);
+        assert!(!activity
+            .iter()
+            .any(|entry| entry.summary.contains("Second")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resources_list_templates_and_read_all_uris_and_errors() {
+        let (root, config_dir, data_dir) = temp_store_root();
+        let store = NoteStore::new(config_dir.clone(), data_dir.clone());
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "Resource Target".into(),
+                content: "# Resource Body\n- [ ] Pending task\n- [x] Done task".into(),
+                category: "docs".into(),
+                tags: vec!["ref".into()],
+                pinned: false,
+            })
+            .expect("create seed note");
+
+        // 1. resources/list
+        let list_resp = call_line(
+            r#"{"jsonrpc":"2.0","id":20,"method":"resources/list"}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .expect("resources/list response");
+        let resources = list_resp["result"]["resources"].as_array().unwrap();
+        let uris: Vec<(&str, &str)> = resources
+            .iter()
+            .map(|r| (r["uri"].as_str().unwrap(), r["mimeType"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            uris,
+            vec![
+                ("floral://daily", "text/markdown"),
+                ("floral://todos/pending", "application/json"),
+                ("floral://notes", "application/json"),
+            ]
+        );
+
+        // 2. resources/templates/list
+        let tmpl_resp = call_line(
+            r#"{"jsonrpc":"2.0","id":21,"method":"resources/templates/list"}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .expect("resources/templates/list response");
+        let templates = tmpl_resp["result"]["resourceTemplates"].as_array().unwrap();
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0]["uriTemplate"], "floral://note/{id}");
+        assert_eq!(templates[0]["mimeType"], "text/markdown");
+
+        // 3. resources/read -> floral://daily
+        let daily_resp = call_line(
+            r#"{"jsonrpc":"2.0","id":22,"method":"resources/read","params":{"uri":"floral://daily"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        let daily_contents = daily_resp["result"]["contents"].as_array().unwrap();
+        assert_eq!(daily_contents[0]["uri"], "floral://daily");
+        assert_eq!(daily_contents[0]["mimeType"], "text/markdown");
+        assert!(daily_contents[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("## 待办"));
+
+        // 4. resources/read -> floral://todos/pending
+        let todos_resp = call_line(
+            r#"{"jsonrpc":"2.0","id":23,"method":"resources/read","params":{"uri":"floral://todos/pending"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        let todos_contents = todos_resp["result"]["contents"].as_array().unwrap();
+        assert_eq!(todos_contents[0]["uri"], "floral://todos/pending");
+        assert_eq!(todos_contents[0]["mimeType"], "application/json");
+        let todos_json: Value =
+            serde_json::from_str(todos_contents[0]["text"].as_str().unwrap()).unwrap();
+        let pending_texts: Vec<&str> = todos_json["todos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["text"].as_str().unwrap())
+            .collect();
+        assert!(pending_texts.contains(&"Pending task"));
+        assert!(!pending_texts.contains(&"Done task"));
+
+        // 5. resources/read -> floral://notes
+        let notes_resp = call_line(
+            r#"{"jsonrpc":"2.0","id":24,"method":"resources/read","params":{"uri":"floral://notes"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        let notes_contents = notes_resp["result"]["contents"].as_array().unwrap();
+        assert_eq!(notes_contents[0]["uri"], "floral://notes");
+        assert_eq!(notes_contents[0]["mimeType"], "application/json");
+        let notes_json: Value =
+            serde_json::from_str(notes_contents[0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(notes_json["count"], 2); // seed note + today's daily note
+
+        // 6. resources/read -> floral://note/{id}
+        let note_uri = format!("floral://note/{}", note.id);
+        let note_req = json!({
+            "jsonrpc": "2.0",
+            "id": 25,
+            "method": "resources/read",
+            "params": { "uri": note_uri }
+        });
+        let note_resp = call_line(&note_req.to_string(), &config_dir, &data_dir).unwrap();
+        let note_contents = note_resp["result"]["contents"].as_array().unwrap();
+        assert_eq!(note_contents[0]["uri"], note_uri);
+        assert_eq!(note_contents[0]["mimeType"], "text/markdown");
+        assert_eq!(
+            note_contents[0]["text"],
+            "# Resource Body\n- [ ] Pending task\n- [x] Done task"
+        );
+
+        // 7. Invalid / unknown / missing URIs return clean JSON-RPC errors
+        let missing_params = call_line(
+            r#"{"jsonrpc":"2.0","id":26,"method":"resources/read"}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        assert_eq!(missing_params["error"]["code"], -32602);
+
+        let unknown_uri = call_line(
+            r#"{"jsonrpc":"2.0","id":27,"method":"resources/read","params":{"uri":"floral://unknown"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        assert_eq!(unknown_uri["error"]["code"], -32602);
+
+        let empty_id_uri = call_line(
+            r#"{"jsonrpc":"2.0","id":28,"method":"resources/read","params":{"uri":"floral://note/"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        assert_eq!(empty_id_uri["error"]["code"], -32602);
+
+        let traversal_uri = call_line(
+            r#"{"jsonrpc":"2.0","id":29,"method":"resources/read","params":{"uri":"floral://note/../secret"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        assert_eq!(traversal_uri["error"]["code"], -32602);
+
+        let missing_note_uri = call_line(
+            r#"{"jsonrpc":"2.0","id":30,"method":"resources/read","params":{"uri":"floral://note/missing-id"}}"#,
+            &config_dir,
+            &data_dir,
+        )
+        .unwrap();
+        assert_eq!(missing_note_uri["error"]["code"], ERR_RESOURCE_NOT_FOUND);
+
+        // Resource reads are recorded in external activity without note body text
+        let activity = external_sync::list_activity(&data_dir).unwrap();
+        assert!(activity
+            .iter()
+            .any(|e| e.action == "resources/read" && e.target == "floral://notes" && e.ok));
+        assert!(!activity.iter().any(|e| e.summary.contains("Resource Body")));
 
         let _ = fs::remove_dir_all(root);
     }

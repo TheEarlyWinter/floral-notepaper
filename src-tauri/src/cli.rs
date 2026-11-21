@@ -5,7 +5,7 @@
 //!   FLORAL_NOTEPAPER_DATA_DIR — 覆盖数据目录
 //!   FLORAL_NOTEPAPER_CONFIG_DIR — 覆盖配置目录
 
-use crate::external_sync::{self, ExternalCommand};
+use crate::external_sync::{self, ExternalActivitySource, ExternalCommand};
 use crate::services::library::SearchResult;
 use crate::services::notes::{
     default_store, AppError, Note, NoteMetadata, NoteStore, SaveNoteRequest,
@@ -97,7 +97,8 @@ fn print_help() {
            remind create --note <id> --at <RFC3339> --message <msg>\n\
                                          为指定笔记创建定时提醒\n\
            remind delete <id>            删除提醒\n\
-           pin-tile <note-id>            请求正在运行的 GUI 将笔记钉为桌面磁贴\n\
+           pin-tile <note-id> [--ttl <secs> | --persist]\n\
+                                         请求正在运行的 GUI 将笔记钉为桌面磁贴（默认 TTL 300s）\n\
          \n\
          环境变量:\n\
            FLORAL_NOTEPAPER_DATA_DIR     数据目录路径\n\
@@ -179,6 +180,7 @@ pub(crate) enum CliAction {
     },
     PinTile {
         note_id: String,
+        ttl_secs: Option<u64>,
     },
 }
 
@@ -329,13 +331,23 @@ pub(crate) fn delete_reminder_with_sync(store: &NoteStore, id: &str) -> Result<(
     Ok(())
 }
 
-pub(crate) fn enqueue_pin_tile(store: &NoteStore, note_id: &str) -> Result<String, AppError> {
+pub(crate) fn resolve_pin_tile_ttl(ttl_secs: Option<u64>, persist: bool) -> Option<u64> {
+    if persist || ttl_secs == Some(0) {
+        None
+    } else {
+        Some(ttl_secs.unwrap_or(external_sync::DEFAULT_PIN_TILE_TTL_SECS))
+    }
+}
+
+pub(crate) fn enqueue_pin_tile(
+    store: &NoteStore,
+    note_id: &str,
+    ttl_secs: Option<u64>,
+) -> Result<String, AppError> {
     let note = store.read_note(note_id)?;
     external_sync::enqueue_command(
         store.data_dir(),
-        ExternalCommand::PinTile {
-            note_id: note.id.clone(),
-        },
+        ExternalCommand::pin_tile(note.id.clone(), ttl_secs),
     )?;
     Ok(note.id)
 }
@@ -431,14 +443,50 @@ pub(crate) fn parse_args(args: &[String]) -> CliResult<ParseOutcome> {
             Ok(ParseOutcome::Action(CliAction::Delete { id: id.clone() }))
         }
         "pin-tile" => {
-            let [note_id] = rest else {
-                return Err("用法: floral-notepaper --cli pin-tile <note-id>".into());
-            };
-            if note_id.starts_with("--") || note_id.is_empty() {
-                return Err("用法: floral-notepaper --cli pin-tile <note-id>".into());
+            let mut note_id: Option<String> = None;
+            let mut parsed_ttl: Option<u64> = None;
+            let mut persist = false;
+
+            let mut iter = rest.iter();
+            while let Some(arg) = iter.next() {
+                let (flag, inline) = split_flag_value(arg);
+                match flag {
+                    "--ttl" => {
+                        let raw = take_flag_value(inline, &mut iter, "--ttl")?;
+                        let secs = raw
+                            .trim()
+                            .parse::<u64>()
+                            .map_err(|_| format!("无效的 TTL 秒数（需要非负整数）: {raw}"))?;
+                        parsed_ttl = Some(secs);
+                    }
+                    "--persist" => {
+                        if inline.is_some() {
+                            return Err("--persist 不接受参数值".into());
+                        }
+                        persist = true;
+                    }
+                    _ if arg.starts_with("--") => return Err(format!("未知参数: {arg}")),
+                    _ => {
+                        if note_id.is_some() {
+                            return Err(format!("多余的位置参数: {arg}"));
+                        }
+                        note_id = Some(arg.clone());
+                    }
+                }
             }
+
+            if persist && parsed_ttl.is_some() {
+                return Err("--ttl 与 --persist 不能同时使用".into());
+            }
+
+            let note_id = note_id.filter(|v| !v.is_empty()).ok_or_else(|| {
+                "用法: floral-notepaper --cli pin-tile <note-id> [--ttl <secs> | --persist]"
+                    .to_string()
+            })?;
+
             Ok(ParseOutcome::Action(CliAction::PinTile {
-                note_id: note_id.clone(),
+                note_id,
+                ttl_secs: resolve_pin_tile_ttl(parsed_ttl, persist),
             }))
         }
         "create" => {
@@ -781,11 +829,66 @@ fn resolve_content(source: ContentSource, stdin_override: Option<&str>) -> CliRe
     }
 }
 
+fn cli_action_meta(action: &CliAction) -> (&'static str, String) {
+    match action {
+        CliAction::List => ("list", "notes".into()),
+        CliAction::Get { id } => ("get", id.clone()),
+        CliAction::Search { query } => ("search", query.clone()),
+        CliAction::Daily => ("daily", "daily".into()),
+        CliAction::Create { title, .. } => ("create", title.clone()),
+        CliAction::Append { target, .. } => ("append", target.clone()),
+        CliAction::Update { id, .. } => ("update", id.clone()),
+        CliAction::Delete { id } => ("delete", id.clone()),
+        CliAction::Export { id } => ("export", id.clone()),
+        CliAction::TodosList { note_id, .. } => (
+            "todos_list",
+            note_id.clone().unwrap_or_else(|| "all".into()),
+        ),
+        CliAction::TodosToggle { note_id, index } => ("todos_toggle", format!("{note_id}#{index}")),
+        CliAction::RemindList => ("remind_list", "reminders".into()),
+        CliAction::RemindCreate { note_id, .. } => ("remind_create", note_id.clone()),
+        CliAction::RemindDelete { id } => ("remind_delete", id.clone()),
+        CliAction::PinTile { note_id, .. } => ("pin_tile", note_id.clone()),
+    }
+}
+
 pub(crate) fn execute_action(
     store: &NoteStore,
     action: CliAction,
     stdin_override: Option<&str>,
 ) -> CliResult<CliExecutionOutput> {
+    let (action_name, fallback_target) = cli_action_meta(&action);
+    match execute_action_with_summary(store, action, stdin_override) {
+        Ok((output, target, summary)) => {
+            external_sync::record_activity_best_effort(
+                store.data_dir(),
+                ExternalActivitySource::Cli,
+                action_name,
+                &target,
+                &summary,
+                true,
+            );
+            Ok(output)
+        }
+        Err(err) => {
+            external_sync::record_activity_best_effort(
+                store.data_dir(),
+                ExternalActivitySource::Cli,
+                action_name,
+                &fallback_target,
+                &err,
+                false,
+            );
+            Err(err)
+        }
+    }
+}
+
+fn execute_action_with_summary(
+    store: &NoteStore,
+    action: CliAction,
+    stdin_override: Option<&str>,
+) -> CliResult<(CliExecutionOutput, String, String)> {
     let success_json = |value: Value| -> CliResult<CliExecutionOutput> {
         let wrapped = serde_json::to_value(CliOutput::success(value))
             .map_err(|e| format!("JSON 序列化失败: {e}"))?;
@@ -795,32 +898,38 @@ pub(crate) fn execute_action(
     match action {
         CliAction::List => {
             let notes = store.list_notes().cli()?;
-            let data = serde_json::to_value(ListOutput {
-                count: notes.len(),
-                notes,
-            })
-            .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            let count = notes.len();
+            let data = serde_json::to_value(ListOutput { count, notes })
+                .map_err(|e| format!("JSON 序列化失败: {e}"))?;
+            Ok((
+                success_json(data)?,
+                "notes".into(),
+                format!("{count} notes"),
+            ))
         }
         CliAction::Get { id } => {
             let note = store.read_note(&id).cli()?;
+            let summary = format!("{} ({} chars)", note.title, note.content.chars().count());
             let data = serde_json::to_value(note).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, id, summary))
         }
         CliAction::Search { query } => {
             let results = store.search_content(&query).cli()?;
+            let count = results.len();
             let data = serde_json::to_value(SearchOutput {
-                query,
-                count: results.len(),
+                query: query.clone(),
+                count,
                 results,
             })
             .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, query, format!("{count} results")))
         }
         CliAction::Daily => {
             let note = open_daily_with_sync(store).cli()?;
+            let target = note.id.clone();
+            let summary = format!("daily {}", note.title);
             let data = serde_json::to_value(note).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, target, summary))
         }
         CliAction::Create {
             title,
@@ -833,6 +942,7 @@ pub(crate) fn execute_action(
                 Some(src) => resolve_content(src, stdin_override)?,
                 None => String::new(),
             };
+            let content_len = content_text.chars().count();
             let note = store
                 .create_note(SaveNoteRequest {
                     title,
@@ -843,8 +953,10 @@ pub(crate) fn execute_action(
                 })
                 .cli()?;
             external_sync::touch_external_rev(store.data_dir()).cli()?;
+            let target = note.id.clone();
+            let summary = format!("created '{}' ({content_len} chars)", note.title);
             let data = serde_json::to_value(note).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, target, summary))
         }
         CliAction::Append {
             target,
@@ -852,11 +964,14 @@ pub(crate) fn execute_action(
             separator,
         } => {
             let addition = resolve_content(content, stdin_override)?;
+            let added_len = addition.chars().count();
             let updated =
                 append_note_operation(store, &target, &addition, separator.as_deref()).cli()?;
+            let resolved_target = updated.id.clone();
+            let summary = format!("appended +{added_len} chars to '{}'", updated.title);
             let data =
                 serde_json::to_value(updated).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, resolved_target, summary))
         }
         CliAction::Update {
             id,
@@ -884,44 +999,62 @@ pub(crate) fn execute_action(
                 )
                 .cli()?;
             external_sync::touch_external_rev(store.data_dir()).cli()?;
+            let summary = format!("updated '{}'", updated.title);
             let data =
                 serde_json::to_value(updated).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, id, summary))
         }
         CliAction::Delete { id } => {
             delete_note_with_sync(store, &id).cli()?;
-            let data = serde_json::to_value(DeleteOutput { deleted: true, id })
-                .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            let data = serde_json::to_value(DeleteOutput {
+                deleted: true,
+                id: id.clone(),
+            })
+            .map_err(|e| format!("JSON 序列化失败: {e}"))?;
+            Ok((success_json(data)?, id, "deleted note".into()))
         }
         CliAction::Export { id } => {
             let note = store.read_note(&id).cli()?;
-            Ok(CliExecutionOutput::Raw(note.content))
+            let summary = format!(
+                "exported '{}' ({} chars)",
+                note.title,
+                note.content.chars().count()
+            );
+            Ok((CliExecutionOutput::Raw(note.content), id, summary))
         }
         CliAction::TodosList { filter, note_id } => {
             let items = todos::list_todos(store, filter, note_id.as_deref()).cli()?;
+            let count = items.len();
+            let target = note_id.unwrap_or_else(|| "all".into());
             let data = serde_json::to_value(TodosListOutput {
-                count: items.len(),
+                count,
                 todos: items,
             })
             .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, target, format!("{count} todos")))
         }
         CliAction::TodosToggle { note_id, index } => {
             let toggled = todos::toggle_todo(store, &note_id, index).cli()?;
             external_sync::touch_external_rev(store.data_dir()).cli()?;
+            let target = format!("{note_id}#{index}");
+            let summary = format!("done={}", toggled.done);
             let data =
                 serde_json::to_value(toggled).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, target, summary))
         }
         CliAction::RemindList => {
             let list = reminders::list(store.data_dir()).cli()?;
+            let count = list.len();
             let data = serde_json::to_value(RemindListOutput {
-                count: list.len(),
+                count,
                 reminders: list,
             })
             .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((
+                success_json(data)?,
+                "reminders".into(),
+                format!("{count} reminders"),
+            ))
         }
         CliAction::RemindCreate {
             note_id,
@@ -929,25 +1062,36 @@ pub(crate) fn execute_action(
             message,
         } => {
             let reminder = create_reminder_checked(store, &note_id, &at, &message).cli()?;
+            let summary = format!("reminder at {at}");
             let data =
                 serde_json::to_value(reminder).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, note_id, summary))
         }
         CliAction::RemindDelete { id } => {
             delete_reminder_with_sync(store, &id).cli()?;
-            let data = serde_json::to_value(DeleteOutput { deleted: true, id })
-                .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            let data = serde_json::to_value(DeleteOutput {
+                deleted: true,
+                id: id.clone(),
+            })
+            .map_err(|e| format!("JSON 序列化失败: {e}"))?;
+            Ok((success_json(data)?, id, "deleted reminder".into()))
         }
-        CliAction::PinTile { note_id } => {
-            let note_id = enqueue_pin_tile(store, &note_id).cli()?;
+        CliAction::PinTile { note_id, ttl_secs } => {
+            let note_id = enqueue_pin_tile(store, &note_id, ttl_secs).cli()?;
+            let persist = ttl_secs.is_none();
+            let summary = match ttl_secs {
+                Some(ttl) => format!("pin_tile ttl={ttl}s"),
+                None => "pin_tile persist".into(),
+            };
             let data = serde_json::to_value(PinTileOutput {
                 queued: true,
                 command: "pin_tile",
-                note_id,
+                note_id: note_id.clone(),
+                ttl_secs,
+                persist,
             })
             .map_err(|e| format!("JSON 序列化失败: {e}"))?;
-            success_json(data)
+            Ok((success_json(data)?, note_id, summary))
         }
     }
 }
@@ -1024,6 +1168,8 @@ struct PinTileOutput {
     queued: bool,
     command: &'static str,
     note_id: String,
+    ttl_secs: Option<u64>,
+    persist: bool,
 }
 
 #[cfg(test)]
@@ -1104,6 +1250,42 @@ mod tests {
             "list".into(),
             "--pending".into(),
             "--done".into()
+        ])
+        .is_err());
+        assert_eq!(
+            parse_args(&["pin-tile".into(), "n1".into()]).unwrap(),
+            ParseOutcome::Action(CliAction::PinTile {
+                note_id: "n1".into(),
+                ttl_secs: Some(300),
+            })
+        );
+        assert_eq!(
+            parse_args(&["pin-tile".into(), "n1".into(), "--ttl".into(), "60".into()]).unwrap(),
+            ParseOutcome::Action(CliAction::PinTile {
+                note_id: "n1".into(),
+                ttl_secs: Some(60),
+            })
+        );
+        assert_eq!(
+            parse_args(&["pin-tile".into(), "--persist".into(), "n1".into()]).unwrap(),
+            ParseOutcome::Action(CliAction::PinTile {
+                note_id: "n1".into(),
+                ttl_secs: None,
+            })
+        );
+        assert_eq!(
+            parse_args(&["pin-tile".into(), "n1".into(), "--ttl=0".into()]).unwrap(),
+            ParseOutcome::Action(CliAction::PinTile {
+                note_id: "n1".into(),
+                ttl_secs: None,
+            })
+        );
+        assert!(parse_args(&[
+            "pin-tile".into(),
+            "n1".into(),
+            "--ttl".into(),
+            "60".into(),
+            "--persist".into()
         ])
         .is_err());
     }
@@ -1211,16 +1393,39 @@ mod tests {
         let reminders_list = run_test_cli(&store, &["remind", "list"], None);
         assert_eq!(reminders_list["data"]["count"], 1);
 
-        // pin-tile enqueues external command
+        // pin-tile enqueues external command with default TTL 300s, custom TTL, and --persist
         let pin = run_test_cli(&store, &["pin-tile", &note_id], None);
         assert_eq!(pin["data"]["queued"], true);
+        assert_eq!(pin["data"]["ttlSecs"], 300);
+        assert_eq!(pin["data"]["persist"], false);
+
+        let pin_custom = run_test_cli(&store, &["pin-tile", &note_id, "--ttl", "45"], None);
+        assert_eq!(pin_custom["data"]["ttlSecs"], 45);
+        assert_eq!(pin_custom["data"]["persist"], false);
+
+        let pin_persist = run_test_cli(&store, &["pin-tile", &note_id, "--persist"], None);
+        assert_eq!(pin_persist["data"]["ttlSecs"], Value::Null);
+        assert_eq!(pin_persist["data"]["persist"], true);
+
         let drained = external_sync::drain_commands(store.data_dir()).unwrap();
-        assert_eq!(
-            drained,
-            vec![ExternalCommand::PinTile {
-                note_id: note_id.clone()
-            }]
-        );
+        assert_eq!(drained.len(), 3);
+        match &drained[0] {
+            ExternalCommand::PinTile {
+                note_id: id,
+                ttl_secs,
+                created_at_epoch_secs,
+            } => {
+                assert_eq!(id, &note_id);
+                assert_eq!(*ttl_secs, Some(300));
+                assert!(*created_at_epoch_secs > 0);
+            }
+        }
+        match &drained[1] {
+            ExternalCommand::PinTile { ttl_secs, .. } => assert_eq!(*ttl_secs, Some(45)),
+        }
+        match &drained[2] {
+            ExternalCommand::PinTile { ttl_secs, .. } => assert_eq!(*ttl_secs, None),
+        }
 
         // delete reminder & note
         let del_rem = run_test_cli(&store, &["remind", "delete", &reminder_id], None);
@@ -1229,13 +1434,23 @@ mod tests {
         assert_eq!(del_note["data"]["deleted"], true);
         assert!(store.read_note(&note_id).is_err());
 
-        // pin-tile on deleted note must fail
+        // pin-tile on deleted note must fail and record failed external activity
         let ParseOutcome::Action(pin_missing) =
             parse_args(&["pin-tile".into(), note_id.clone()]).unwrap()
         else {
             panic!("expected action");
         };
         assert!(execute_action(&store, pin_missing, None).is_err());
+
+        let activity = external_sync::list_activity(store.data_dir()).unwrap();
+        assert!(!activity.is_empty());
+        assert_eq!(activity[0].source, ExternalActivitySource::Cli);
+        assert_eq!(activity[0].action, "pin_tile");
+        assert!(!activity[0].ok);
+        // Never dump full note body into activity log
+        assert!(!activity
+            .iter()
+            .any(|entry| entry.summary.contains("task two")));
 
         let _ = fs::remove_dir_all(root);
     }

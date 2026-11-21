@@ -235,6 +235,41 @@
       "zhHK": "繁體中文"
     },
     "dataDir": "Data directory",
+    "mcp": {
+      "heading": "MCP & CLI Integration",
+      "description": "Access Floral Notepaper notes, todos, and reminders via standard MCP stdio or CLI.",
+      "executablePathLabel": "Executable path",
+      "executablePathLoading": "Resolving path…",
+      "presetLabel": "Client preset",
+      "presets": {
+        "antigravity": "Antigravity",
+        "claudeCode": "Claude Code",
+        "codex": "Codex",
+        "generic": "Generic"
+      },
+      "presetHint": {
+        "antigravity": "Paste into Antigravity's mcp_config.json.",
+        "claudeCode": "Paste into Claude Code's .mcp.json or ~/.claude.json (includes type: stdio).",
+        "codex": "Standard mcpServers JSON snippet (for Codex config.toml, map command and args = [\"--mcp\"]).",
+        "generic": "Works with any MCP client that accepts mcpServers JSON."
+      },
+      "snippetLabel": "mcpServers snippet",
+      "copyButton": "Copy Config",
+      "copiedButton": "Copied",
+      "copiedToast": "MCP config copied to clipboard",
+      "copyFailedToast": "Failed to copy MCP config",
+      "activity": {
+        "heading": "Recent External Activity",
+        "refresh": "Refresh",
+        "refreshing": "Refreshing…",
+        "clear": "Clear",
+        "clearedToast": "External activity cleared",
+        "empty": "No CLI or MCP activity recorded yet",
+        "loadFailed": "Failed to load external activity",
+        "statusOk": "OK",
+        "statusError": "Failed"
+      }
+    },
     "openAtCursor": "Open near cursor with shortcut",
     "commandPaletteShortcut": "Command Palette shortcut",
     "quickCaptureShortcut": "Quick Capture shortcut",

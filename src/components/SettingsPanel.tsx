@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
 import { getErrorMessage } from "../features/notes/api";
 import { showToast } from "./Toast";
+import { McpIntegrationSection } from "./McpIntegrationSection";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
   AppConfig,
@@ -742,6 +743,8 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             className="w-full rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-mono text-ink-soft p-2.5 leading-relaxed resize-y outline-none"
           />
         </section>
+
+        <McpIntegrationSection />
 
         <section className="pt-2 border-t border-paper-deep/25">
           <p className="text-[10px] leading-relaxed text-ink-ghost/75">
