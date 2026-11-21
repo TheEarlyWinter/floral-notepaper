@@ -6,7 +6,7 @@
 
 <img src="./src-tauri/icons/icon.png" width="120" alt="Floral Notepaper icon">
 
-# 🏮 Floral Notepaper · Enhanced
+# Floral Notepaper · Enhanced
 
 > Tuck your scattered thoughts quietly into your local disk.
 
@@ -15,7 +15,7 @@ A local-first, lightweight Markdown note-taking app with desktop sticky notes. N
 Maintained by [TheEarlyWinter](https://github.com/TheEarlyWinter)
 Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepaper) Tauri 2 + React project
 
-[📦 Download Latest](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest) · [🐛 Report Issues](https://github.com/TheEarlyWinter/floral-notepaper/issues) · [📝 Changelog](https://github.com/TheEarlyWinter/floral-notepaper/releases)
+[Download Latest](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest) · [Report Issues](https://github.com/TheEarlyWinter/floral-notepaper/issues) · [Changelog](https://github.com/TheEarlyWinter/floral-notepaper/releases)
 
 [![Release](https://img.shields.io/github/v/release/TheEarlyWinter/floral-notepaper?label=release&color=24C8D8)](https://github.com/TheEarlyWinter/floral-notepaper/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -33,18 +33,18 @@ Built on the [Achilng/floral-notepaper](https://github.com/Achilng/floral-notepa
 
 ---
 
-## 📖 Table of Contents
+## Table of Contents
 
 - [What is it](#what-is-it)
 - [Highlights Over Upstream](#highlights-over-upstream)
 - [Features](#features)
-  - [✍️ Writing & Organizing](#️-writing--organizing)
-  - [🧲 Desktop Tiles & Quick Notes](#-desktop-tiles--quick-notes)
-  - [🔗 Connecting Notes](#-connecting-notes)
-  - [🕸️ Knowledge Discovery](#️-knowledge-discovery)
-  - [⏰ Reminders & Daily Rhythm](#-reminders--daily-rhythm)
-  - [🚀 Performance & Infrastructure](#-performance--infrastructure)
-  - [🛡️ Data Safety & Unsaved-Content Protection](#️-data-safety--unsaved-content-protection)
+  - [Writing & Organizing](#writing--organizing)
+  - [Desktop Tiles & Quick Notes](#desktop-tiles--quick-notes)
+  - [Connecting Notes](#connecting-notes)
+  - [Knowledge Discovery](#knowledge-discovery)
+  - [Reminders & Daily Rhythm](#reminders--daily-rhythm)
+  - [Performance & Infrastructure](#performance--infrastructure)
+  - [Data Safety & Unsaved-Content Protection](#data-safety--unsaved-content-protection)
 - [MCP & CLI Quickstart](#mcp--cli-quickstart)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Download & Install](#download--install)
@@ -76,7 +76,7 @@ Built on top of the lightweight sticky-note and Markdown core from [Achilng/flor
 
 ## Features
 
-### ✍️ Writing & Organizing
+### Writing & Organizing
 
 - **Edit / Split / Preview modes**: GFM, task lists, tables, math formulas, code blocks and more, with upgraded bidirectional split scroll sync; check task boxes directly in Preview and Desktop Tiles to write back to Markdown.
 - **In-Note Find & Replace & WebP Image Compression**: `Ctrl+F` / `Ctrl+H` with case sensitivity, regex, live editor/preview match highlights, and undo-safe replacements; pasted/dropped images auto-convert to WebP (configurable quality, skips small files & animated formats).
@@ -89,25 +89,25 @@ Built on top of the lightweight sticky-note and Markdown core from [Achilng/flor
 - **External Files**: safely open external Markdown/TXT with UTF-8 BOM, UTF-16 BOM and GBK detection; relative images are served through a whitelist.
 - **Focus Writing & Immersive Reading**: collapse side panels and toolbars for distraction-free writing; immersive reading renders the preview fullscreen.
 
-### 🧲 Desktop Tiles & Quick Notes
+### Desktop Tiles & Quick Notes
 
 - **Quick capture & floating Quick Capture bar**: summon a note from the tray or global shortcut; the frameless floating Quick Capture bar (default `Alt+Shift+Space`, customizable) lets you switch between saving to Inbox or appending to today's Daily Note.
 - **Desktop tiles**: pin a note to a corner of your screen, down to 140×96 px; "tiles on desktop only" keeps normal windows from covering them.
 - **No data loss on close**: unsaved content is saved automatically before a note window closes.
 
-### 🔗 Connecting Notes
+### Connecting Notes
 
 - **Wiki-link Autocomplete & Navigation**: type `[[` in the editor for live completion (`↑↓`, `Enter`/`Tab`, `Esc`, IME-safe); supports `[[Note Title]]` and stable `[[note:noteID|display text]]`, clickable directly in Preview or via `Ctrl+Click` (`Cmd+Click`) in the editor.
 - **Backlinks & Local Related Notes**: see notes mentioning the current one alongside local BM25 + tag similarity recommendations with one-click link insertion.
 - **Navigation history**: step back and forth between notes with `Alt+←` / `Alt+→`.
 
-### 🕸️ Knowledge Discovery
+### Knowledge Discovery
 
 - **Outline panel**: auto-extracted heading hierarchy with one-click jumps; headings with bold or links are located precisely.
 - **Knowledge graph**: force-directed visualization of the note link network, colored by category; click a node to open the note.
 - **Weekly review**: a dashboard card summarizing new notes, edits, word counts and completed todos; generate a review draft in one click.
 
-### ⏰ Reminders & Daily Rhythm
+### Reminders & Daily Rhythm
 
 - **One-shot local reminders**: set a reminder on a note; when the time comes, the window is raised and the note opens.
 - **Reliable delivery**: a reminder is marked done only after it is actually delivered; failed wake-ups are retried, never silently dropped.
@@ -116,7 +116,7 @@ Built on top of the lightweight sticky-note and Markdown core from [Achilng/flor
 > [!NOTE]
 > Reminders are "app-running" reminders: when the app is fully closed, it does not run as a system service; overdue reminders are delivered on next launch.
 
-### 🚀 Performance & Infrastructure
+### Performance & Infrastructure
 
 - **FTS5 full-text search**: SQLite FTS5 incremental index with trigram tokenizer for mixed Chinese/English search — far faster than full scans.
 - **Deduplicated storage**: blake3 hashing avoids re-storing unchanged versions, saving 80%+ disk space.
@@ -125,7 +125,7 @@ Built on top of the lightweight sticky-note and Markdown core from [Achilng/flor
 - **Opt-in Cross-Device Sync**: disabled by default; optionally enable WebDAV or Git sync in Settings with credentials stored in your OS keyring and automatic conflict backups.
 - **Cross-process safety & live GUI reload**: CLI/MCP and GUI writes are serialized by cross-process file locks, with automatic GUI hot-reload on external edits (protecting unsaved editor buffers).
 
-### 🛡️ Data Safety & Unsaved-Content Protection
+### Data Safety & Unsaved-Content Protection
 
 - **Local-first**: notes, settings, version history and reminders all live in a local data directory you can migrate anytime.
 - **Save fallback**: failed writes roll back atomically — no "new body with old title"; a failed save blocks navigation, so content is never silently lost.
