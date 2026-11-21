@@ -5,6 +5,7 @@ import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings
 import { getErrorMessage } from "../features/notes/api";
 import { showToast } from "./Toast";
 import { McpIntegrationSection } from "./McpIntegrationSection";
+import { SyncSettingsSection } from "./SyncSettingsSection";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
   AppConfig,
@@ -586,6 +587,8 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
         </section>
 
         <UpdateSettingsSection mode="settingsOnly" />
+
+        <SyncSettingsSection config={config} onChange={onChange} />
 
         {/* ═══════════════════════════════════════
             排版定制

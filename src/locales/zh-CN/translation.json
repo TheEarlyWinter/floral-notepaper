@@ -488,6 +488,71 @@
         "contain": "完整",
         "repeat": "平铺"
       }
+    },
+    "sync": {
+      "clearSecret": "清除",
+      "conflictsSummary": "检测到 {{count}} 个冲突副本（已保留本地文件）：",
+      "disabledHint": "同步默认关闭；选择 WebDAV 或 Git 后可跨设备同步笔记、图片与提醒。",
+      "git": {
+        "branch": "分支",
+        "remoteUrl": "远程仓库地址",
+        "remoteUrlPlaceholder": "https://github.com/user/notes.git",
+        "token": "个人访问令牌（PAT）",
+        "tokenPlaceholder": "输入访问令牌（SSH 可留空）",
+        "username": "用户名（可选）",
+        "usernamePlaceholder": "git / username"
+      },
+      "heading": "云同步",
+      "hideSecret": "隐藏",
+      "interval": {
+        "custom": "{{minutes}} 分钟",
+        "label": "自动同步间隔",
+        "minutes15": "15 分钟",
+        "minutes30": "30 分钟",
+        "minutes5": "5 分钟",
+        "minutes60": "60 分钟",
+        "off": "关闭"
+      },
+      "keyringUnavailable": "当前系统安全凭据库不可用，无法保存密码或令牌。",
+      "lastSyncLabel": "上次同步",
+      "neverSynced": "尚未同步",
+      "provider": {
+        "git": "Git",
+        "label": "同步方式",
+        "none": "关闭",
+        "webdav": "WebDAV"
+      },
+      "saveSecret": "保存",
+      "secretClearedToast": "已清除保存的凭据",
+      "secretEmpty": "请输入凭据后再保存",
+      "secretNotSet": "未配置",
+      "secretSaved": "已保存",
+      "secretSavedPlaceholder": "已安全保存（输入新凭据以覆盖）",
+      "secretSavedToast": "凭据已保存到系统安全存储",
+      "showSecret": "显示",
+      "state": {
+        "conflict": "有冲突",
+        "error": "失败",
+        "idle": "空闲",
+        "success": "已同步",
+        "syncing": "同步中"
+      },
+      "statsSummary": "上传 {{uploaded}} · 下载 {{downloaded}} · 删除 {{deleted}}",
+      "syncNow": "立即同步",
+      "syncSuccess": "同步完成",
+      "syncing": "同步中...",
+      "testConnection": "测试连接",
+      "testSuccess": "连接成功（{{latencyMs}} ms）",
+      "testing": "测试中...",
+      "webdav": {
+        "password": "密码 / 应用专用密码",
+        "passwordPlaceholder": "输入 WebDAV 密码",
+        "remoteDir": "远端目录",
+        "url": "服务器地址",
+        "urlPlaceholder": "https://dav.example.com/dav",
+        "username": "用户名",
+        "usernamePlaceholder": "username"
+      }
     }
   },
   "quickCapture": {
@@ -541,6 +606,8 @@
       "openTodosDesc": "汇总全部笔记中的待办事项",
       "openWeeklyReview": "打开本周回顾",
       "openWeeklyReviewDesc": "打开仪表盘并查看或生成本周回顾",
+      "syncNow": "立即同步",
+      "syncNowDesc": "立即与云端同步笔记与附件",
       "toggleFocusMode": "切换专注模式",
       "toggleFocusModeDesc": "隐藏侧栏与工具栏，专注写作",
       "toggleReadingMode": "切换沉浸阅读",

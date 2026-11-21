@@ -14,6 +14,8 @@ export type EditorWidth = "narrow" | "normal" | "wide";
 
 export type SidebarPosition = "left" | "right";
 
+export type SyncProvider = "none" | "webdav" | "git";
+
 export interface NoteTemplate {
   id: string;
   name: string;
@@ -86,4 +88,14 @@ export interface AppConfig {
   // ── 图片压缩 ──
   imageCompressWebp?: boolean;
   imageCompressQuality?: number;
+
+  // ── 云同步（默认关闭，严格 opt-in） ──
+  syncProvider?: SyncProvider;
+  syncAutoIntervalMinutes?: number;
+  syncWebdavUrl?: string;
+  syncWebdavUsername?: string;
+  syncWebdavRemoteDir?: string;
+  syncGitRemoteUrl?: string;
+  syncGitBranch?: string;
+  syncGitUsername?: string;
 }

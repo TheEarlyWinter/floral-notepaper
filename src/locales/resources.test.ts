@@ -53,13 +53,14 @@ describe("locale resources", () => {
     }
   });
 
-  it("defines quickCapture, commandPalette, findReplace, bulkActions, and imageCompress keys directly in all locales", () => {
+  it("defines quickCapture, commandPalette, findReplace, bulkActions, imageCompress, and settings.sync keys directly in all locales", () => {
     const requiredNamespaces = [
       "quickCapture.",
       "commandPalette.",
       "findReplace.",
       "bulkActions.",
       "settings.imageCompress",
+      "settings.sync.",
     ];
     const requiredExact = new Set([
       "settings.quickCaptureShortcut",

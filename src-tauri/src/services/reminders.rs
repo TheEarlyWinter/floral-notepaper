@@ -1,7 +1,11 @@
 use crate::{json_io::write_json_atomic, services::notes::AppError};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, sync::{Mutex, OnceLock}};
+use std::{
+    fs,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 use uuid::Uuid;
 
 static REMINDER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -19,9 +23,9 @@ pub struct Reminder {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct ReminderFile {
+pub(crate) struct ReminderFile {
     #[serde(default)]
-    reminders: Vec<Reminder>,
+    pub(crate) reminders: Vec<Reminder>,
 }
 
 fn path(data_dir: &Path) -> std::path::PathBuf {
@@ -55,7 +59,11 @@ fn lock() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
     REMINDER_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .map_err(|_| AppError { code: "reminderLock".into(), message: "提醒存储锁已中毒，请重启应用后重试".into(), details: Default::default() })
+        .map_err(|_| AppError {
+            code: "reminderLock".into(),
+            message: "提醒存储锁已中毒，请重启应用后重试".into(),
+            details: Default::default(),
+        })
 }
 
 /// 持提醒锁执行闭包（供需要跨锁协调的路径使用，如备份恢复）。
@@ -70,10 +78,21 @@ pub fn list(data_dir: &Path) -> Result<Vec<Reminder>, AppError> {
     Ok(reminders)
 }
 
-pub fn create(data_dir: &Path, note_id: String, message: String, remind_at: DateTime<Utc>) -> Result<Reminder, AppError> {
+pub fn create(
+    data_dir: &Path,
+    note_id: String,
+    message: String,
+    remind_at: DateTime<Utc>,
+) -> Result<Reminder, AppError> {
     let _guard = lock()?;
     let mut file = load(data_dir)?;
-    let reminder = Reminder { id: Uuid::new_v4().to_string(), note_id, message, remind_at, notified: false };
+    let reminder = Reminder {
+        id: Uuid::new_v4().to_string(),
+        note_id,
+        message,
+        remind_at,
+        notified: false,
+    };
     file.reminders.push(reminder.clone());
     save(data_dir, &file)?;
     Ok(reminder)
@@ -163,7 +182,9 @@ mod tests {
 
         // 确认已通知后不再返回
         mark_notified(&data_dir, &created.id).expect("mark notified");
-        assert!(take_due(&data_dir, now).expect("take due after notified").is_empty());
+        assert!(take_due(&data_dir, now)
+            .expect("take due after notified")
+            .is_empty());
         assert!(list(&data_dir).expect("list reminders")[0].notified);
 
         let _ = fs::remove_dir_all(data_dir);

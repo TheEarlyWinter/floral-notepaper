@@ -488,6 +488,71 @@
         "contain": "完整",
         "repeat": "平鋪"
       }
+    },
+    "sync": {
+      "clearSecret": "清除",
+      "conflictsSummary": "偵測到 {{count}} 個衝突副本（已保留本機檔案）：",
+      "disabledHint": "同步預設關閉；選擇 WebDAV 或 Git 後可跨裝置同步筆記、圖片與提醒。",
+      "git": {
+        "branch": "分支",
+        "remoteUrl": "遠端儲存庫位址",
+        "remoteUrlPlaceholder": "https://github.com/user/notes.git",
+        "token": "個人存取權杖（PAT）",
+        "tokenPlaceholder": "輸入存取權杖（SSH 可留空）",
+        "username": "使用者名稱（可選）",
+        "usernamePlaceholder": "git / username"
+      },
+      "heading": "雲端同步",
+      "hideSecret": "隱藏",
+      "interval": {
+        "custom": "{{minutes}} 分鐘",
+        "label": "自動同步間隔",
+        "minutes15": "15 分鐘",
+        "minutes30": "30 分鐘",
+        "minutes5": "5 分鐘",
+        "minutes60": "60 分鐘",
+        "off": "關閉"
+      },
+      "keyringUnavailable": "目前系統安全憑證庫無法使用，無法儲存密碼或權杖。",
+      "lastSyncLabel": "上次同步",
+      "neverSynced": "尚未同步",
+      "provider": {
+        "git": "Git",
+        "label": "同步方式",
+        "none": "關閉",
+        "webdav": "WebDAV"
+      },
+      "saveSecret": "儲存",
+      "secretClearedToast": "已清除儲存的憑證",
+      "secretEmpty": "請輸入憑證後再儲存",
+      "secretNotSet": "未設定",
+      "secretSaved": "已儲存",
+      "secretSavedPlaceholder": "已安全儲存（輸入新憑證以覆蓋）",
+      "secretSavedToast": "憑證已儲存至系統安全儲存區",
+      "showSecret": "顯示",
+      "state": {
+        "conflict": "有衝突",
+        "error": "失敗",
+        "idle": "閒置",
+        "success": "已同步",
+        "syncing": "同步中"
+      },
+      "statsSummary": "上傳 {{uploaded}} · 下載 {{downloaded}} · 刪除 {{deleted}}",
+      "syncNow": "立即同步",
+      "syncSuccess": "同步完成",
+      "syncing": "同步中...",
+      "testConnection": "測試連線",
+      "testSuccess": "連線成功（{{latencyMs}} ms）",
+      "testing": "測試中...",
+      "webdav": {
+        "password": "密碼 / 應用程式專用密碼",
+        "passwordPlaceholder": "輸入 WebDAV 密碼",
+        "remoteDir": "遠端目錄",
+        "url": "伺服器位址",
+        "urlPlaceholder": "https://dav.example.com/dav",
+        "username": "使用者名稱",
+        "usernamePlaceholder": "username"
+      }
     }
   },
   "quickCapture": {
@@ -541,6 +606,8 @@
       "openTodosDesc": "彙整全部筆記中的待辦事項",
       "openWeeklyReview": "打開本週回顧",
       "openWeeklyReviewDesc": "打開儀表板並查看或生成本週回顧",
+      "syncNow": "立即同步",
+      "syncNowDesc": "立即與雲端同步筆記與附件",
       "toggleFocusMode": "切換專注模式",
       "toggleFocusModeDesc": "隱藏側欄與工具列，專注寫作",
       "toggleReadingMode": "切換沉浸閱讀",

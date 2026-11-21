@@ -488,6 +488,71 @@
         "contain": "Contain",
         "repeat": "Repeat"
       }
+    },
+    "sync": {
+      "clearSecret": "Clear",
+      "conflictsSummary": "Detected {{count}} conflict copy(s) (local files preserved):",
+      "disabledHint": "Sync is off by default; select WebDAV or Git to sync notes, images, and reminders across devices.",
+      "git": {
+        "branch": "Branch",
+        "remoteUrl": "Remote Repository URL",
+        "remoteUrlPlaceholder": "https://github.com/user/notes.git",
+        "token": "Personal Access Token (PAT)",
+        "tokenPlaceholder": "Enter access token (leave blank for SSH)",
+        "username": "Username (optional)",
+        "usernamePlaceholder": "git / username"
+      },
+      "heading": "Cloud Sync",
+      "hideSecret": "Hide",
+      "interval": {
+        "custom": "{{minutes}} min",
+        "label": "Auto-sync Interval",
+        "minutes15": "15 min",
+        "minutes30": "30 min",
+        "minutes5": "5 min",
+        "minutes60": "60 min",
+        "off": "Off"
+      },
+      "keyringUnavailable": "OS secure credential store is unavailable; passwords or tokens cannot be saved.",
+      "lastSyncLabel": "Last Sync",
+      "neverSynced": "Never synced",
+      "provider": {
+        "git": "Git",
+        "label": "Sync Provider",
+        "none": "Off",
+        "webdav": "WebDAV"
+      },
+      "saveSecret": "Save",
+      "secretClearedToast": "Saved credential cleared",
+      "secretEmpty": "Enter a credential before saving",
+      "secretNotSet": "Not set",
+      "secretSaved": "Saved",
+      "secretSavedPlaceholder": "Safely stored (enter a new value to replace)",
+      "secretSavedToast": "Credential saved to OS keyring",
+      "showSecret": "Show",
+      "state": {
+        "conflict": "Conflicts",
+        "error": "Failed",
+        "idle": "Idle",
+        "success": "Synced",
+        "syncing": "Syncing"
+      },
+      "statsSummary": "Uploaded {{uploaded}} · Downloaded {{downloaded}} · Deleted {{deleted}}",
+      "syncNow": "Sync Now",
+      "syncSuccess": "Sync completed",
+      "syncing": "Syncing...",
+      "testConnection": "Test Connection",
+      "testSuccess": "Connected ({{latencyMs}} ms)",
+      "testing": "Testing...",
+      "webdav": {
+        "password": "Password / App Password",
+        "passwordPlaceholder": "Enter WebDAV password",
+        "remoteDir": "Remote Directory",
+        "url": "Server URL",
+        "urlPlaceholder": "https://dav.example.com/dav",
+        "username": "Username",
+        "usernamePlaceholder": "username"
+      }
     }
   },
   "quickCapture": {
@@ -541,6 +606,8 @@
       "openTodosDesc": "Aggregate tasks across all notes",
       "openWeeklyReview": "Open Weekly Review",
       "openWeeklyReviewDesc": "Open dashboard to view or generate weekly review",
+      "syncNow": "Sync Now",
+      "syncNowDesc": "Sync notes and attachments with remote storage",
       "toggleFocusMode": "Toggle Focus Mode",
       "toggleFocusModeDesc": "Hide sidebar and toolbars for distraction-free writing",
       "toggleReadingMode": "Toggle Immersive Reading",
