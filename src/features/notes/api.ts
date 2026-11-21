@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Attachment,
   BackupInfo,
+  ExternalActivityEntry,
   IndexedSearchResult,
   MergeNotesRequest,
   Note,
@@ -169,6 +170,18 @@ export function saveExternalFile(path: string, content: string): Promise<void> {
 
 export function getFileModifiedTime(path: string): Promise<number> {
   return invoke("get_file_modified_time", { path });
+}
+
+export function listExternalActivity(): Promise<ExternalActivityEntry[]> {
+  return invoke("external_activity_list");
+}
+
+export function clearExternalActivity(): Promise<void> {
+  return invoke("external_activity_clear");
+}
+
+export function getExecutablePath(): Promise<string> {
+  return invoke("get_executable_path");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

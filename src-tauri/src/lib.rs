@@ -1016,6 +1016,24 @@ fn take_startup_file() -> Option<String> {
     desktop::take_startup_file()
 }
 
+#[tauri::command]
+fn external_activity_list() -> Result<Vec<external_sync::ExternalActivityEntry>, AppError> {
+    let store = default_store()?;
+    external_sync::list_activity(store.data_dir())
+}
+
+#[tauri::command]
+fn external_activity_clear() -> Result<(), AppError> {
+    let store = default_store()?;
+    external_sync::clear_activity(store.data_dir())
+}
+
+#[tauri::command]
+fn get_executable_path() -> Result<String, AppError> {
+    let exe = env::current_exe().map_err(|error| io_error(error.to_string()))?;
+    Ok(exe.to_string_lossy().into_owned())
+}
+
 fn cli_version_or_help_requested() -> bool {
     env::args().any(|arg| matches!(arg.as_str(), "--version" | "-V" | "--help" | "-h"))
 }
@@ -1186,7 +1204,10 @@ pub fn run() {
             updater::commands::update_install_prepare_report,
             updater::commands::update_cancel,
             take_startup_file,
-            window_main_close_finished
+            window_main_close_finished,
+            external_activity_list,
+            external_activity_clear,
+            get_executable_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
