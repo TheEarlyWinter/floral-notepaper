@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  applyTextareaEditWithUndo,
   findInitialMatchIndex,
   findMatches,
   replaceAllMatches,
   replaceMatchAt,
   selectAndScrollTextareaMatch,
   stepMatchIndex,
+  type FindHighlightState,
 } from "../features/notes/findReplace";
 
 export interface FindReplaceBarProps {
@@ -18,6 +20,7 @@ export interface FindReplaceBarProps {
   initialQuery?: string;
   onToggleShowReplace: () => void;
   onContentChange: (nextContent: string) => void;
+  onHighlightChange?: (state: FindHighlightState | null) => void;
   onClose: () => void;
 }
 
@@ -102,6 +105,7 @@ export function FindReplaceBar({
   initialQuery = "",
   onToggleShowReplace,
   onContentChange,
+  onHighlightChange,
   onClose,
 }: FindReplaceBarProps) {
   const { t } = useTranslation();
@@ -195,6 +199,27 @@ export function FindReplaceBar({
     });
   }, [content, contentRef]);
 
+  useEffect(() => {
+    if (!onHighlightChange) return;
+    if (open && !regexError && query.length > 0 && matches.length > 0) {
+      onHighlightChange({
+        query,
+        caseSensitive,
+        regex,
+        matches,
+        activeIndex,
+      });
+    } else {
+      onHighlightChange(null);
+    }
+  }, [activeIndex, caseSensitive, matches, onHighlightChange, open, query, regex, regexError]);
+
+  useEffect(() => {
+    return () => {
+      onHighlightChange?.(null);
+    };
+  }, [onHighlightChange]);
+
   const navigateMatch = useCallback(
     (direction: 1 | -1) => {
       if (regexError || matches.length === 0) return;
@@ -214,6 +239,14 @@ export function FindReplaceBar({
     });
     if (!replaced.replaced) return;
 
+    applyTextareaEditWithUndo(
+      contentRef.current,
+      replaced.start,
+      replaced.end,
+      replaced.substitute,
+      replaced.nextContent,
+    );
+
     const afterResult = findMatches(replaced.nextContent, query, { caseSensitive, regex });
     if (!afterResult.error && afterResult.matches.length > 0) {
       const nextIdx = findInitialMatchIndex(afterResult.matches, replaced.replacedEndOffset);
@@ -227,6 +260,7 @@ export function FindReplaceBar({
     activeIndex,
     caseSensitive,
     content,
+    contentRef,
     matches,
     onContentChange,
     query,
@@ -242,12 +276,29 @@ export function FindReplaceBar({
       regex,
     });
     if (result.error || result.count === 0) return;
+
+    const firstMatch = matches[0];
+    const lastMatch = matches[matches.length - 1];
+    const tailLen = content.length - lastMatch.end;
+    const innerReplacement = result.nextContent.slice(
+      firstMatch.start,
+      result.nextContent.length - tailLen,
+    );
+    applyTextareaEditWithUndo(
+      contentRef.current,
+      firstMatch.start,
+      lastMatch.end,
+      innerReplacement,
+      result.nextContent,
+    );
+
     setActiveIndex(-1);
     onContentChange(result.nextContent);
   }, [
     caseSensitive,
     content,
-    matches.length,
+    contentRef,
+    matches,
     onContentChange,
     query,
     regex,

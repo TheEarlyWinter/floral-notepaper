@@ -652,6 +652,7 @@
     "confirmDeleteAction": "Confirm Delete",
     "delete": "Delete Selected",
     "deletedToast": "Deleted {{count}} note(s)",
+    "doneShort": "Done",
     "exitMode": "Exit multi-select",
     "exportMarkdown": "Export Markdown",
     "exportedToast": "Exported {{count}} Markdown note(s)",
@@ -663,7 +664,8 @@
     "tagsAlreadyPresent": "Selected notes already have these tags",
     "tagsPlaceholder": "Tags (comma-separated)",
     "targetCategory": "Target category",
-    "toggleMode": "Bulk select"
+    "toggleMode": "Bulk select",
+    "toggleShort": "Select"
   },
   "tile": {
     "empty": "Empty"

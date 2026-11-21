@@ -41,86 +41,94 @@ const sampleNotes: NoteMetadata[] = [
   },
 ];
 
+function renderSidebar(multiSelectMode: boolean, selectedIds: string[] = []): string {
+  return renderToStaticMarkup(
+    <MainSidebar
+      t={translate}
+      sidebarCollapsed={false}
+      focusMode={false}
+      sidebarWidth={280}
+      isResizingSidebar={false}
+      onStartResizeSidebar={vi.fn()}
+      searchQuery=""
+      onSearchQueryChange={vi.fn()}
+      notes={sampleNotes}
+      filteredNotes={sampleNotes}
+      externalFiles={[]}
+      selectedId="n1"
+      hoveredId={null}
+      onHoverId={vi.fn()}
+      tagFilter=""
+      tagFilterOpen={false}
+      onToggleTagFilter={vi.fn()}
+      onSelectTagFilter={vi.fn()}
+      selectedTemplateId=""
+      onSelectTemplateId={vi.fn()}
+      templates={[]}
+      sidebarActionOrder={["daily", "inbox", "journal", "dashboard", "new-note", "todos", "import"]}
+      inboxCount={0}
+      categoryGroups={[
+        { category: "", notes: [sampleNotes[0]], latestUpdatedAt: sampleNotes[0].updatedAt },
+        { category: "Work", notes: [sampleNotes[1]], latestUpdatedAt: sampleNotes[1].updatedAt },
+      ]}
+      collapsedCategories={new Set()}
+      dragOverCategory={null}
+      activeSidebarPointerDrag={null}
+      showCategoryInput={false}
+      categoryInputValue=""
+      onCategoryInputValueChange={vi.fn()}
+      onOpenCategoryInput={vi.fn()}
+      onCancelCategoryInput={vi.fn()}
+      onCreateCategory={vi.fn()}
+      renamingCategory={null}
+      renameCategoryValue=""
+      onRenameCategoryValueChange={vi.fn()}
+      onCommitRenameCategory={vi.fn()}
+      onCancelRenameCategory={vi.fn()}
+      isLoading={false}
+      sidebarScrollRef={createRef()}
+      consumeSidebarPointerClick={() => false}
+      beginSidebarPointerDrag={vi.fn()}
+      beginSidebarNotePointerDrag={vi.fn()}
+      sidebarActionDragClass={() => ""}
+      onOpenDailyNote={vi.fn()}
+      onOpenWorkspace={vi.fn()}
+      onNewNote={vi.fn()}
+      onToggleTodos={vi.fn()}
+      onImportNote={vi.fn()}
+      onSelectExternalFile={vi.fn()}
+      onRemoveExternalFile={vi.fn()}
+      onSelectNote={vi.fn()}
+      onOpenNoteMenu={vi.fn()}
+      onToggleCategoryCollapse={vi.fn()}
+      onOpenCategoryMenu={vi.fn()}
+      multiSelectMode={multiSelectMode}
+      selectedNoteIds={new Set(selectedIds)}
+      onToggleMultiSelectMode={vi.fn()}
+      onToggleNoteSelection={vi.fn()}
+      onSelectAllNotes={vi.fn()}
+      onClearNoteSelection={vi.fn()}
+    />,
+  );
+}
+
 describe("MainSidebar multi-select", () => {
-  test("renders multi-select toggle button, selection bar, and note checkboxes", () => {
-    const markup = renderToStaticMarkup(
-      <MainSidebar
-        t={translate}
-        sidebarCollapsed={false}
-        focusMode={false}
-        sidebarWidth={280}
-        isResizingSidebar={false}
-        onStartResizeSidebar={vi.fn()}
-        searchQuery=""
-        onSearchQueryChange={vi.fn()}
-        notes={sampleNotes}
-        filteredNotes={sampleNotes}
-        externalFiles={[]}
-        selectedId="n1"
-        hoveredId={null}
-        onHoverId={vi.fn()}
-        tagFilter=""
-        tagFilterOpen={false}
-        onToggleTagFilter={vi.fn()}
-        onSelectTagFilter={vi.fn()}
-        selectedTemplateId=""
-        onSelectTemplateId={vi.fn()}
-        templates={[]}
-        sidebarActionOrder={[
-          "daily",
-          "inbox",
-          "journal",
-          "dashboard",
-          "new-note",
-          "todos",
-          "import",
-        ]}
-        inboxCount={0}
-        categoryGroups={[
-          { category: "", notes: [sampleNotes[0]], latestUpdatedAt: sampleNotes[0].updatedAt },
-          { category: "Work", notes: [sampleNotes[1]], latestUpdatedAt: sampleNotes[1].updatedAt },
-        ]}
-        collapsedCategories={new Set()}
-        dragOverCategory={null}
-        activeSidebarPointerDrag={null}
-        showCategoryInput={false}
-        categoryInputValue=""
-        onCategoryInputValueChange={vi.fn()}
-        onOpenCategoryInput={vi.fn()}
-        onCancelCategoryInput={vi.fn()}
-        onCreateCategory={vi.fn()}
-        renamingCategory={null}
-        renameCategoryValue=""
-        onRenameCategoryValueChange={vi.fn()}
-        onCommitRenameCategory={vi.fn()}
-        onCancelRenameCategory={vi.fn()}
-        isLoading={false}
-        sidebarScrollRef={createRef()}
-        consumeSidebarPointerClick={() => false}
-        beginSidebarPointerDrag={vi.fn()}
-        beginSidebarNotePointerDrag={vi.fn()}
-        sidebarActionDragClass={() => ""}
-        onOpenDailyNote={vi.fn()}
-        onOpenWorkspace={vi.fn()}
-        onNewNote={vi.fn()}
-        onToggleTodos={vi.fn()}
-        onImportNote={vi.fn()}
-        onSelectExternalFile={vi.fn()}
-        onRemoveExternalFile={vi.fn()}
-        onSelectNote={vi.fn()}
-        onOpenNoteMenu={vi.fn()}
-        onToggleCategoryCollapse={vi.fn()}
-        onOpenCategoryMenu={vi.fn()}
-        multiSelectMode={true}
-        selectedNoteIds={new Set(["n2"])}
-        onToggleMultiSelectMode={vi.fn()}
-        onToggleNoteSelection={vi.fn()}
-        onSelectAllNotes={vi.fn()}
-        onClearNoteSelection={vi.fn()}
-      />,
-    );
+  test("renders clear multi-select text toggle in default mode without checkboxes", () => {
+    const markup = renderSidebar(false);
 
     expect(markup).toContain("toggle-multi-select");
+    expect(markup).toContain('aria-pressed="false"');
+    expect(markup).toContain(">多选<");
+    expect(markup).not.toContain("sidebar-multiselect-bar");
+    expect(markup).not.toContain('type="checkbox"');
+  });
+
+  test("renders multi-select toggle button, selection bar, and note checkboxes", () => {
+    const markup = renderSidebar(true, ["n2"]);
+
+    expect(markup).toContain("toggle-multi-select");
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain(">完成<");
     expect(markup).toContain("sidebar-multiselect-bar");
     expect(markup).toContain("已选 1 项");
     expect(markup).toContain("全选");

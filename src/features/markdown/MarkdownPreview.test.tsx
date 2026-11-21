@@ -140,4 +140,31 @@ describe("MarkdownPreview", () => {
     expect(markup).toContain('aria-label="Review"');
     expect(markup).not.toContain("disabled");
   });
+
+  test("renders clickable wiki-link buttons with decoded targets in both default and HTML modes", () => {
+    const markdown =
+      "链接一 [[note:eb0b9183-7e7a-4f4d-b886-8c3ad156b589|Tokio 运行时深入]] 与 [[简单标题]]";
+
+    for (const renderHtml of [false, true]) {
+      const markup = renderToStaticMarkup(
+        <MarkdownPreview content={markdown} renderHtml={renderHtml} onOpenWikiLink={vi.fn()} />,
+      );
+
+      expect(markup).toContain("<button");
+      expect(markup).toContain('data-wiki-target="note:eb0b9183-7e7a-4f4d-b886-8c3ad156b589"');
+      expect(markup).toContain('data-wiki-target="简单标题"');
+      expect(markup).toContain("Tokio 运行时深入");
+    }
+  });
+
+  test("keeps unsafe javascript links neutralized even when preserving wiki scheme", () => {
+    for (const renderHtml of [false, true]) {
+      const markup = renderToStaticMarkup(
+        <MarkdownPreview content="[xss](javascript:alert(1))" renderHtml={renderHtml} />,
+      );
+
+      expect(markup).toContain("xss");
+      expect(markup).not.toContain("javascript:");
+    }
+  });
 });

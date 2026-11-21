@@ -652,6 +652,7 @@
     "confirmDeleteAction": "確認刪除",
     "delete": "刪除所選",
     "deletedToast": "已刪除 {{count}} 篇筆記",
+    "doneShort": "完成",
     "exitMode": "結束多選",
     "exportMarkdown": "匯出 Markdown",
     "exportedToast": "已匯出 {{count}} 篇 Markdown 筆記",
@@ -663,7 +664,8 @@
     "tagsAlreadyPresent": "所選筆記已包含這些標籤",
     "tagsPlaceholder": "標籤（逗號分隔）",
     "targetCategory": "目標分類",
-    "toggleMode": "批次選擇"
+    "toggleMode": "批次選擇",
+    "toggleShort": "多選"
   },
   "tile": {
     "empty": "空"

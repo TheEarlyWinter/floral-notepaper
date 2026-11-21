@@ -7,18 +7,36 @@ export interface WikiLink {
 
 const WIKI_LINK_PATTERN = /\[\[([^\]]+)\]\]/g;
 
+function parseWikiLinkInner(rawInner: string): WikiLink | null {
+  const raw = rawInner.trim();
+  if (!raw) return null;
+  const separator = raw.indexOf("|");
+  const target = (separator >= 0 ? raw.slice(0, separator) : raw).trim();
+  const label = (separator >= 0 ? raw.slice(separator + 1) : target).trim();
+  return target && label ? { target, label } : null;
+}
+
 /** Extracts [[title]] and [[note:id|label]] links without changing Markdown content. */
 export function extractWikiLinks(content: string): WikiLink[] {
   const links: WikiLink[] = [];
   for (const match of content.matchAll(WIKI_LINK_PATTERN)) {
-    const raw = match[1].trim();
-    if (!raw) continue;
-    const separator = raw.indexOf("|");
-    const target = (separator >= 0 ? raw.slice(0, separator) : raw).trim();
-    const label = (separator >= 0 ? raw.slice(separator + 1) : target).trim();
-    if (target && label) links.push({ target, label });
+    const parsed = parseWikiLinkInner(match[1]);
+    if (parsed) links.push(parsed);
   }
   return links;
+}
+
+/** Returns the wiki link surrounding a 0-based cursor offset in raw Markdown, if any. */
+export function findWikiLinkAtOffset(content: string, offset: number): WikiLink | null {
+  if (offset < 0 || offset > content.length) return null;
+  for (const match of content.matchAll(WIKI_LINK_PATTERN)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (offset >= start && offset <= end) {
+      return parseWikiLinkInner(match[1]);
+    }
+  }
+  return null;
 }
 
 /**
@@ -33,7 +51,9 @@ export function resolveWikiLink(target: string, notes: NoteMetadata[]): string |
     return notes.some((note) => note.id === id) ? id : null;
   }
 
-  const matches = notes.filter((note) => note.title.trim().toLocaleLowerCase() === normalized.toLocaleLowerCase());
+  const matches = notes.filter(
+    (note) => note.title.trim().toLocaleLowerCase() === normalized.toLocaleLowerCase(),
+  );
   return matches.length === 1 ? matches[0].id : null;
 }
 

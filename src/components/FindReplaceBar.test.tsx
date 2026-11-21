@@ -143,4 +143,26 @@ describe("FindReplaceBar", () => {
     ).toBe(true);
     expect(onReplaceCurrent).toHaveBeenCalledOnce();
   });
+
+  test("accepts onHighlightChange callback without disrupting bar rendering", () => {
+    const contentRef = createRef<HTMLTextAreaElement>();
+    const onHighlightChange = vi.fn();
+    const markup = renderToStaticMarkup(
+      <FindReplaceBar
+        open={true}
+        showReplace={false}
+        content="async rust async"
+        contentRef={contentRef}
+        focusSignal={1}
+        initialQuery="async"
+        onToggleShowReplace={vi.fn()}
+        onContentChange={vi.fn()}
+        onHighlightChange={onHighlightChange}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("find-replace-bar");
+    expect(markup).toContain("0 / 2");
+  });
 });

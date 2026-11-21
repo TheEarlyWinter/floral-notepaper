@@ -14,6 +14,22 @@ export interface FindResult {
   error: string | null;
 }
 
+export interface FindHighlightSegment {
+  text: string;
+  isMatch: boolean;
+  isActive: boolean;
+}
+
+export interface FindHighlightState {
+  query: string;
+  caseSensitive: boolean;
+  regex: boolean;
+  matches: FindMatch[];
+  activeIndex: number;
+}
+
+export const MAX_HIGHLIGHT_MATCHES = 1000;
+
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -167,9 +183,23 @@ export function replaceMatchAt(
   query: string,
   replacement: string,
   options: FindOptions,
-): { nextContent: string; replaced: boolean; replacedEndOffset: number } {
+): {
+  nextContent: string;
+  replaced: boolean;
+  replacedEndOffset: number;
+  start: number;
+  end: number;
+  substitute: string;
+} {
   if (activeIndex < 0 || activeIndex >= matches.length) {
-    return { nextContent: content, replaced: false, replacedEndOffset: 0 };
+    return {
+      nextContent: content,
+      replaced: false,
+      replacedEndOffset: 0,
+      start: 0,
+      end: 0,
+      substitute: "",
+    };
   }
 
   const match = matches[activeIndex];
@@ -182,7 +212,112 @@ export function replaceMatchAt(
     nextContent,
     replaced: true,
     replacedEndOffset: match.start + substitute.length,
+    start: match.start,
+    end: match.end,
+    substitute,
   };
+}
+
+/**
+ * Builds contiguous non-overlapping text/highlight segments for rendering an
+ * editor backdrop mirror without dropping or duplicating characters.
+ */
+export function buildHighlightSegments(
+  content: string,
+  matches: FindMatch[],
+  activeIndex: number,
+  maxMatches = MAX_HIGHLIGHT_MATCHES,
+): FindHighlightSegment[] {
+  if (!content || matches.length === 0 || maxMatches <= 0) {
+    return [];
+  }
+
+  let windowStart = 0;
+  let windowEnd = matches.length;
+  if (matches.length > maxMatches) {
+    const safeActive = activeIndex >= 0 && activeIndex < matches.length ? activeIndex : 0;
+    const half = Math.floor(maxMatches / 2);
+    windowStart = Math.max(0, Math.min(matches.length - maxMatches, safeActive - half));
+    windowEnd = windowStart + maxMatches;
+  }
+
+  const segments: FindHighlightSegment[] = [];
+  let cursor = 0;
+  for (let i = windowStart; i < windowEnd; i += 1) {
+    const match = matches[i];
+    const start = Math.max(cursor, Math.min(match.start, content.length));
+    const end = Math.max(start, Math.min(match.end, content.length));
+    if (start > cursor) {
+      segments.push({ text: content.slice(cursor, start), isMatch: false, isActive: false });
+    }
+    if (end > start) {
+      segments.push({
+        text: content.slice(start, end),
+        isMatch: true,
+        isActive: i === activeIndex,
+      });
+    }
+    cursor = end;
+  }
+  if (cursor < content.length) {
+    segments.push({ text: content.slice(cursor), isMatch: false, isActive: false });
+  }
+  return segments;
+}
+
+/**
+ * Applies a range replacement through WebView2/Chromium's native edit command so
+ * Ctrl+Z undo remains intact and never replays stale pre-replace diffs.
+ */
+export function applyTextareaEditWithUndo(
+  textarea: HTMLTextAreaElement | null,
+  startOffset: number,
+  endOffset: number,
+  replacementText: string,
+  expectedNextValue: string,
+): boolean {
+  if (!textarea || textarea.disabled) return false;
+  const value = textarea.value;
+  const start = Math.max(0, Math.min(startOffset, value.length));
+  const end = Math.max(start, Math.min(endOffset, value.length));
+  const previousActive =
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  const { scrollTop, scrollLeft } = textarea;
+
+  textarea.focus({ preventScroll: true });
+  textarea.setSelectionRange(start, end);
+
+  let appliedWithExecCommand = false;
+  if (typeof document !== "undefined" && typeof document.execCommand === "function") {
+    try {
+      const commandResult =
+        replacementText.length === 0
+          ? document.execCommand("delete", false)
+          : document.execCommand("insertText", false, replacementText);
+      appliedWithExecCommand = Boolean(commandResult) && textarea.value === expectedNextValue;
+    } catch {
+      appliedWithExecCommand = false;
+    }
+  }
+
+  if (!appliedWithExecCommand) {
+    if (textarea.value === value) {
+      textarea.setRangeText(replacementText, start, end, "end");
+    } else {
+      textarea.setRangeText(expectedNextValue, 0, textarea.value.length, "end");
+    }
+  }
+
+  textarea.scrollTop = scrollTop;
+  textarea.scrollLeft = scrollLeft;
+
+  if (previousActive && previousActive !== textarea) {
+    previousActive.focus({ preventScroll: true });
+  }
+
+  return true;
 }
 
 export function replaceAllMatches(
@@ -235,6 +370,9 @@ export function selectAndScrollTextareaMatch(
     const viewBottom = viewTop + viewHeight;
     if (targetTop < viewTop + lineHeight || targetTop > viewBottom - lineHeight * 2) {
       textarea.scrollTop = Math.max(0, targetTop - viewHeight / 3);
+      if (typeof Event !== "undefined" && typeof textarea.dispatchEvent === "function") {
+        textarea.dispatchEvent(new Event("scroll"));
+      }
     }
   }
 }

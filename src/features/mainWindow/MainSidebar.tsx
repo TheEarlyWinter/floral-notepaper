@@ -509,8 +509,8 @@ export function MainSidebar({
             </button>
           </div>
 
-          <div className="flex items-center justify-between px-5 pb-1.5 shrink-0">
-            <span className="text-[10px] text-ink-ghost font-mono tracking-wider uppercase">
+          <div className="flex items-center justify-between gap-2 px-5 pb-1.5 shrink-0">
+            <span className="min-w-0 truncate text-[10px] text-ink-ghost font-mono tracking-wider uppercase">
               {t("common.noteCount", {
                 count: filteredNotes.length,
                 defaultValue: "{{count}} 篇笔记",
@@ -522,24 +522,32 @@ export function MainSidebar({
                   })}`
                 : ""}
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
                 data-testid="toggle-multi-select"
                 aria-pressed={multiSelectMode}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={onToggleMultiSelectMode}
-                className={`w-5 h-5 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                className={`px-1.5 h-5 inline-flex items-center gap-1 rounded border text-[10.5px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                   multiSelectMode
-                    ? "text-bamboo bg-bamboo-mist/70"
-                    : "text-ink-ghost hover:text-bamboo hover:bg-paper-warm/70"
+                    ? "border-bamboo/40 bg-bamboo-mist/80 text-bamboo"
+                    : "border-paper-deep/45 bg-paper-warm/45 text-ink-faint hover:text-bamboo hover:border-bamboo/40 hover:bg-bamboo-mist/50"
                 }`}
-                title={t("bulkActions.toggleMode", { defaultValue: "批量选择" })}
-                aria-label={t("bulkActions.toggleMode", { defaultValue: "批量选择" })}
+                title={
+                  multiSelectMode
+                    ? t("bulkActions.exitMode", { defaultValue: "退出多选" })
+                    : t("bulkActions.toggleMode", { defaultValue: "批量选择" })
+                }
+                aria-label={
+                  multiSelectMode
+                    ? t("bulkActions.exitMode", { defaultValue: "退出多选" })
+                    : t("bulkActions.toggleMode", { defaultValue: "批量选择" })
+                }
               >
                 <svg
-                  width="12"
-                  height="12"
+                  width="11"
+                  height="11"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -551,6 +559,11 @@ export function MainSidebar({
                   <path d="m7 11 2.2 2.2L13.5 9" />
                   <path d="M21 8v11a2 2 0 0 1-2 2H8" />
                 </svg>
+                <span>
+                  {multiSelectMode
+                    ? t("bulkActions.doneShort", { defaultValue: "完成" })
+                    : t("bulkActions.toggleShort", { defaultValue: "多选" })}
+                </span>
               </button>
               <button
                 onMouseDown={(e) => e.preventDefault()}
@@ -561,7 +574,7 @@ export function MainSidebar({
                   }
                   onOpenCategoryInput();
                 }}
-                className="w-5 h-5 flex items-center justify-center rounded text-ink-ghost hover:text-bamboo transition-colors cursor-pointer"
+                className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-ink-ghost hover:text-bamboo transition-colors cursor-pointer"
                 title={t("main.category.new", { defaultValue: "新建分类" })}
               >
                 <svg

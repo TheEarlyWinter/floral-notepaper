@@ -7,6 +7,9 @@ const TITLE_TERM_WEIGHT: usize = 3;
 const BM25_K1: f64 = 1.2;
 const BM25_B: f64 = 0.75;
 const MAX_MATCHED_TERMS: usize = 5;
+const MIN_RELATED_SCORE: f64 = 0.04;
+const CJK_NGRAM_WEIGHT_SCALE: f64 = 0.5;
+const MAX_MERGED_CJK_CHARS: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +122,28 @@ fn is_cjk_single_stopword(ch: char) -> bool {
     )
 }
 
+fn is_cjk_boilerplate_term(token: &str) -> bool {
+    matches!(
+        token,
+        "笔记"
+            | "便签"
+            | "文档"
+            | "测试"
+            | "操作"
+            | "功能"
+            | "用于"
+            | "进行"
+            | "可以"
+            | "需要"
+            | "已经"
+            | "通过"
+            | "以及"
+            | "关于"
+            | "一个"
+            | "一些"
+    )
+}
+
 fn is_cjk_token(token: &str) -> bool {
     token.chars().any(is_cjk_char)
 }
@@ -190,13 +215,23 @@ fn flush_cjk_run(run: &mut Vec<char>, out: &mut Vec<String>) {
         return;
     }
 
-    for window in run.windows(2) {
-        let bigram: String = window.iter().collect();
-        out.push(bigram);
-    }
-    for window in run.windows(3) {
-        let trigram: String = window.iter().collect();
-        out.push(trigram);
+    for size in [2usize, 3] {
+        for window in run.windows(size) {
+            if is_cjk_single_stopword(window[0]) || is_cjk_single_stopword(window[window.len() - 1])
+            {
+                continue;
+            }
+            let token: String = window.iter().collect();
+            if is_cjk_boilerplate_term(&token) {
+                continue;
+            }
+            if size == 3
+                && (token.contains("笔记") || token.contains("便签") || token.contains("测试"))
+            {
+                continue;
+            }
+            out.push(token);
+        }
     }
     run.clear();
 }
@@ -291,11 +326,14 @@ struct NoteTokenStats {
     tf: HashMap<String, usize>,
     doc_len: usize,
     tags_lower: HashMap<String, String>,
+    cleaned_text: String,
 }
 
 fn build_note_stats(note: &Note) -> NoteTokenStats {
     let mut tf: HashMap<String, usize> = HashMap::new();
     let mut doc_len = 0usize;
+    let combined = format!("{} {}", note.title, note.content);
+    let cleaned_text = clean_markdown_for_tokens(&combined);
 
     for token in tokenize(&note.title) {
         *tf.entry(token).or_insert(0) += TITLE_TERM_WEIGHT;
@@ -321,6 +359,7 @@ fn build_note_stats(note: &Note) -> NoteTokenStats {
         tf,
         doc_len,
         tags_lower,
+        cleaned_text,
     }
 }
 
@@ -341,7 +380,10 @@ fn build_bm25_vector(
         let idf = (1.0 + (n_docs - doc_freq + 0.5) / (doc_freq + 0.5)).ln();
         let tf = count as f64;
         let tf_sat = (tf * (BM25_K1 + 1.0)) / (tf + BM25_K1 * len_norm);
-        let weight = tf_sat * idf;
+        let mut weight = tf_sat * idf;
+        if is_cjk_token(term) {
+            weight *= CJK_NGRAM_WEIGHT_SCALE;
+        }
         if weight > 0.0 {
             norm_sq += weight * weight;
             weights.insert(term.clone(), weight);
@@ -351,11 +393,128 @@ fn build_bm25_vector(
     (weights, norm_sq.sqrt())
 }
 
+fn merge_pair_if_shared(a: &str, b: &str, source_text: &str, cand_text: &str) -> Option<String> {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let max_overlap = a_chars.len().min(b_chars.len()).saturating_sub(1);
+
+    for k in (1..=max_overlap).rev() {
+        if a_chars[a_chars.len() - k..] == b_chars[..k] {
+            let merged_len = a_chars.len() + b_chars.len() - k;
+            if merged_len > a_chars.len()
+                && merged_len > b_chars.len()
+                && merged_len <= MAX_MERGED_CJK_CHARS
+            {
+                let mut merged = String::with_capacity(a.len() + b.len());
+                merged.push_str(a);
+                for &ch in &b_chars[k..] {
+                    merged.push(ch);
+                }
+                if source_text.contains(&merged) && cand_text.contains(&merged) {
+                    return Some(merged);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn merge_overlapping_cjk_terms(
+    term_contributions: Vec<(String, f64)>,
+    source_text: &str,
+    cand_text: &str,
+) -> Vec<(String, f64)> {
+    let mut non_cjk = Vec::new();
+    let mut cjk_map: HashMap<String, f64> = HashMap::new();
+    let mut cjk_items = Vec::new();
+
+    for (term, contrib) in term_contributions {
+        if is_cjk_token(&term) && term.chars().count() >= 2 {
+            cjk_items.push((term, contrib));
+        } else {
+            non_cjk.push((term, contrib));
+        }
+    }
+
+    cjk_items.sort_by(|a, b| {
+        b.1.total_cmp(&a.1)
+            .then_with(|| b.0.chars().count().cmp(&a.0.chars().count()))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    for (term, contrib) in cjk_items.iter().take(40) {
+        cjk_map
+            .entry(term.clone())
+            .and_modify(|existing| *existing = existing.max(*contrib))
+            .or_insert(*contrib);
+    }
+
+    for _ in 0..5 {
+        let current: Vec<(String, f64)> = cjk_map.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut additions: Vec<(String, f64)> = Vec::new();
+
+        for (i, (a, score_a)) in current.iter().enumerate() {
+            for (j, (b, score_b)) in current.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                if let Some(merged) = merge_pair_if_shared(a, b, source_text, cand_text) {
+                    let combined_score = score_a.max(*score_b) + 0.25 * score_a.min(*score_b);
+                    let needs_insert = cjk_map
+                        .get(&merged)
+                        .is_none_or(|&prev| combined_score > prev + 1e-9);
+                    if needs_insert {
+                        additions.push((merged, combined_score));
+                    }
+                }
+            }
+        }
+
+        if additions.is_empty() {
+            break;
+        }
+        for (term, score) in additions {
+            cjk_map
+                .entry(term)
+                .and_modify(|existing| *existing = existing.max(score))
+                .or_insert(score);
+        }
+    }
+
+    let mut out = non_cjk;
+    out.extend(cjk_map);
+    for (term, contrib) in cjk_items.into_iter().skip(40) {
+        out.push((term, contrib));
+    }
+    out
+}
+
+fn shares_boundary_overlap(a: &str, b: &str, min_overlap: usize) -> bool {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let max_k = a_chars.len().min(b_chars.len()).saturating_sub(1);
+    if max_k < min_overlap {
+        return false;
+    }
+    for k in min_overlap..=max_k {
+        if a_chars[a_chars.len() - k..] == b_chars[..k]
+            || b_chars[b_chars.len() - k..] == a_chars[..k]
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn select_matched_terms(
     shared_tags: &[String],
-    mut term_contributions: Vec<(String, f64)>,
+    term_contributions: Vec<(String, f64)>,
+    source_text: &str,
+    cand_text: &str,
 ) -> Vec<String> {
-    term_contributions.sort_by(|a, b| {
+    let mut merged_contributions =
+        merge_overlapping_cjk_terms(term_contributions, source_text, cand_text);
+    merged_contributions.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
             .then_with(|| b.0.chars().count().cmp(&a.0.chars().count()))
             .then_with(|| a.0.cmp(&b.0))
@@ -363,10 +522,14 @@ fn select_matched_terms(
 
     let mut selected = Vec::new();
     let mut seen_lower = HashSet::new();
+    let mut selected_cjk: Vec<String> = Vec::new();
 
     for tag in shared_tags {
         let lower = tag.to_lowercase();
         if seen_lower.insert(lower) {
+            if is_cjk_token(tag) {
+                selected_cjk.push(tag.clone());
+            }
             selected.push(tag.clone());
             if selected.len() >= MAX_MATCHED_TERMS {
                 return selected;
@@ -374,22 +537,25 @@ fn select_matched_terms(
         }
     }
 
-    let mut selected_cjk: Vec<String> = Vec::new();
-    for (term, _) in term_contributions {
+    for (term, _) in merged_contributions {
         if seen_lower.contains(&term) {
             continue;
         }
-        if is_cjk_token(&term)
-            && selected_cjk.iter().any(|existing| {
-                existing.chars().count() > term.chars().count() && existing.contains(&term)
-            })
-        {
-            continue;
-        }
-        seen_lower.insert(term.clone());
         if is_cjk_token(&term) {
+            let term_chars = term.chars().count();
+            let redundant = selected_cjk.iter().any(|existing| {
+                existing.contains(&term)
+                    || (term_chars <= 3 && term.contains(existing))
+                    || (term_chars <= 3 && shares_boundary_overlap(existing, &term, 2))
+                    || (existing.chars().count() > term_chars
+                        && shares_boundary_overlap(existing, &term, 2))
+            });
+            if redundant {
+                continue;
+            }
             selected_cjk.push(term.clone());
         }
+        seen_lower.insert(term.clone());
         selected.push(term);
         if selected.len() >= MAX_MATCHED_TERMS {
             break;
@@ -491,7 +657,15 @@ pub fn compute_related_notes(
         }
 
         let score = (1.0 - (1.0 - text_sim) * (1.0 - tag_score)).clamp(0.0, 1.0);
-        let matched_terms = select_matched_terms(&shared_tags, term_contributions);
+        if score < MIN_RELATED_SCORE {
+            continue;
+        }
+        let matched_terms = select_matched_terms(
+            &shared_tags,
+            term_contributions,
+            &source_stats.cleaned_text,
+            &cand_stats.cleaned_text,
+        );
         let already_linked = linked_ids.contains(&candidate.id);
 
         scored.push((
@@ -762,5 +936,85 @@ mod tests {
         assert!(!related[0].already_linked);
 
         let _ = fs::remove_dir_all(PathBuf::from(&root));
+    }
+
+    #[test]
+    fn filters_low_relevance_noise_below_cutoff_for_sandbox_corpus() {
+        let notes = vec![
+            make_note(
+                "rust",
+                "Rust 异步编程笔记",
+                "正在研究 Rust 异步编程模型，包括 async/await 状态机、Future trait 与 Waker 唤醒机制。在生产环境中通常搭配 Tokio 运行时实现高并发异步 IO 调度。\n- [ ] 测试实时勾选任务\n- [ ] 阅读 Tokio 调度器源码",
+                vec!["rust", "异步", "tokio"],
+            ),
+            make_note(
+                "tokio",
+                "Tokio 运行时深入",
+                "深入分析 Tokio 多线程工作窃取调度器、Reactor 事件循环与异步任务生命周期管理。与 Rust 异步编程模型密切相关，适合高吞吐异步服务开发。",
+                vec!["rust", "异步", "tokio"],
+            ),
+            make_note(
+                "chem",
+                "化工反应工程笔记",
+                "间歇釜与平推流反应器转化率推导，关注活化能与停留时间分布。",
+                vec!["化工", "笔记"],
+            ),
+            make_note(
+                "bulk",
+                "批量操作测试便签",
+                "用于验收侧边栏批量勾选、置顶、分类移动与删除功能。",
+                vec!["测试"],
+            ),
+        ];
+
+        let suggestions = compute_related_notes("rust", &notes, 5);
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].id, "tokio");
+        assert!(suggestions[0].score >= MIN_RELATED_SCORE);
+    }
+
+    #[test]
+    fn merges_overlapping_cjk_ngrams_and_dedups_clipped_fragments() {
+        let notes = vec![
+            make_note(
+                "n1",
+                "Rust 异步编程笔记",
+                "深入理解异步编程模型和运行时调度。",
+                vec!["rust", "异步", "tokio"],
+            ),
+            make_note(
+                "n2",
+                "Tokio 运行时深入",
+                "解析运行时机制与异步编程模型。",
+                vec!["rust", "异步", "tokio"],
+            ),
+        ];
+
+        let suggestions = compute_related_notes("n1", &notes, 5);
+        assert_eq!(suggestions.len(), 1);
+        let terms = &suggestions[0].matched_terms;
+        assert!(
+            !terms
+                .iter()
+                .any(|t| t == "异步编" || t == "步编程" || t == "编程模"),
+            "unexpected clipped CJK fragments in matched_terms: {terms:?}"
+        );
+        assert!(
+            terms.iter().any(|t| t == "异步编程模型" || t == "异步编程"),
+            "expected merged CJK phrase in matched_terms: {terms:?}"
+        );
+    }
+
+    #[test]
+    fn skips_cjk_ngrams_starting_or_ending_with_stopword() {
+        let tokens = tokenize("在异步与调度中");
+        assert!(
+            !tokens
+                .iter()
+                .any(|t| t.starts_with('在') || t.ends_with('与') || t.starts_with('与')),
+            "stopword-bounded CJK n-gram leaked into tokens: {tokens:?}"
+        );
+        assert!(tokens.iter().any(|t| t == "异步"));
+        assert!(tokens.iter().any(|t| t == "调度"));
     }
 }

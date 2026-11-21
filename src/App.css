@@ -1051,3 +1051,30 @@ input::placeholder {
 .app-window-shell {
   opacity: var(--window-opacity, 1);
 }
+
+/* ═══════════════════════════════════════════
+   查找替换命中高亮
+   ═══════════════════════════════════════════ */
+.find-highlight-match {
+  background-color: rgba(251, 191, 36, 0.38);
+  color: transparent;
+  border-radius: 2px;
+}
+.find-highlight-active {
+  background-color: rgba(245, 158, 11, 0.72);
+  color: transparent;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(217, 119, 6, 0.75);
+}
+:root[data-theme="dark"] .find-highlight-match {
+  background-color: rgba(251, 191, 36, 0.28);
+}
+:root[data-theme="dark"] .find-highlight-active {
+  background-color: rgba(245, 158, 11, 0.58);
+}
+::highlight(floral-find-match) {
+  background-color: rgba(251, 191, 36, 0.42);
+}
+:root[data-theme="dark"] ::highlight(floral-find-match) {
+  background-color: rgba(251, 191, 36, 0.3);
+}

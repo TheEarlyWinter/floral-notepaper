@@ -1,5 +1,7 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  applyTextareaEditWithUndo,
+  buildHighlightSegments,
   findInitialMatchIndex,
   findMatches,
   replaceAllMatches,
@@ -7,6 +9,11 @@ import {
   selectAndScrollTextareaMatch,
   stepMatchIndex,
 } from "./findReplace";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("findReplace", () => {
   test("finds literal matches with case-insensitive and case-sensitive modes", () => {
@@ -103,5 +110,139 @@ describe("findReplace", () => {
 
     expect(setSelectionRange).toHaveBeenCalledWith(targetStart, targetStart + 7);
     expect(textarea.scrollTop).toBeGreaterThan(0);
+  });
+
+  test("builds contiguous highlight segments with active flag and capped match window", () => {
+    expect(buildHighlightSegments("", [], 0)).toEqual([]);
+    expect(buildHighlightSegments("abc", [], 0)).toEqual([]);
+
+    const content = "one foo two foo three";
+    const { matches } = findMatches(content, "foo", { caseSensitive: true, regex: false });
+    expect(buildHighlightSegments(content, matches, 1)).toEqual([
+      { text: "one ", isMatch: false, isActive: false },
+      { text: "foo", isMatch: true, isActive: false },
+      { text: " two ", isMatch: false, isActive: false },
+      { text: "foo", isMatch: true, isActive: true },
+      { text: " three", isMatch: false, isActive: false },
+    ]);
+
+    const many = "a a a a a";
+    const allA = findMatches(many, "a", { caseSensitive: true, regex: false }).matches;
+    const capped = buildHighlightSegments(many, allA, 3, 2);
+    const activeCount = capped.filter((segment) => segment.isActive).length;
+    const matchCount = capped.filter((segment) => segment.isMatch).length;
+    expect(capped.map((segment) => segment.text).join("")).toBe(many);
+    expect(matchCount).toBe(2);
+    expect(activeCount).toBe(1);
+    expect(capped.find((segment) => segment.isActive)).toBeDefined();
+  });
+
+  test("applies textarea edits via execCommand insertText/delete, preserves scroll/focus, and falls back to setRangeText", () => {
+    class FakeElement {}
+    vi.stubGlobal("HTMLElement", FakeElement);
+
+    const replaceInputFocus = vi.fn();
+    const replaceInput = Object.assign(Object.create(FakeElement.prototype), {
+      focus: replaceInputFocus,
+    }) as HTMLElement;
+
+    const createFakeTextarea = (initialValue: string) => {
+      let selectionStart = 0;
+      let selectionEnd = 0;
+      const ta = {
+        value: initialValue,
+        disabled: false,
+        scrollTop: 120,
+        scrollLeft: 4,
+        focus: vi.fn(),
+        setSelectionRange: vi.fn((start: number, end: number) => {
+          selectionStart = start;
+          selectionEnd = end;
+        }),
+        setRangeText: vi.fn((replacement: string, start: number, end: number) => {
+          ta.value = ta.value.slice(0, start) + replacement + ta.value.slice(end);
+        }),
+        get selection() {
+          return { selectionStart, selectionEnd };
+        },
+      };
+      return ta;
+    };
+
+    // 1. insertText path
+    const ta1 = createFakeTextarea("hello foo world");
+    const execInsert = vi.fn((cmd: string, _showUi: boolean, text?: string) => {
+      if (cmd === "insertText" && typeof text === "string") {
+        const { selectionStart, selectionEnd } = ta1.selection;
+        ta1.value = ta1.value.slice(0, selectionStart) + text + ta1.value.slice(selectionEnd);
+        return true;
+      }
+      return false;
+    });
+    vi.stubGlobal("document", {
+      activeElement: replaceInput,
+      execCommand: execInsert,
+    });
+
+    const ok1 = applyTextareaEditWithUndo(
+      ta1 as unknown as HTMLTextAreaElement,
+      6,
+      9,
+      "bar",
+      "hello bar world",
+    );
+    expect(ok1).toBe(true);
+    expect(execInsert).toHaveBeenCalledWith("insertText", false, "bar");
+    expect(ta1.setRangeText).not.toHaveBeenCalled();
+    expect(ta1.value).toBe("hello bar world");
+    expect(ta1.scrollTop).toBe(120);
+    expect(ta1.scrollLeft).toBe(4);
+    expect(replaceInputFocus).toHaveBeenCalledWith({ preventScroll: true });
+
+    // 2. delete path when replacementText is empty
+    const ta2 = createFakeTextarea("hello foo world");
+    const execDelete = vi.fn((cmd: string) => {
+      if (cmd === "delete") {
+        const { selectionStart, selectionEnd } = ta2.selection;
+        ta2.value = ta2.value.slice(0, selectionStart) + ta2.value.slice(selectionEnd);
+        return true;
+      }
+      return false;
+    });
+    vi.stubGlobal("document", {
+      activeElement: replaceInput,
+      execCommand: execDelete,
+    });
+
+    const ok2 = applyTextareaEditWithUndo(
+      ta2 as unknown as HTMLTextAreaElement,
+      6,
+      9,
+      "",
+      "hello  world",
+    );
+    expect(ok2).toBe(true);
+    expect(execDelete).toHaveBeenCalledWith("delete", false);
+    expect(ta2.value).toBe("hello  world");
+
+    // 3. fallback to setRangeText when execCommand returns false
+    const ta3 = createFakeTextarea("hello foo world");
+    vi.stubGlobal("document", {
+      activeElement: replaceInput,
+      execCommand: vi.fn(() => false),
+    });
+
+    const ok3 = applyTextareaEditWithUndo(
+      ta3 as unknown as HTMLTextAreaElement,
+      6,
+      9,
+      "baz",
+      "hello baz world",
+    );
+    expect(ok3).toBe(true);
+    expect(ta3.setRangeText).toHaveBeenCalledWith("baz", 6, 9, "end");
+    expect(ta3.value).toBe("hello baz world");
+
+    expect(applyTextareaEditWithUndo(null, 0, 1, "x", "x")).toBe(false);
   });
 });
