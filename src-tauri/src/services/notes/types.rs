@@ -116,6 +116,23 @@ pub struct AppConfig {
     pub custom_css: String,
     #[serde(default)]
     pub templates: Vec<NoteTemplate>,
+    // ── 云同步（默认关闭，严格 opt-in） ──
+    #[serde(default = "super::config::default_sync_provider")]
+    pub sync_provider: String,
+    #[serde(default)]
+    pub sync_auto_interval_minutes: u32,
+    #[serde(default)]
+    pub sync_webdav_url: String,
+    #[serde(default)]
+    pub sync_webdav_username: String,
+    #[serde(default = "super::config::default_sync_webdav_remote_dir")]
+    pub sync_webdav_remote_dir: String,
+    #[serde(default)]
+    pub sync_git_remote_url: String,
+    #[serde(default = "super::config::default_sync_git_branch")]
+    pub sync_git_branch: String,
+    #[serde(default)]
+    pub sync_git_username: String,
     // Legacy fields — read from old config, never written back
     #[serde(default, skip_serializing)]
     pub notes_dir: Option<String>,
@@ -272,8 +289,8 @@ impl From<tauri::Error> for AppError {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct MetadataFile {
-    pub(super) notes: Vec<NoteMetadata>,
+pub(crate) struct MetadataFile {
+    pub(crate) notes: Vec<NoteMetadata>,
 }
 
 pub(super) fn unsafe_path_error(field: &str) -> AppError {
@@ -322,7 +339,7 @@ pub(crate) fn validate_note_file_name(file_name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-pub(super) fn validate_metadata(metadata: &MetadataFile) -> Result<(), AppError> {
+pub(crate) fn validate_metadata(metadata: &MetadataFile) -> Result<(), AppError> {
     for note in &metadata.notes {
         validate_note_id(&note.id)?;
         validate_category_name(&note.category)?;

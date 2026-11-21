@@ -507,6 +507,15 @@ impl NoteStore {
         self.rebuild_derived_indexes(&metadata)
     }
 
+    /// 远端同步落地变更后：持元数据锁重新对账笔记文件并全量重建派生索引（search-index.json + SQLite FTS5）。
+    pub(crate) fn reload_indexes_after_sync(&self) -> Result<(), AppError> {
+        let _lock = self.lock_metadata_mutation()?;
+        invalidate_data_dir_reconciliation(&self.data_dir);
+        self.ensure_storage()?;
+        let metadata = self.load_metadata()?;
+        self.rebuild_derived_indexes(&metadata)
+    }
+
     pub fn search_content(
         &self,
         query: &str,

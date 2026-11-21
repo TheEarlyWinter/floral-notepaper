@@ -10,7 +10,10 @@ pub(crate) use config::default_config_dir;
 pub use store::NoteStore;
 #[allow(unused_imports)]
 pub(crate) use types::{validate_category_name, validate_note_file_name};
-pub(crate) use types::{validate_metadata_json, validate_note_id, validate_relative_file_name};
+pub(crate) use types::{
+    validate_metadata, validate_metadata_json, validate_note_id, validate_relative_file_name,
+    MetadataFile,
+};
 pub use types::{
     AppConfig, AppError, MergeNotesRequest, Note, NoteMetadata, NoteTemplate, NoteVersion,
     SaveNoteRequest,

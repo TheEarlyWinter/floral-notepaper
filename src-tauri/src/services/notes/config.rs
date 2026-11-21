@@ -278,7 +278,7 @@ impl NoteStore {
         Ok(config)
     }
 
-    pub(super) fn default_config(&self) -> AppConfig {
+    pub(crate) fn default_config(&self) -> AppConfig {
         AppConfig {
             locale: default_locale(),
             data_dir: Some(self.data_dir.to_string_lossy().to_string()),
@@ -337,6 +337,14 @@ impl NoteStore {
             link_preview: default_link_preview(),
             custom_css: String::new(),
             templates: Vec::new(),
+            sync_provider: default_sync_provider(),
+            sync_auto_interval_minutes: 0,
+            sync_webdav_url: String::new(),
+            sync_webdav_username: String::new(),
+            sync_webdav_remote_dir: default_sync_webdav_remote_dir(),
+            sync_git_remote_url: String::new(),
+            sync_git_branch: default_sync_git_branch(),
+            sync_git_username: String::new(),
             notes_dir: None,
             last_known_base_dir: None,
         }
@@ -708,4 +716,16 @@ pub(super) fn default_link_preview() -> bool {
 
 pub(super) fn default_locale() -> String {
     "zh-CN".into()
+}
+
+pub(super) fn default_sync_provider() -> String {
+    "none".into()
+}
+
+pub(super) fn default_sync_webdav_remote_dir() -> String {
+    "floral-notepaper".into()
+}
+
+pub(super) fn default_sync_git_branch() -> String {
+    "main".into()
 }

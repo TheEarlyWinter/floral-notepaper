@@ -18,6 +18,8 @@ interface BuildPaletteCommandsOptions {
   onExportPdf: () => void | Promise<void>;
   onOpenSettings: () => void;
   onOpenQuickCapture: () => void | Promise<void>;
+  syncEnabled?: boolean;
+  onSyncNow?: () => void | Promise<void>;
 }
 
 export function buildPaletteCommands({
@@ -36,6 +38,8 @@ export function buildPaletteCommands({
   onExportPdf,
   onOpenSettings,
   onOpenQuickCapture,
+  syncEnabled = false,
+  onSyncNow,
 }: BuildPaletteCommandsOptions): PaletteCommand[] {
   return [
     {
@@ -157,6 +161,16 @@ export function buildPaletteCommands({
       keywords: ["quick capture", "capture", "快速捕获", "速记"],
       shortcut: quickCaptureShortcut || undefined,
       onExecute: onOpenQuickCapture,
+    },
+    {
+      id: "sync-now",
+      label: t("commandPalette.commands.syncNow", { defaultValue: "立即同步" }),
+      description: t("commandPalette.commands.syncNowDesc", {
+        defaultValue: "立即与云端同步笔记与附件",
+      }),
+      keywords: ["sync", "cloud", "webdav", "git", "同步", "云同步"],
+      disabled: !syncEnabled,
+      onExecute: onSyncNow ?? (() => undefined),
     },
   ];
 }

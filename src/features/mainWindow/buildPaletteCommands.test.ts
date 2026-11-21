@@ -61,4 +61,50 @@ describe("buildPaletteCommands", () => {
     void exportPdf?.onExecute();
     expect(onExportPdf).toHaveBeenCalledOnce();
   });
+
+  test("disables sync-now when sync is off and executes onSyncNow when enabled", () => {
+    const onSyncNow = vi.fn();
+    const disabledCommands = buildPaletteCommands({
+      t: translate,
+      selectedId: null,
+      isExternal: false,
+      onNewNote: vi.fn(),
+      onOpenDailyNote: vi.fn(),
+      onOpenWorkspace: vi.fn(),
+      onOpenTodos: vi.fn(),
+      onOpenKnowledgeGraph: vi.fn(),
+      onToggleFocusMode: vi.fn(),
+      onToggleReadingMode: vi.fn(),
+      onOpenReminders: vi.fn(),
+      onExportPdf: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenQuickCapture: vi.fn(),
+      syncEnabled: false,
+      onSyncNow,
+    });
+    expect(disabledCommands.find((cmd) => cmd.id === "sync-now")?.disabled).toBe(true);
+
+    const enabledCommands = buildPaletteCommands({
+      t: translate,
+      selectedId: null,
+      isExternal: false,
+      onNewNote: vi.fn(),
+      onOpenDailyNote: vi.fn(),
+      onOpenWorkspace: vi.fn(),
+      onOpenTodos: vi.fn(),
+      onOpenKnowledgeGraph: vi.fn(),
+      onToggleFocusMode: vi.fn(),
+      onToggleReadingMode: vi.fn(),
+      onOpenReminders: vi.fn(),
+      onExportPdf: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenQuickCapture: vi.fn(),
+      syncEnabled: true,
+      onSyncNow,
+    });
+    const syncCmd = enabledCommands.find((cmd) => cmd.id === "sync-now");
+    expect(syncCmd?.disabled).toBe(false);
+    void syncCmd?.onExecute();
+    expect(onSyncNow).toHaveBeenCalledOnce();
+  });
 });

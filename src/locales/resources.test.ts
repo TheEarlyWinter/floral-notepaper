@@ -53,8 +53,8 @@ describe("locale resources", () => {
     }
   });
 
-  it("defines quickCapture, commandPalette, and quickCaptureShortcut keys directly in all locales", () => {
-    const requiredNamespaces = ["quickCapture.", "commandPalette."];
+  it("defines quickCapture, commandPalette, settings.sync, and quickCaptureShortcut keys directly in all locales", () => {
+    const requiredNamespaces = ["quickCapture.", "commandPalette.", "settings.sync."];
     const requiredExact = new Set([
       "settings.quickCaptureShortcut",
       "settings.shortcut.forQuickCapture",

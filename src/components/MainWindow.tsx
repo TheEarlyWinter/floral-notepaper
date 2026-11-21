@@ -14,6 +14,7 @@ import { BackgroundLayer } from "./BackgroundLayer";
 import { showToast } from "./Toast";
 import type { NotesWorkspaceMode } from "./NotesWorkspacePanel";
 import { getErrorMessage } from "../features/notes/api";
+import { runSyncNow } from "../features/sync/api";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import { useImagePaste } from "../features/images/useImagePaste";
 import { INBOX_CATEGORY } from "../features/notes/insights";
@@ -797,6 +798,21 @@ export function MainWindow({
       await openQuickCaptureWindow().catch((error) => {
         showToast(getErrorMessage(error));
       });
+    },
+    syncEnabled: Boolean(settingsConfig?.syncProvider && settingsConfig.syncProvider !== "none"),
+    onSyncNow: async () => {
+      if (saveStateRef.current === "dirty") {
+        await saveCurrentNote(true);
+      }
+      try {
+        const status = await runSyncNow();
+        showToast(
+          status.lastMessage ?? t("settings.sync.syncSuccess", { defaultValue: "同步完成" }),
+          status.conflicts.length > 0 ? "warning" : "info",
+        );
+      } catch (error) {
+        showToast(getErrorMessage(error, t));
+      }
     },
   });
 
