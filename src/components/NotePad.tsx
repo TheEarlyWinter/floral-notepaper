@@ -749,21 +749,20 @@ export function NotePad({
     // 回收进窗口池：窗口只是被隐藏，立刻清空编辑器状态并进入休眠，
     // 避免上一篇笔记全文和笔记列表驻留在隐藏窗口的内存里
     dormantRef.current = true;
-    void recycleCurrentNotepad()
-      .then(() => {
-        setEditingNoteId(null);
-        setTitle("");
-        setContent("");
-        setNotes([]);
-        setMode("new");
-        setStatus("empty");
-        setIsExiting(false);
-      })
-      .catch((error) => {
-        dormantRef.current = false;
-        setIsExiting(false);
-        showToast(getErrorMessage(error));
-      });
+    try {
+      await recycleCurrentNotepad();
+      setEditingNoteId(null);
+      setTitle("");
+      setContent("");
+      setNotes([]);
+      setMode("new");
+      setStatus("empty");
+      setIsExiting(false);
+    } catch (error) {
+      dormantRef.current = false;
+      setIsExiting(false);
+      showToast(getErrorMessage(error));
+    }
   }, [surfaceMode, saveNote, tileNoteId]);
 
   const copyTileContent = useCallback(async () => {

@@ -1,6 +1,6 @@
 use crate::{
     locales::{self, Locale},
-    services::notes::{default_store, AppConfig, AppError},
+    services::notes::{config_store, default_store, AppConfig, AppError},
 };
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
@@ -1635,7 +1635,10 @@ pub fn recycle_notepad_window(app: &AppHandle, label: &str) -> Result<(), AppErr
         .unwrap_or(false);
 
     if !recycled {
-        window.close()?;
+        // 必须调用 destroy() 绕过 CloseRequested：若调用 close()，前端 NotePad 的
+        // onCloseRequested 会 preventDefault() 后再次调用 recycle_notepad_window，
+        // 在窗口池已满时形成无限死循环。
+        window.destroy()?;
     } else {
         set_webview_memory_usage_level(&window, true);
     }
@@ -1644,15 +1647,6 @@ pub fn recycle_notepad_window(app: &AppHandle, label: &str) -> Result<(), AppErr
 }
 
 fn save_surface_size(window: &tauri::WebviewWindow) {
-    let Ok(store) = default_store() else {
-        return;
-    };
-    let Ok(mut config) = store.load_config() else {
-        return;
-    };
-    if !config.remember_surface_size {
-        return;
-    }
     let Ok(size) = window.inner_size() else {
         return;
     };
@@ -1661,6 +1655,15 @@ fn save_surface_size(window: &tauri::WebviewWindow) {
     let w = logical.width.round() as u32;
     let h = logical.height.round() as u32;
     if w == 0 || h == 0 {
+        return;
+    }
+    let Ok(store) = config_store() else {
+        return;
+    };
+    let Ok(mut config) = store.load_config() else {
+        return;
+    };
+    if !config.remember_surface_size {
         return;
     }
     if config.surface_width == Some(w) && config.surface_height == Some(h) {

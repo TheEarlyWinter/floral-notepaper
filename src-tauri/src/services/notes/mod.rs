@@ -31,3 +31,11 @@ pub fn default_store() -> Result<NoteStore, AppError> {
     }
     Ok(store)
 }
+
+/// 仅用于读写 `config.json` 的轻量 store：不重复调用 `load_config()`，也不初始化
+/// SQLite 派生库 `floral.db`。适用于窗口关闭/回收等仅需读写配置的场景。
+pub fn config_store() -> Result<NoteStore, AppError> {
+    let config_dir = default_config_dir()?;
+    let data_dir = config::resolve_data_dir(&config_dir)?;
+    Ok(NoteStore::new(config_dir, data_dir))
+}

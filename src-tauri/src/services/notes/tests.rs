@@ -1230,3 +1230,50 @@ fn resolves_data_dir_without_scanning_legacy_when_config_already_exists() {
         data_dir
     );
 }
+
+#[test]
+fn config_store_reads_and_writes_config_without_initializing_sqlite() {
+    struct EnvRestore {
+        config_dir: Option<std::ffi::OsString>,
+        data_dir: Option<std::ffi::OsString>,
+    }
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.config_dir {
+                Some(v) => std::env::set_var("FLORAL_NOTEPAPER_CONFIG_DIR", v),
+                None => std::env::remove_var("FLORAL_NOTEPAPER_CONFIG_DIR"),
+            }
+            match &self.data_dir {
+                Some(v) => std::env::set_var("FLORAL_NOTEPAPER_DATA_DIR", v),
+                None => std::env::remove_var("FLORAL_NOTEPAPER_DATA_DIR"),
+            }
+        }
+    }
+
+    let root = test_root("config-store-no-db");
+    let config_dir = root.join("config");
+    let data_dir = root.join("data");
+    let _restore = EnvRestore {
+        config_dir: std::env::var_os("FLORAL_NOTEPAPER_CONFIG_DIR"),
+        data_dir: std::env::var_os("FLORAL_NOTEPAPER_DATA_DIR"),
+    };
+    std::env::set_var("FLORAL_NOTEPAPER_CONFIG_DIR", &config_dir);
+    std::env::set_var("FLORAL_NOTEPAPER_DATA_DIR", &data_dir);
+
+    let store = super::config_store().expect("create config_store");
+    let mut cfg = store.load_config().expect("load config");
+    cfg.surface_width = Some(420);
+    cfg.surface_height = Some(360);
+    store.save_config(cfg).expect("save config");
+
+    let reloaded = super::config_store()
+        .expect("recreate config_store")
+        .load_config()
+        .expect("reload config");
+    assert_eq!(reloaded.surface_width, Some(420));
+    assert_eq!(reloaded.surface_height, Some(360));
+    assert!(
+        !data_dir.join("floral.db").exists(),
+        "config_store must not initialize floral.db"
+    );
+}
