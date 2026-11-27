@@ -24,7 +24,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Rust](https://img.shields.io/badge/Rust-1.96-orange?logo=rust)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?logo=windows)
-![Rust Tests](https://img.shields.io/badge/Rust_Tests-209_passed-green)
+![Rust Tests](https://img.shields.io/badge/Rust_Tests-210_passed-green)
 ![Frontend Tests](https://img.shields.io/badge/Frontend_Tests-247_passed-green)
 
 </div>
